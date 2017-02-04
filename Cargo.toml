@@ -1,0 +1,22 @@
+[package]
+name = "evmap"
+version = "0.1.0"
+
+description = "A lock-free, eventually consistent, concurrent multi-value map."
+readme = "README.md"
+
+authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+
+documentation = "https://docs.rs/evmap"
+homepage = "https://github.com/jonhoo/evmap"
+repository = "https://github.com/jonhoo/evmap.git"
+
+keywords = ["map","multi-value","lock-free"]
+categories = ["concurrency", "data-structures"]
+
+license = "MIT/Apache-2.0"
+
+[badges]
+travis-ci = { repository = "jonhoo/evmap" }
+
+[dependencies]
