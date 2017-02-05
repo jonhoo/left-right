@@ -5,6 +5,7 @@ use read::ReadHandle;
 use std::sync;
 use std::sync::atomic;
 use std::hash::{Hash, BuildHasher};
+use std::collections::hash_map::RandomState;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
@@ -36,7 +37,7 @@ use std::hash::{Hash, BuildHasher};
 /// assert_eq!(r.get_and(&x.0, |rs| rs.len()), Some(1));
 /// assert_eq!(r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)), Some(true));
 /// ```
-pub struct WriteHandle<K, V, M, S>
+pub struct WriteHandle<K, V, M = (), S = RandomState>
     where K: Eq + Hash,
           S: BuildHasher
 {

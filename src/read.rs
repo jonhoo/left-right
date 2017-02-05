@@ -4,6 +4,7 @@ use std::sync;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::hash::{Hash, BuildHasher};
+use std::collections::hash_map::RandomState;
 use std::borrow::Borrow;
 use std::iter::FromIterator;
 
@@ -13,7 +14,7 @@ use std::iter::FromIterator;
 /// `refresh()`. In other words, all operations performed on a `ReadHandle` will *only* see writes
 /// to the map that preceeded the last call to `refresh()`.
 #[derive(Clone)]
-pub struct ReadHandle<K, V, M, S>
+pub struct ReadHandle<K, V, M = (), S = RandomState>
     where K: Eq + Hash,
           S: BuildHasher
 {
