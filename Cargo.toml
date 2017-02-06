@@ -1,6 +1,6 @@
 [package]
 name = "evmap"
-version = "0.1.2"
+version = "0.1.3"
 
 description = "A lock-free, eventually consistent, concurrent multi-value map."
 readme = "README.md"
@@ -17,6 +17,6 @@ categories = ["concurrency", "data-structures"]
 license = "MIT/Apache-2.0"
 
 [badges]
-travis-ci = { repository = "jonhoo/evmap" }
+travis-ci = { repository = "jonhoo/rust-evmap" }
 
 [dependencies]
