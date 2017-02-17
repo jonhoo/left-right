@@ -43,21 +43,29 @@ pub struct WriteHandle<K, V, M = (), S = RandomState>
 {
     w_handle: Option<Box<sync::Arc<Inner<K, V, M, S>>>>,
     oplog: Vec<Operation<K, V>>,
+    swap_index: usize,
     r_handle: ReadHandle<K, V, M, S>,
+    meta: M,
     first: bool,
+    second: bool,
 }
 
 pub fn new<K, V, M, S>(w_handle: Inner<K, V, M, S>,
                        r_handle: ReadHandle<K, V, M, S>)
                        -> WriteHandle<K, V, M, S>
     where K: Eq + Hash,
-          S: BuildHasher
+          S: BuildHasher,
+          M: 'static + Clone
 {
+    let m = w_handle.meta.clone();
     WriteHandle {
         w_handle: Some(Box::new(sync::Arc::new(w_handle))),
         oplog: Vec::new(),
+        swap_index: 0,
         r_handle: r_handle,
+        meta: m,
         first: true,
+        second: false,
     }
 }
 
@@ -75,39 +83,8 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
     pub fn refresh(&mut self) {
         use std::thread;
 
-        // at this point, we have exclusive access to w_handle, and it is up-to-date with all writes
-        // r_handle is accessed by readers through a sync::Weak upgrade, and has old data
-        // w_log contains all the changes that are in w_handle, but not in r_handle
-        //
-        // we're going to do the following:
-        //
-        //  - atomically swap in a weak pointer to the current w_handle into the BufferedStore,
-        //    letting readers see new and updated state
-        //  - store r_handle as our new w_handle
-        //  - wait until we have exclusive access to this new w_handle
-        //  - replay w_log onto w_handle
-
-        // prepare w_handle
-        let w_handle = self.w_handle.take().unwrap();
-        let meta = w_handle.meta.clone();
-        let w_handle_clone = if self.first {
-            // this is the *first* swap, clone current w_handle instead of insterting all the rows
-            // one-by-one
-            self.first = false;
-            Some(w_handle.data.clone())
-        } else {
-            None
-        };
-        let w_handle: *mut sync::Arc<_> = Box::into_raw(w_handle);
-
-        // swap in our w_handle, and get r_handle in return
-        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
-        self.w_handle = Some(unsafe { Box::from_raw(r_handle) });
-
-        // let readers go so they will be done with the old read Arc
-        thread::yield_now();
-
-        // now, wait for all existing readers to go away
+        // first, wait for all readers on our write map to go away
+        // (there still may be some present since we did the previous refresh)
         loop {
             if let Some(w_handle) = sync::Arc::get_mut(&mut *self.w_handle.as_mut().unwrap()) {
                 // they're all gone
@@ -119,15 +96,42 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 // this case, and simply refuse to use the Arc it cloned. therefore, it is safe for
                 // us to start mutating here
 
-                // put in all the updates the read store hasn't seen
-                if let Some(old_w_handle) = w_handle_clone {
-                    w_handle.data = old_w_handle;
-                } else {
-                    for op in self.oplog.drain(..) {
+                if self.second {
+                    use std::mem;
+                    // before the first refresh, all writes went directly to w_handle. then, at the
+                    // first refresh, r_handle and w_handle were swapped. thus, the w_handle we
+                    // have now is empty, *and* none of the writes in r_handle are in the oplog.
+                    // we therefore have to first clone the entire state of the current r_handle
+                    // and make that w_handle, and *then* replay the oplog (which holds writes
+                    // following the first refresh).
+                    //
+                    // this may seem unnecessarily complex, but it has the major advantage that it
+                    // is relatively efficient to do lots of writes to the evmap at startup to
+                    // populate it, and then refresh().
+                    let r_handle = unsafe {
+                        Box::from_raw(self.r_handle.inner.load(atomic::Ordering::SeqCst))
+                    };
+                    w_handle.data = r_handle.data.clone();
+                    mem::forget(r_handle);
+                }
+
+                // the w_handle map has not seen any of the writes in the oplog
+                // the r_handle map has not seen any of the writes following swap_index
+                if self.swap_index != 0 {
+                    // we can drain out the operations that only the w_handle map needs
+                    // NOTE: the if above is because drain(0..0) would remove 0
+                    for op in self.oplog.drain(0..self.swap_index) {
                         Self::apply_op(w_handle, op);
                     }
                 }
-                w_handle.meta = meta;
+                // the rest have to be cloned because they'll also be needed by the r_handle map
+                for op in self.oplog.iter().cloned() {
+                    Self::apply_op(w_handle, op);
+                }
+                // the w_handle map is about to become the r_handle, and can ignore the oplog
+                self.swap_index = self.oplog.len();
+                // ensure meta-information is up to date
+                w_handle.meta = self.meta.clone();
                 w_handle.mark_ready();
 
                 // w_handle (the old r_handle) is now fully up to date!
@@ -136,28 +140,46 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 thread::yield_now();
             }
         }
+
+        // at this point, we have exclusive access to w_handle, and it is up-to-date with all
+        // writes. the stale r_handle is accessed by readers through an Arc clone of atomic pointer
+        // inside the ReadHandle. oplog contains all the changes that are in w_handle, but not in
+        // r_handle.
+        //
+        // it's now time for us to swap the maps so that readers see up-to-date results from
+        // w_handle.
+
+        // prepare w_handle
+        let w_handle = self.w_handle.take().unwrap();
+        let w_handle: *mut sync::Arc<_> = Box::into_raw(w_handle);
+
+        // swap in our w_handle, and get r_handle in return
+        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
+        self.w_handle = Some(unsafe { Box::from_raw(r_handle) });
+
+        // NOTE: at this point, there are likely still readers using the w_handle we got
+        self.second = self.first;
+        self.first = false;
     }
 
     /// Set the metadata.
     ///
     /// Will only be visible to readers after the next call to `refresh()`.
     pub fn set_meta(&mut self, mut meta: M) -> M {
-        self.with_mut(move |inner| {
-            use std::mem;
-            mem::swap(&mut inner.meta, &mut meta);
-            meta
-        })
+        use std::mem;
+        mem::swap(&mut self.meta, &mut meta);
+        meta
     }
 
     fn add_op(&mut self, op: Operation<K, V>) {
-        if self.first {
-            // before the first swap, we'd rather just clone the entire map,
-            // so no need to maintain an oplog (or to clone op)
-            self.with_mut(|inner| { Self::apply_op(inner, op); });
-        } else {
-            self.with_mut(|inner| { Self::apply_op(inner, op.clone()); });
-            // and also log it to later apply to the reads
+        if self.first == false {
             self.oplog.push(op);
+        } else {
+            // we know there are no outstanding w_handle readers, so we can modify it directly!
+            let arc: &mut sync::Arc<_> = &mut *self.w_handle.as_mut().unwrap();
+            let inner = sync::Arc::get_mut(arc).expect("before first refresh there are no readers");
+            Self::apply_op(inner, op);
+            // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
     }
 
@@ -187,28 +209,6 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
     /// The value-set will only disappear from readers after the next call to `refresh()`.
     pub fn empty(&mut self, k: K) {
         self.add_op(Operation::Empty(k));
-    }
-
-    fn with_mut<F, T: 'static>(&mut self, f: F) -> T
-        where F: FnOnce(&mut Inner<K, V, M, S>) -> T
-    {
-        let arc: &mut sync::Arc<_> = &mut *self.w_handle.as_mut().unwrap();
-        loop {
-            if let Some(s) = sync::Arc::get_mut(arc) {
-                return f(s);
-            } else {
-                // writer should always be sole owner outside of swap
-                // *however*, there may have been a reader who read the arc pointer before the
-                // atomic pointer swap, and cloned *after* the Arc::get_mut call in swap(), so we
-                // could still end up here. we know that the reader will detect its mistake and
-                // drop that Arc (without using it), so we eventually end up with a unique Arc. In
-                // fact, because we know the reader will never use the Arc in that case, we *could*
-                // just start mutating straight away, but unfortunately Arc doesn't provide an API
-                // to force this.
-                use std::thread;
-                thread::yield_now();
-            }
-        }
     }
 
     fn apply_op(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {

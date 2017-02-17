@@ -184,7 +184,7 @@ impl<M, S> Options<M, S>
         where K: Eq + Hash + Clone,
               S: Clone,
               V: Clone,
-              M: Clone
+              M: 'static + Clone
     {
         let inner = if let Some(cap) = self.capacity {
             Inner::with_capacity_and_hasher(self.meta, cap, self.hasher)
@@ -213,8 +213,8 @@ pub fn with_meta<K, V, M>
     (meta: M)
      -> (ReadHandle<K, V, M, RandomState>, WriteHandle<K, V, M, RandomState>)
     where K: Eq + Hash + Clone,
-          M: Clone,
-          V: Clone
+          M: 'static + Clone,
+          V: 'static + Clone
 {
     Options::default().with_meta(meta).construct()
 }
