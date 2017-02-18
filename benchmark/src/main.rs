@@ -56,65 +56,71 @@ fn main() {
 
     let mut join = Vec::with_capacity(readers + writers);
     // first, benchmark Arc<RwLock<HashMap>>
-    let start = time::Instant::now();
-    let end = start + dur;
-    let map: sync::Arc<sync::RwLock<HashMap<u64, u64>>> = sync::Arc::default();
-    join.extend((0..readers).into_iter().map(|_| {
-        let map = map.clone();
-        let dist = dist.to_owned();
-        thread::spawn(move || drive(map, end, dist, false, span))
-    }));
-    join.extend((0..writers).into_iter().map(|_| {
-        let map = map.clone();
-        let dist = dist.to_owned();
-        thread::spawn(move || drive(map, end, dist, true, span))
-    }));
-    let (wres, rres): (Vec<_>, _) =
-        join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
-    println!("std     \t{}\t{}",
-             to_stat("write", wres),
-             to_stat("read", rres));
+    {
+        let start = time::Instant::now();
+        let end = start + dur;
+        let map: sync::Arc<sync::RwLock<HashMap<u64, u64>>> = sync::Arc::default();
+        join.extend((0..readers).into_iter().map(|_| {
+            let map = map.clone();
+            let dist = dist.to_owned();
+            thread::spawn(move || drive(map, end, dist, false, span))
+        }));
+        join.extend((0..writers).into_iter().map(|_| {
+            let map = map.clone();
+            let dist = dist.to_owned();
+            thread::spawn(move || drive(map, end, dist, true, span))
+        }));
+        let (wres, rres): (Vec<_>, _) =
+            join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
+        println!("std     \t{}\t{}",
+                 to_stat("write", wres),
+                 to_stat("read", rres));
+    }
 
     // then, benchmark Arc<CHashMap>
-    let start = time::Instant::now();
-    let end = start + dur;
-    let map: sync::Arc<CHashMap<u64, u64>> = sync::Arc::default();
-    join.extend((0..readers).into_iter().map(|_| {
-        let map = map.clone();
-        let dist = dist.to_owned();
-        thread::spawn(move || drive(map, end, dist, false, span))
-    }));
-    join.extend((0..writers).into_iter().map(|_| {
-        let map = map.clone();
-        let dist = dist.to_owned();
-        thread::spawn(move || drive(map, end, dist, true, span))
-    }));
-    let (wres, rres): (Vec<_>, _) =
-        join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
-    println!("chashmap\t{}\t{}",
-             to_stat("write", wres),
-             to_stat("read", rres));
+    {
+        let start = time::Instant::now();
+        let end = start + dur;
+        let map: sync::Arc<CHashMap<u64, u64>> = sync::Arc::default();
+        join.extend((0..readers).into_iter().map(|_| {
+            let map = map.clone();
+            let dist = dist.to_owned();
+            thread::spawn(move || drive(map, end, dist, false, span))
+        }));
+        join.extend((0..writers).into_iter().map(|_| {
+            let map = map.clone();
+            let dist = dist.to_owned();
+            thread::spawn(move || drive(map, end, dist, true, span))
+        }));
+        let (wres, rres): (Vec<_>, _) =
+            join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
+        println!("chashmap\t{}\t{}",
+                 to_stat("write", wres),
+                 to_stat("read", rres));
+    }
 
     // finally, benchmark evmap
-    let start = time::Instant::now();
-    let end = start + dur;
-    let (r, w) = evmap::new();
-    let w = sync::Arc::new(sync::Mutex::new(w));
-    join.extend((0..readers).into_iter().map(|_| {
-        let map = EvHandle::Read(r.clone());
-        let dist = dist.to_owned();
-        thread::spawn(move || drive(map, end, dist, false, span))
-    }));
-    join.extend((0..writers).into_iter().map(|_| {
-        let map = EvHandle::Write(w.clone());
-        let dist = dist.to_owned();
-        thread::spawn(move || drive(map, end, dist, true, span))
-    }));
-    let (wres, rres): (Vec<_>, _) =
-        join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
-    println!("evmap   \t{}\t{}",
-             to_stat("write", wres),
-             to_stat("read", rres));
+    {
+        let start = time::Instant::now();
+        let end = start + dur;
+        let (r, w) = evmap::new();
+        let w = sync::Arc::new(sync::Mutex::new(w));
+        join.extend((0..readers).into_iter().map(|_| {
+            let map = EvHandle::Read(r.clone());
+            let dist = dist.to_owned();
+            thread::spawn(move || drive(map, end, dist, false, span))
+        }));
+        join.extend((0..writers).into_iter().map(|_| {
+            let map = EvHandle::Write(w.clone());
+            let dist = dist.to_owned();
+            thread::spawn(move || drive(map, end, dist, true, span))
+        }));
+        let (wres, rres): (Vec<_>, _) =
+            join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
+        println!("evmap   \t{}\t{}",
+                 to_stat("write", wres),
+                 to_stat("read", rres));
+    }
 }
 
 trait Backend {
