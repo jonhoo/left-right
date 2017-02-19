@@ -49,7 +49,7 @@ fn main() {
 
     let stat = |var, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter()
         .enumerate() {
-        println!("{} {} {} {:10} {:8.0} ops/s {} {}",
+        println!("{:2} {:2} {:10} {:10} {:8.0} ops/s {} {}",
                  readers,
                  writers,
                  dist,
