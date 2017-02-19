@@ -42,16 +42,21 @@ fn main() {
     let readers = value_t!(matches, "readers", usize).unwrap_or_else(|e| e.exit());
     let writers = value_t!(matches, "writers", usize).unwrap_or_else(|e| e.exit());
     let dist = matches.value_of("distribution").unwrap_or("uniform");
-    let dur = time::Duration::from_secs(10);
+    let dur = time::Duration::from_secs(1);
     let dur_in_ns = dur.as_secs() * 1_000_000_000_u64 + dur.subsec_nanos() as u64;
     let dur_in_s = dur_in_ns as f64 / 1_000_000_000_f64;
     let span = 10000;
 
-    let to_stat = |op, results: Vec<_>| {
-        format!("{:.0} {}s/s/thread",
-                results.into_iter().map(|(_, n)| n as f64 / dur_in_s as f64).sum::<f64>() /
-                readers as f64,
-                op)
+    let stat = |var, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter()
+        .enumerate() {
+        println!("{} {} {} {:10} {:8.0} ops/s {} {}",
+                 readers,
+                 writers,
+                 dist,
+                 var,
+                 res.1 as f64 / dur_in_s as f64,
+                 op,
+                 i)
     };
 
     let mut join = Vec::with_capacity(readers + writers);
@@ -72,9 +77,8 @@ fn main() {
         }));
         let (wres, rres): (Vec<_>, _) =
             join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
-        println!("std     \t{}\t{}",
-                 to_stat("write", wres),
-                 to_stat("read", rres));
+        stat("std", "write", wres);
+        stat("std", "read", rres);
     }
 
     // then, benchmark Arc<CHashMap>
@@ -94,9 +98,8 @@ fn main() {
         }));
         let (wres, rres): (Vec<_>, _) =
             join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
-        println!("chashmap\t{}\t{}",
-                 to_stat("write", wres),
-                 to_stat("read", rres));
+        stat("chashmap", "write", wres);
+        stat("chashmap", "read", rres);
     }
 
     // finally, benchmark evmap
@@ -117,9 +120,8 @@ fn main() {
         }));
         let (wres, rres): (Vec<_>, _) =
             join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
-        println!("evmap   \t{}\t{}",
-                 to_stat("write", wres),
-                 to_stat("read", rres));
+        stat("evmap", "write", wres);
+        stat("evmap", "read", rres);
     }
 }
 
