@@ -42,7 +42,7 @@ fn main() {
     let readers = value_t!(matches, "readers", usize).unwrap_or_else(|e| e.exit());
     let writers = value_t!(matches, "writers", usize).unwrap_or_else(|e| e.exit());
     let dist = matches.value_of("distribution").unwrap_or("uniform");
-    let dur = time::Duration::from_secs(1);
+    let dur = time::Duration::from_secs(5);
     let dur_in_ns = dur.as_secs() * 1_000_000_000_u64 + dur.subsec_nanos() as u64;
     let dur_in_s = dur_in_ns as f64 / 1_000_000_000_f64;
     let span = 10000;
@@ -62,9 +62,10 @@ fn main() {
     let mut join = Vec::with_capacity(readers + writers);
     // first, benchmark Arc<RwLock<HashMap>>
     {
+        let map: HashMap<u64, u64> = HashMap::with_capacity(5_000_000);
+        let map = sync::Arc::new(sync::RwLock::new(map));
         let start = time::Instant::now();
         let end = start + dur;
-        let map: sync::Arc<sync::RwLock<HashMap<u64, u64>>> = sync::Arc::default();
         join.extend((0..readers).into_iter().map(|_| {
             let map = map.clone();
             let dist = dist.to_owned();
@@ -83,9 +84,10 @@ fn main() {
 
     // then, benchmark Arc<CHashMap>
     {
+        let map: CHashMap<u64, u64> = CHashMap::with_capacity(5_000_000);
+        let map = sync::Arc::new(map);
         let start = time::Instant::now();
         let end = start + dur;
-        let map: sync::Arc<CHashMap<u64, u64>> = sync::Arc::default();
         join.extend((0..readers).into_iter().map(|_| {
             let map = map.clone();
             let dist = dist.to_owned();
@@ -104,10 +106,10 @@ fn main() {
 
     // finally, benchmark evmap
     {
+        let (r, w) = evmap::Options::default().with_capacity(5_000_000).construct();
+        let w = sync::Arc::new(sync::Mutex::new(w));
         let start = time::Instant::now();
         let end = start + dur;
-        let (r, w) = evmap::new();
-        let w = sync::Arc::new(sync::Mutex::new(w));
         join.extend((0..readers).into_iter().map(|_| {
             let map = EvHandle::Read(r.clone());
             let dist = dist.to_owned();
