@@ -140,9 +140,9 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
     /// Note that not all writes will be included with this read -- only those that have been
     /// refreshed by the writer. If no refresh has happened, this function returns `None`.
     ///
-    /// If no values exist for the given key, the function will still be passed an empty list, and
-    /// `Some` will be returned.
-    pub fn meta_get_and<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<(T, M)>
+    /// If no values exist for the given key, the function will not be called, and `Some(None, _)`
+    /// will be returned.
+    pub fn meta_get_and<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<(Option<T>, M)>
         where F: FnOnce(&[V]) -> T,
               K: Borrow<Q>,
               Q: Hash + Eq
@@ -150,7 +150,7 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
         self.with_handle(move |inner| if !inner.is_ready() {
                              None
                          } else {
-                             let res = then(inner.data.get(key).map(|v| &**v).unwrap_or(&[]));
+                             let res = inner.data.get(key).map(move |v| then(&**v));
                              let res = (res, inner.meta.clone());
                              Some(res)
                          })
