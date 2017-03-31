@@ -101,8 +101,6 @@
 //!     }
 //! });
 //! ```
-#![feature(ptr_eq)]
-#![feature(pub_restricted)]
 #![deny(missing_docs)]
 
 use std::collections::hash_map::RandomState;
