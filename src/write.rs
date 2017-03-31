@@ -219,7 +219,10 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 v.push(value);
             }
             Operation::Add(key, value) => {
-                inner.data.entry(key).or_insert_with(Vec::new).push(value);
+                inner.data
+                    .entry(key)
+                    .or_insert_with(Vec::new)
+                    .push(value);
             }
             Operation::Empty(key) => {
                 inner.data.remove(&key);
