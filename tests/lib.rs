@@ -38,9 +38,9 @@ fn busybusybusy() {
     let n = 10000;
     let (r, mut w) = evmap::new();
     thread::spawn(move || for i in 0..n {
-        w.insert(i, true);
-        w.refresh();
-    });
+                      w.insert(i, true);
+                      w.refresh();
+                  });
 
     for i in 0..n {
         let i = i.into();
@@ -237,8 +237,8 @@ fn foreach() {
     w.insert(1, "x");
 
     r.for_each(|&k, vs| match k {
-        1 => assert_eq!(vs, &*vec!["a", "b"]),
-        2 => assert_eq!(vs, &*vec!["c"]),
-        _ => unreachable!(),
-    });
+                   1 => assert_eq!(vs, &*vec!["a", "b"]),
+                   2 => assert_eq!(vs, &*vec!["c"]),
+                   _ => unreachable!(),
+               });
 }

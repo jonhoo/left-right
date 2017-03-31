@@ -125,10 +125,10 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
               Q: Hash + Eq
     {
         self.with_handle(move |inner| if !inner.is_ready() {
-            None
-        } else {
-            inner.data.get(key).map(move |v| then(&**v))
-        })
+                             None
+                         } else {
+                             inner.data.get(key).map(move |v| then(&**v))
+                         })
     }
 
     /// Applies a function to the values corresponding to the key, and returns the result alongside
@@ -148,12 +148,12 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
               Q: Hash + Eq
     {
         self.with_handle(move |inner| if !inner.is_ready() {
-            None
-        } else {
-            let res = then(inner.data.get(key).map(|v| &**v).unwrap_or(&[]));
-            let res = (res, inner.meta.clone());
-            Some(res)
-        })
+                             None
+                         } else {
+                             let res = then(inner.data.get(key).map(|v| &**v).unwrap_or(&[]));
+                             let res = (res, inner.meta.clone());
+                             Some(res)
+                         })
     }
 
     /// Returns true if the map contains any values for the specified key.
@@ -175,8 +175,8 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
         where F: FnMut(&K, &[V])
     {
         self.with_handle(move |inner| for (k, vs) in &inner.data {
-            f(k, &vs[..])
-        })
+                             f(k, &vs[..])
+                         })
     }
 
     /// Read all values in the map, and transform them into a new collection.
@@ -185,7 +185,7 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
               Collector: FromIterator<Target>
     {
         self.with_handle(move |inner| {
-            Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
-        })
+                             Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
+                         })
     }
 }
