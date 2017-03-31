@@ -115,6 +115,7 @@ enum Operation<K, V> {
     Add(K, V),
     Remove(K, V),
     Empty(K),
+    Clear(K),
 }
 
 mod write;

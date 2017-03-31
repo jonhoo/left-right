@@ -197,6 +197,13 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
         self.add_op(Operation::Replace(k, v));
     }
 
+    /// Clear the value-set of the given key, without removing it.
+    ///
+    /// The new value will only be visible to readers after the next call to `refresh()`.
+    pub fn clear(&mut self, k: K) {
+        self.add_op(Operation::Clear(k));
+    }
+
     /// Remove the given value from the value-set of the given key.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
@@ -218,6 +225,10 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 v.clear();
                 v.push(value);
             }
+            Operation::Clear(key) => {
+                let mut v = inner.data.entry(key).or_insert_with(Vec::new);
+                v.clear();
+            }
             Operation::Add(key, value) => {
                 inner.data
                     .entry(key)
@@ -228,17 +239,11 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 inner.data.remove(&key);
             }
             Operation::Remove(key, value) => {
-                let mut now_empty = false;
                 if let Some(mut e) = inner.data.get_mut(&key) {
                     // find the first entry that matches all fields
                     if let Some(i) = e.iter().position(|v| v == &value) {
                         e.swap_remove(i);
-                        now_empty = e.is_empty();
                     }
-                }
-                if now_empty {
-                    // no more entries for this key -- free up some space in the map
-                    inner.data.remove(&key);
                 }
             }
         }

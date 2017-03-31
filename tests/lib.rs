@@ -168,6 +168,31 @@ fn empty_post_refresh() {
 }
 
 #[test]
+fn clear() {
+    let (r, mut w) = evmap::new();
+    w.insert(1, "a");
+    w.insert(1, "b");
+    w.insert(2, "c");
+    w.clear(1);
+    w.refresh();
+
+    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
+    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(1));
+
+    w.clear(2);
+    w.refresh();
+
+    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
+    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(0));
+
+    w.empty(1);
+    w.refresh();
+
+    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
+    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(0));
+}
+
+#[test]
 fn replace() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a");
