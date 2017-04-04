@@ -2,7 +2,6 @@ use super::Operation;
 use inner::Inner;
 use read::ReadHandle;
 
-use std::sync;
 use std::sync::atomic;
 use std::hash::{Hash, BuildHasher};
 use std::collections::hash_map::RandomState;
@@ -41,10 +40,12 @@ pub struct WriteHandle<K, V, M = (), S = RandomState>
     where K: Eq + Hash,
           S: BuildHasher
 {
-    w_handle: Option<Box<sync::Arc<Inner<K, V, M, S>>>>,
+    w_handle: Option<Box<Inner<K, V, M, S>>>,
     oplog: Vec<Operation<K, V>>,
     swap_index: usize,
     r_handle: ReadHandle<K, V, M, S>,
+    last_epochs: Vec<usize>,
+    epochs_checked: Vec<bool>,
     meta: M,
     first: bool,
     second: bool,
@@ -59,10 +60,12 @@ pub fn new<K, V, M, S>(w_handle: Inner<K, V, M, S>,
 {
     let m = w_handle.meta.clone();
     WriteHandle {
-        w_handle: Some(Box::new(sync::Arc::new(w_handle))),
+        w_handle: Some(Box::new(w_handle)),
         oplog: Vec::new(),
         swap_index: 0,
         r_handle: r_handle,
+        last_epochs: Vec::new(),
+        epochs_checked: Vec::new(),
         meta: m,
         first: true,
         second: false,
@@ -83,18 +86,54 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
     pub fn refresh(&mut self) {
         use std::thread;
 
-        // first, wait for all readers on our write map to go away
-        // (there still may be some present since we did the previous refresh)
+        // we need to wait until all epochs have changed since the swaps
+        // *or* until a "finished" flag has been observed to be on for two subsequent iterations
+        // (there still may be some readers present since we did the previous refresh)
+        let epochs = self.w_handle
+            .as_ref()
+            .unwrap()
+            .epochs
+            .lock()
+            .unwrap()
+            .clone();
         loop {
-            if let Some(w_handle) = sync::Arc::get_mut(&mut *self.w_handle.as_mut().unwrap()) {
-                // they're all gone
-                // OR ARE THEY?
-                // some poor reader could have *read* the pointer right before we swapped it, *but
-                // not yet cloned the Arc*. we then check that there's only one strong reference,
-                // *which there is*. *then* that reader upgrades their Arc => Uh-oh. *however*,
-                // because of the second pointer read in readers, we know that a reader will detect
-                // this case, and simply refuse to use the Arc it cloned. therefore, it is safe for
-                // us to start mutating here
+            let mut ok = 0;
+            for (i, epoch) in self.epochs_checked.iter_mut().enumerate() {
+                if *epoch {
+                    ok += 1;
+                    continue;
+                }
+
+                let last = self.last_epochs[i];
+                let now = epochs[i].load(atomic::Ordering::Acquire);
+                if last != now {
+                    // epoch increased or high bit now set, both indicate reader has left.
+                    // may have entered again, but if so it must have read new pointer.
+                    ok += 1;
+                    *epoch = true;
+                    continue;
+                }
+
+                if now == 0 {
+                    // reader has never done a read
+                    ok += 1;
+                    *epoch = true;
+                    continue;
+                }
+
+                use std::mem;
+                if now & 1usize << (mem::size_of::<usize>() * 8 - 1) != 0 {
+                    // high bit set, and previous value was the same, so reader has indeed left.
+                    ok += 1;
+                    *epoch = true;
+                    continue;
+                }
+            }
+
+            if ok == self.epochs_checked.len() {
+                // all the readers have left!
+                // we can safely bring the w_handle up to date.
+                let w_handle = self.w_handle.as_mut().unwrap();
 
                 if self.second {
                     use std::mem;
@@ -151,13 +190,24 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
 
         // prepare w_handle
         let w_handle = self.w_handle.take().unwrap();
-        let w_handle: *mut sync::Arc<_> = Box::into_raw(w_handle);
+        let w_handle = Box::into_raw(w_handle);
 
         // swap in our w_handle, and get r_handle in return
         let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
-        self.w_handle = Some(unsafe { Box::from_raw(r_handle) });
+        let r_handle = unsafe { Box::from_raw(r_handle) };
+
+        self.last_epochs.clear();
+        self.epochs_checked.clear();
+        for e in r_handle.epochs
+                .lock()
+                .unwrap()
+                .iter() {
+            self.last_epochs.push(e.load(atomic::Ordering::SeqCst));
+            self.epochs_checked.push(false);
+        }
 
         // NOTE: at this point, there are likely still readers using the w_handle we got
+        self.w_handle = Some(r_handle);
         self.second = self.first;
         self.first = false;
     }
@@ -176,8 +226,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
             self.oplog.push(op);
         } else {
             // we know there are no outstanding w_handle readers, so we can modify it directly!
-            let arc: &mut sync::Arc<_> = &mut *self.w_handle.as_mut().unwrap();
-            let inner = sync::Arc::get_mut(arc).expect("before first refresh there are no readers");
+            let inner = self.w_handle.as_mut().unwrap();
             Self::apply_op(inner, op);
             // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
