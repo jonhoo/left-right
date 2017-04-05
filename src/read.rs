@@ -97,8 +97,8 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
         let epoch = self.epoch.load(atomic::Ordering::Relaxed) << 1 >> 1;
         self.epoch.store(epoch + 1, atomic::Ordering::Release);
 
-        // XXX: it's conceivable that we need a memory barrier here, to ensure that the read of the
-        // pointer happens strictly after updating the epoch.
+        // ensure that the pointer read happens strictly after updating the epoch.
+        unsafe { asm!("" ::: "memory" : "volatile") };
 
         // then, atomically read pointer, and use the map being pointed to
         let r_handle = self.inner.load(atomic::Ordering::Acquire);
