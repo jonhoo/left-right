@@ -103,6 +103,7 @@
 //! });
 //! ```
 #![deny(missing_docs)]
+#![feature(optin_builtin_traits)]
 
 use std::collections::hash_map::RandomState;
 use std::hash::{Hash, BuildHasher};

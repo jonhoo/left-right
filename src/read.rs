@@ -22,6 +22,12 @@ pub struct ReadHandle<K, V, M = (), S = RandomState>
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
 }
 
+// Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to call
+// `with_handle` at the same time. We *could* keep it `Sync` and make `with_handle` require `&mut
+// self`, but that seems overly excessive. It would also mean that all other methods on
+// `ReadHandle` would now take `&mut self`, *and* that `ReadHandle` can no longer be `Clone`.
+impl<K, V, M, S> !Sync for ReadHandle<K, V, M, S> {}
+
 impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
     where K: Eq + Hash,
           S: BuildHasher,
