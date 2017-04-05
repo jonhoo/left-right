@@ -39,23 +39,41 @@ fn it_works() {
 fn busybusybusy() {
     use std::thread;
 
-    let n = 10000;
+    let threads = 4;
+    let n = 100000;
     let (r, mut w) = evmap::new();
-    thread::spawn(move || for i in 0..n {
-                      w.insert(i, true);
-                      w.refresh();
-                  });
+
+    let rs: Vec<_> = (0..threads)
+        .map(|_| {
+            let r = r.clone();
+            thread::spawn(move || {
+                let _ = (); // rustfmt
+                for i in 0..n {
+                    let i = i.into();
+                    loop {
+                        match r.get_and(&i, |rs| Vec::from(rs)) {
+                            Some(rs) => {
+                                assert_eq!(rs.len(), 1);
+                                assert_eq!(rs[0], i);
+                                break;
+                            }
+                            None => {
+                                thread::yield_now();
+                            }
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
 
     for i in 0..n {
-        let i = i.into();
-        loop {
-            match r.get_and(&i, |rs| rs.len()) {
-                Some(0) => continue,
-                Some(1) => break,
-                Some(i) => assert_ne!(i, 1),
-                None => continue,
-            }
-        }
+        w.insert(i, i);
+        w.refresh();
+    }
+
+    for r in rs {
+        r.join().unwrap();
     }
 }
 
