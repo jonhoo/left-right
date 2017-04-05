@@ -1,5 +1,6 @@
 use inner::Inner;
 
+use std::mem;
 use std::sync;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
@@ -59,64 +60,45 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
     fn with_handle<F, T>(&self, f: F) -> T
         where F: FnOnce(&Inner<K, V, M, S>) -> T
     {
-        use std::mem;
-        let r_handle = self.inner.load(atomic::Ordering::SeqCst);
+        // once we update our epoch, the writer can no longer do a swap until we set the MSB to
+        // indicate that we've finished our read. however, we still need to deal with the case of a
+        // race between when the writer reads our epoch and when they decide to make the swap.
+        //
+        // assume that there is a concurrent writer. it just swapped the atomic pointer from A to
+        // B. the writer wants to modify A, and needs to know if that is safe. we can be in any of
+        // the following cases when we atomically swap out our epoch:
+        //
+        //  1. the writer has read our previous epoch twice
+        //  2. the writer has already read our previous epoch once
+        //  3. the writer has not yet read our previous epoch
+        //
+        // let's discuss each of these in turn.
+        //
+        //  1. since writers assume they are free to proceed if they read an epoch with MSB set
+        //     twice in a row, this is equivalent to case (2) below.
+        //  2. the writer will see our epoch change, and so will assume that we have read B. it
+        //     will therefore feel free to modify A. note that *another* pointer swap can happen,
+        //     back to A, but then the writer would be block on our epoch, and so cannot modify
+        //     A *or* B. consequently, using a pointer we read *after* the epoch swap is definitely
+        //     safe here.
+        //  3. the writer will read our epoch, notice that MSB is not set, and will keep reading,
+        //     continuing to observe that it is still not set until we finish our read. thus,
+        //     neither A nor B are being modified, and we can safely use either.
+        //
+        // in all cases, using a pointer we read *after* updating our epoch is safe.
 
-        // update our epoch tracker (the bit shifts clear MSB).
+        // so, update our epoch tracker (the bit shifts clear MSB).
         let epoch = self.epoch.load(atomic::Ordering::Relaxed) << 1 >> 1;
         self.epoch.store(epoch + 1, atomic::Ordering::Release);
 
-        // we need to read again, because writer *could* have read our epoch between us reading the
-        // pointer and updating our epoch, and would then have seen finished twice in a row!
-        let r_handle_again = self.inner.load(atomic::Ordering::SeqCst);
+        // XXX: it's conceivable that we need a memory barrier here, to ensure that the read of the
+        // pointer happens strictly after updating the epoch.
 
-        let res = if r_handle != r_handle_again {
-            // a swap happened under us.
-            //
-            // let's first figure out where the writer can possibly be at this point. since we have
-            // updated our epoch, and a pointer swap has happened, we must be in one of the
-            // following cases:
-            //
-            //  (a) we read and updated, *then* a writer swapped, checked epochs, and now blocks
-            //  (b) we read, then a writer swapped, checked epochs, and continued
-            //
-            // in (a), we know that the writer that did the pointer swap is waiting on our epoch.
-            // we also know that we *ought* to be using a clone of the *new* pointer to read from.
-            // since the writer won't do anything until we mark our epoch as finished, we can
-            // freely just use the second pointer we read.
-            //
-            // in (b), we know that there is a writer that thinks it owns r_handle, and so it is
-            // not safe to use it. how about r_handle_again? the only way that would be unsafe to
-            // use would be if a writer has gone all the way through the pointer swap and epoch
-            // check test *after* we read r_handle_again. can that have happened? no. if a
-            // second writer came along after we read r_handle_again, and wanted to swap, it would
-            // get r_handle from its atomic pointer swap. since we updated our epoch in between,
-            // and haven't marked it as finished, it would fail the epoch test, and therefore block
-            // at that point. thus, we know that no writer is currently modifying r_handle_again
-            // (and won't be for as long as we don't update our epoch).
-            let rs = unsafe { Box::from_raw(r_handle_again) };
-            let res = f(&*rs);
-            mem::forget(rs); // don't free the Box!
-            res
-        } else {
-            // are we actually safe in this case? could there not have been two swaps in a row,
-            // making the value r_handle -> r_handle_again -> r_handle? well, there could, but that
-            // implies that r_handle is safe to use. why? well, for this to have happened, we must
-            // have read the pointer, then a writer went runs swap() (potentially multiple times).
-            // then, at some point, we updated our epoch. then, we read r_handle_again to be equal
-            // to r_handle.
-            //
-            // the moment we update our epoch, we immediately prevent any writer from taking
-            // ownership of r_handle. however, what if the current writer thinks that it owns
-            // r_handle? well, we read r_handle_again == r_handle, which means that at some point
-            // *after the clone*, a writer made r_handle read owned. since no writer can take
-            // ownership of r_handle after we update our epoch, we know that r_handle must still be
-            // owned by readers.
-            let rs = unsafe { Box::from_raw(r_handle) };
-            let res = f(&*rs);
-            mem::forget(rs); // don't free the Box!
-            res
-        };
+        // then, atomically read pointer, and use the map being pointed to
+        let r_handle = self.inner.load(atomic::Ordering::Acquire);
+        let rs = unsafe { Box::from_raw(r_handle) };
+        let res = f(&*rs);
+        mem::forget(rs); // don't free the Box!
 
         // we've finished reading -- let the writer know
         self.epoch.store((epoch + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),

@@ -149,7 +149,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                     // is relatively efficient to do lots of writes to the evmap at startup to
                     // populate it, and then refresh().
                     let r_handle = unsafe {
-                        Box::from_raw(self.r_handle.inner.load(atomic::Ordering::SeqCst))
+                        Box::from_raw(self.r_handle.inner.load(atomic::Ordering::Relaxed))
                     };
                     w_handle.data = r_handle.data.clone();
                     mem::forget(r_handle);
@@ -194,7 +194,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
         let w_handle = Box::into_raw(w_handle);
 
         // swap in our w_handle, and get r_handle in return
-        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
+        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::Release);
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
         self.last_epochs.clear();
@@ -203,7 +203,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 .lock()
                 .unwrap()
                 .iter() {
-            self.last_epochs.push(e.load(atomic::Ordering::SeqCst));
+            self.last_epochs.push(e.load(atomic::Ordering::Acquire));
             self.epochs_checked.push(false);
         }
 
