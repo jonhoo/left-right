@@ -36,11 +36,24 @@ fn it_works() {
 }
 
 #[test]
-fn busybusybusy() {
+fn busybusybusy_fast() {
+    busybusybusy_inner(false);
+}
+#[test]
+fn busybusybusy_slow() {
+    busybusybusy_inner(true);
+}
+
+
+fn busybusybusy_inner(slow: bool) {
+    use std::time;
     use std::thread;
 
     let threads = 4;
-    let n = 100000;
+    let mut n = 1000;
+    if !slow {
+        n *= 100;
+    }
     let (r, mut w) = evmap::new();
 
     let rs: Vec<_> = (0..threads)
@@ -51,7 +64,12 @@ fn busybusybusy() {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        match r.get_and(&i, |rs| Vec::from(rs)) {
+                        match r.get_and(&i, |rs| {
+                            if slow {
+                                thread::sleep(time::Duration::from_millis(2));
+                            }
+                            Vec::from(rs)
+                        }) {
                             Some(rs) => {
                                 assert_eq!(rs.len(), 1);
                                 assert_eq!(rs[0], i);
