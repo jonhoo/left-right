@@ -24,6 +24,9 @@ fn main() {
             .help("Set the number of readers")
             .required(true)
             .takes_value(true))
+        .arg(Arg::with_name("compare")
+            .short("c")
+            .help("Also benchmark Arc<RwLock<HashMap>> and CHashMap"))
         .arg(Arg::with_name("writers")
             .short("w")
             .long("writers")
@@ -48,7 +51,7 @@ fn main() {
     let span = 10000;
 
     let stat = |var, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter()
-        .enumerate() {
+            .enumerate() {
         println!("{:2} {:2} {:10} {:10} {:8.0} ops/s {} {}",
                  readers,
                  writers,
@@ -61,7 +64,7 @@ fn main() {
 
     let mut join = Vec::with_capacity(readers + writers);
     // first, benchmark Arc<RwLock<HashMap>>
-    {
+    if matches.is_present("compare") {
         let map: HashMap<u64, u64> = HashMap::with_capacity(5_000_000);
         let map = sync::Arc::new(sync::RwLock::new(map));
         let start = time::Instant::now();
@@ -83,7 +86,7 @@ fn main() {
     }
 
     // then, benchmark Arc<CHashMap>
-    {
+    if matches.is_present("compare") {
         let map: CHashMap<u64, u64> = CHashMap::with_capacity(5_000_000);
         let map = sync::Arc::new(map);
         let start = time::Instant::now();
@@ -172,7 +175,11 @@ impl Backend for sync::Arc<CHashMap<u64, u64>> {
 
 impl Backend for sync::Arc<sync::RwLock<HashMap<u64, u64>>> {
     fn b_get(&self, key: u64) -> u64 {
-        self.read().unwrap().get(&key).map(|&v| v).unwrap_or(0)
+        self.read()
+            .unwrap()
+            .get(&key)
+            .map(|&v| v)
+            .unwrap_or(0)
     }
 
     fn b_put(&mut self, key: u64, value: u64) {
