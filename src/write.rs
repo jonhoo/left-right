@@ -97,40 +97,41 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
             .unwrap()
             .clone();
         loop {
-            let mut ok = 0;
-            for (i, epoch) in self.epochs_checked.iter_mut().enumerate() {
-                if *epoch {
-                    ok += 1;
-                    continue;
-                }
+            let last_epochs = &self.last_epochs;
+            let all_left = self.epochs_checked
+                .iter_mut()
+                .enumerate()
+                .all(|(i, epoch)| {
+                    if *epoch {
+                        return true;
+                    }
 
-                let last = self.last_epochs[i];
-                let now = epochs[i].load(atomic::Ordering::Acquire);
-                if last != now {
-                    // epoch increased or high bit now set, both indicate reader has left.
-                    // may have entered again, but if so it must have read new pointer.
-                    ok += 1;
-                    *epoch = true;
-                    continue;
-                }
+                    let last = last_epochs[i];
+                    let now = epochs[i].load(atomic::Ordering::Acquire);
+                    if last != now {
+                        // epoch increased or high bit now set, both indicate reader has left.
+                        // may have entered again, but if so it must have read new pointer.
+                        *epoch = true;
+                        return true;
+                    }
 
-                if now == 0 {
-                    // reader has never done a read
-                    ok += 1;
-                    *epoch = true;
-                    continue;
-                }
+                    if now == 0 {
+                        // reader has never done a read
+                        *epoch = true;
+                        return true;
+                    }
 
-                use std::mem;
-                if now & 1usize << (mem::size_of::<usize>() * 8 - 1) != 0 {
-                    // high bit set, and previous value was the same, so reader has indeed left.
-                    ok += 1;
-                    *epoch = true;
-                    continue;
-                }
-            }
+                    use std::mem;
+                    if now & 1usize << (mem::size_of::<usize>() * 8 - 1) != 0 {
+                        // high bit set, and previous value was the same, so reader has indeed left.
+                        *epoch = true;
+                        return true;
+                    }
 
-            if ok == self.epochs_checked.len() {
+                    false
+                });
+
+            if all_left {
                 // all the readers have left!
                 // we can safely bring the w_handle up to date.
                 let w_handle = self.w_handle.as_mut().unwrap();
