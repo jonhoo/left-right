@@ -5,7 +5,7 @@ authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 
 [dependencies]
 evmap = { path = "../" }
-chashmap = "0.1.2"
+chashmap = "2.1.0"
 clap = "2.20.3"
 zipf = "0.2.0"
 rand = "0.3"
