@@ -8,6 +8,8 @@ use std::hash::{Hash, BuildHasher};
 use std::collections::hash_map::RandomState;
 use std::borrow::Borrow;
 use std::iter::FromIterator;
+use std::cell;
+use std::marker::PhantomData;
 
 /// A handle that may be used to read from the eventually consistent map.
 ///
@@ -20,13 +22,15 @@ pub struct ReadHandle<K, V, M = (), S = RandomState>
 {
     pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
-}
 
-// Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to call
-// `with_handle` at the same time. We *could* keep it `Sync` and make `with_handle` require `&mut
-// self`, but that seems overly excessive. It would also mean that all other methods on
-// `ReadHandle` would now take `&mut self`, *and* that `ReadHandle` can no longer be `Clone`.
-impl<K, V, M, S> !Sync for ReadHandle<K, V, M, S> {}
+    // Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to
+    // call `with_handle` at the same time. We *could* keep it `Sync` and make `with_handle`
+    // require `&mut self`, but that seems overly excessive. It would also mean that all other
+    // methods on `ReadHandle` would now take `&mut self`, *and* that `ReadHandle` can no longer be
+    // `Clone`. Since optin_builtin_traits is still an unstable feature, we use this hack to make
+    // `ReadHandle` be marked as `!Sync` (since it contains an `Cell` which is `!Sync`).
+    _not_sync_no_feature: PhantomData<cell::Cell<()>>,
+}
 
 impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
     where K: Eq + Hash,
@@ -39,6 +43,7 @@ impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
         ReadHandle {
             epoch: epoch,
             inner: self.inner.clone(),
+            _not_sync_no_feature: PhantomData,
         }
     }
 }
@@ -55,6 +60,7 @@ pub fn new<K, V, M, S>(inner: Inner<K, V, M, S>) -> ReadHandle<K, V, M, S>
     ReadHandle {
         epoch: epoch,
         inner: sync::Arc::new(AtomicPtr::new(store)),
+        _not_sync_no_feature: PhantomData,
     }
 }
 
