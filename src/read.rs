@@ -20,7 +20,9 @@ pub struct ReadHandle<K, V, M = (), S = RandomState>
     where K: Eq + Hash,
           S: BuildHasher
 {
-    pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
+    // TODO: pub(crate)
+    #[doc(hidden)]
+    pub inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
 
     // Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to
