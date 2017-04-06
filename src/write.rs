@@ -194,7 +194,9 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
         let w_handle = Box::into_raw(w_handle);
 
         // swap in our w_handle, and get r_handle in return
-        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::Release);
+        // note that this *technically* only needs to be Ordering::Release, but we make it SeqCst
+        // to ensure that the subsequent epoch reads aren't re-ordered to before the swap.
+        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
         self.last_epochs.clear();

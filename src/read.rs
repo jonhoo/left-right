@@ -95,10 +95,9 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
 
         // so, update our epoch tracker (the bit shifts clear MSB).
         let epoch = self.epoch.load(atomic::Ordering::Relaxed) << 1 >> 1;
-        self.epoch.store(epoch + 1, atomic::Ordering::Release);
-
-        // ensure that the pointer read happens strictly after updating the epoch.
-        unsafe { asm!("" ::: "memory" : "volatile") };
+        // this technically only needs to be an Ordering::Release, but to ensure that the pointer
+        // read happens strictly after updating the epoch, we make it a SeqCst.
+        self.epoch.store(epoch + 1, atomic::Ordering::SeqCst);
 
         // then, atomically read pointer, and use the map being pointed to
         let r_handle = self.inner.load(atomic::Ordering::Acquire);
