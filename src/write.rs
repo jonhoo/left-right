@@ -86,16 +86,15 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
     pub fn refresh(&mut self) {
         use std::thread;
 
-        // we need to wait until all epochs have changed since the swaps
-        // *or* until a "finished" flag has been observed to be on for two subsequent iterations
-        // (there still may be some readers present since we did the previous refresh)
-        let epochs = self.w_handle
-            .as_ref()
-            .unwrap()
-            .epochs
-            .lock()
-            .unwrap()
-            .clone();
+        // we need to wait until all epochs have changed since the swaps *or* until a "finished"
+        // flag has been observed to be on for two subsequent iterations (there still may be some
+        // readers present since we did the previous refresh)
+        //
+        // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
+        // only block on pre-existing readers, and they are never waiting to push onto epochs
+        // unless they have finished reading.
+        let epochs = self.w_handle.as_ref().unwrap().epochs.clone();
+        let epochs = epochs.lock().unwrap();
         loop {
             let last_epochs = &self.last_epochs;
             let all_left = self.epochs_checked
@@ -201,10 +200,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
 
         self.last_epochs.clear();
         self.epochs_checked.clear();
-        for e in r_handle.epochs
-                .lock()
-                .unwrap()
-                .iter() {
+        for e in epochs.iter() {
             self.last_epochs.push(e.load(atomic::Ordering::Acquire));
             self.epochs_checked.push(false);
         }
