@@ -217,7 +217,9 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
         // swap in our w_handle, and get r_handle in return
         // note that this *technically* only needs to be Ordering::Release, but we make it SeqCst
         // to ensure that the subsequent epoch reads aren't re-ordered to before the swap.
-        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
+        let r_handle = self.r_handle
+            .inner
+            .swap(w_handle, atomic::Ordering::SeqCst);
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
         self.last_epochs.clear();
@@ -300,7 +302,8 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 v.clear();
             }
             Operation::Add(key, value) => {
-                inner.data
+                inner
+                    .data
                     .entry(key)
                     .or_insert_with(Vec::new)
                     .push(value);
