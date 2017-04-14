@@ -85,6 +85,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
     /// time, especially if readers are executing slow operations, or if there are many of them.
     pub fn refresh(&mut self) {
         use std::thread;
+        use std::mem;
 
         // we need to wait until all epochs have changed since the swaps *or* until a "finished"
         // flag has been observed to be on for two subsequent iterations (there still may be some
@@ -95,40 +96,61 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
         // unless they have finished reading.
         let epochs = self.w_handle.as_ref().unwrap().epochs.clone();
         let epochs = epochs.lock().unwrap();
+        let mut first = false;
+        let high_bit = 1usize << (mem::size_of::<usize>() * 8 - 1);
         loop {
             let last_epochs = &self.last_epochs;
-            let all_left = self.epochs_checked
-                .iter_mut()
-                .enumerate()
-                .all(|(i, epoch)| {
-                    if *epoch {
-                        return true;
-                    }
 
-                    let last = last_epochs[i];
-                    let now = epochs[i].load(atomic::Ordering::Acquire);
-                    if last != now {
-                        // epoch increased or high bit now set, both indicate reader has left.
-                        // may have entered again, but if so it must have read new pointer.
-                        *epoch = true;
-                        return true;
-                    }
+            let mut all_left = false;
+            if first {
+                // fast path -- read all and see if all have changed (which is likely)
+                let epochs_checked = &mut self.epochs_checked;
+                all_left = last_epochs
+                    .iter()
+                    .enumerate()
+                    .all(|(i, &e)| {
+                             let now = epochs[i].load(atomic::Ordering::Acquire);
+                             epochs_checked[i] = now == 0 || now != e || now & high_bit != 0;
+                             epochs_checked[i]
+                         });
+                first = false;
+            }
 
-                    if now == 0 {
-                        // reader has never done a read
-                        *epoch = true;
-                        return true;
-                    }
+            if !all_left {
+                // slow path -- only some have changed
+                all_left = self.epochs_checked
+                    .iter_mut()
+                    .enumerate()
+                    .all(|(i, epoch)| {
+                        if *epoch {
+                            return true;
+                        }
 
-                    use std::mem;
-                    if now & 1usize << (mem::size_of::<usize>() * 8 - 1) != 0 {
-                        // high bit set, and previous value was the same, so reader has indeed left.
-                        *epoch = true;
-                        return true;
-                    }
+                        let last = last_epochs[i];
+                        let now = epochs[i].load(atomic::Ordering::Acquire);
+                        if last != now {
+                            // epoch increased or high bit now set, both indicate reader has left.
+                            // may have entered again, but if so it must have read new pointer.
+                            *epoch = true;
+                            return true;
+                        }
 
-                    false
-                });
+                        if now == 0 {
+                            // reader has never done a read
+                            *epoch = true;
+                            return true;
+                        }
+
+                        if now & high_bit != 0 {
+                            // high bit set, and previous value was the same, so reader has indeed
+                            // left.
+                            *epoch = true;
+                            return true;
+                        }
+
+                        false
+                    });
+            }
 
             if all_left {
                 // all the readers have left!
