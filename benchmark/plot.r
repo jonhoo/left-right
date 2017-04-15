@@ -11,7 +11,7 @@ w <- ddply(w, c("readers", "writers", "distribution", "variant", "op"), summaris
 
 library(ggplot2)
 
-r$opss = r$opss / 1000.0
+r$opss = r$opss / 1000000.0
 p <- ggplot(data=r, aes(x=readers, y=opss, color=variant))
 #p <- p + ylim(c(0, 2500))
 p <- p + xlim(c(0, NA))
@@ -19,11 +19,11 @@ p <- p + facet_grid(distribution ~ writers, labeller = labeller(writers = label_
 p <- p + geom_point(size = .4, alpha = .1)
 p <- p + geom_line(size = .5)
 #p <- p + stat_smooth(size = .5, se = FALSE)
-p <- p + xlab("readers") + ylab("k reads/s") + ggtitle("Total reads/s with increasing # of readers")
+p <- p + xlab("readers") + ylab("M reads/s") + ggtitle("Total reads/s with increasing # of readers")
 ggsave('read-throughput.png',plot=p,width=10,height=6)
 
 
-w$opss = w$opss / 1000.0
+w$opss = w$opss / 1000000.0
 p <- ggplot(data=w, aes(x=readers, y=opss, color=variant))
 #p <- p + scale_y_log10(lim=c(1, NA))#5000))
 p <- p + facet_grid(distribution ~ writers, labeller = labeller(writers = label_both))
@@ -32,5 +32,5 @@ p <- p + geom_line(size = .5)
 #p <- p + stat_smooth(size = .5, se = FALSE)
 #p <- p + coord_cartesian(ylim=c(0,250))
 p <- p + xlim(c(0, NA))
-p <- p + xlab("readers") + ylab("k writes/s") + ggtitle("Total writes/s with increasing # of readers")
+p <- p + xlab("readers") + ylab("M writes/s") + ggtitle("Total writes/s with increasing # of readers")
 ggsave('write-throughput.png',plot=p,width=10,height=6)
