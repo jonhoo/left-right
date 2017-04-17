@@ -22,14 +22,15 @@ afford to refresh after every write, which provides up-to-date reads, and reader
 as they do not need to ever take locks.
 
 Under the hood, the map is implemented using two regular `HashMap`s, an operational log,
-reference counting, and some pointer magic. There is a single pointer through which all readers
-go. It points to an `Arc<HashMap>`, which the readers take in order to read data. When a write
-happens, the writer updates the other `HashMap` (for which there are no readers), and also
-stores a copy of the change in a log (hence the need for `Clone` on the keys and values). When
-`WriteHandle::refresh` is called, the writer wraps its `HashMap` in a new `Arc`, and then
-atomically swaps the reader pointer to point to it. The writer then waits for the reference
-count of the old map to return to one (its own reference), and replays the operational log to
-bring the stale map up to date.
+epoch counting, and some pointer magic. There is a single pointer through which all readers
+go. It points to a `HashMap`, which the readers access in order to read data. Every time a read
+has accessed the pointer, they increment a local epoch counter, and they update it again when
+they have finished the read (see #3 for more information). When a write occurs, the writer
+updates the other `HashMap` (for which there are no readers), and also stores a copy of the
+change in a log (hence the need for `Clone` on the keys and values). When
+`WriteHandle::refresh` is called, the writer, atomically swaps the reader pointer to point to
+the other map. It then waits for the epochs of all current readers to change, and then replays
+the operational log to bring the stale map up to date.
 
 The map is multi-value, meaning that every key maps to a *collection* of values. This
 introduces some memory cost by adding a layer of indirection through a `Vec` for each value,
