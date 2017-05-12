@@ -245,7 +245,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
     }
 
     fn add_op(&mut self, op: Operation<K, V>) {
-        if self.first == false {
+        if !self.first {
             self.oplog.push(op);
         } else {
             // we know there are no outstanding w_handle readers, so we can modify it directly!

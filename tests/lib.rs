@@ -60,7 +60,7 @@ fn busybusybusy_inner(slow: bool) {
         .map(|_| {
             let r = r.clone();
             thread::spawn(move || {
-                let _ = (); // rustfmt
+                // rustfmt
                 for i in 0..n {
                     let i = i.into();
                     loop {
@@ -109,12 +109,12 @@ fn minimal_query() {
 #[test]
 fn non_copy_values() {
     let (r, mut w) = evmap::new();
-    w.insert(1, format!("a"));
+    w.insert(1, "a".to_string());
     w.refresh();
-    w.insert(1, format!("b"));
+    w.insert(1, "b".to_string());
 
     assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"a")).unwrap());
+    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == "a")).unwrap());
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn map_into() {
     w.insert(1, "x");
 
     use std::collections::HashMap;
-    let copy: HashMap<_, Vec<_>> = r.map_into(|k, vs| (k.clone(), vs.iter().cloned().collect()));
+    let copy: HashMap<_, Vec<_>> = r.map_into(|&k, vs| (k, vs.to_vec()));
 
     assert_eq!(copy.len(), 2);
     assert!(copy.contains_key(&1));

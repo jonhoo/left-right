@@ -8,7 +8,7 @@
 //! readers except following explicit synchronization. Specifically, readers only see the
 //! operations that preceeded the last call to `WriteHandle::refresh` by a writer. This lets
 //! writers decide how stale they are willing to let reads get. They can refresh the map after
-//! every write to emulate a regular concurrent HashMap, or they can refresh only occasionally to
+//! every write to emulate a regular concurrent `HashMap`, or they can refresh only occasionally to
 //! reduce the synchronization overhead at the cost of stale reads.
 //!
 //! For read-heavy workloads, the scheme used by this module is particularly useful. Writers can
@@ -180,6 +180,7 @@ impl<M, S> Options<M, S>
     }
 
     /// Create the map, and construct the read and write handles used to access it.
+    #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
     pub fn construct<K, V>(self) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
         where K: Eq + Hash + Clone,
               S: Clone,
@@ -201,6 +202,7 @@ impl<M, S> Options<M, S>
 }
 
 /// Create an empty eventually consistent map.
+#[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
 pub fn new<K, V>() -> (ReadHandle<K, V, (), RandomState>, WriteHandle<K, V, (), RandomState>)
     where K: Eq + Hash + Clone,
           V: Clone
@@ -209,6 +211,7 @@ pub fn new<K, V>() -> (ReadHandle<K, V, (), RandomState>, WriteHandle<K, V, (), 
 }
 
 /// Create an empty eventually consistent map with meta information.
+#[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
 pub fn with_meta<K, V, M>
     (meta: M)
      -> (ReadHandle<K, V, M, RandomState>, WriteHandle<K, V, M, RandomState>)
