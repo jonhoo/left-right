@@ -37,8 +37,9 @@ use std::collections::hash_map::RandomState;
 /// assert_eq!(r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)), Some(true));
 /// ```
 pub struct WriteHandle<K, V, M = (), S = RandomState>
-    where K: Eq + Hash,
-          S: BuildHasher
+where
+    K: Eq + Hash,
+    S: BuildHasher,
 {
     w_handle: Option<Box<Inner<K, V, M, S>>>,
     oplog: Vec<Operation<K, V>>,
@@ -51,12 +52,14 @@ pub struct WriteHandle<K, V, M = (), S = RandomState>
     second: bool,
 }
 
-pub fn new<K, V, M, S>(w_handle: Inner<K, V, M, S>,
-                       r_handle: ReadHandle<K, V, M, S>)
-                       -> WriteHandle<K, V, M, S>
-    where K: Eq + Hash,
-          S: BuildHasher,
-          M: 'static + Clone
+pub fn new<K, V, M, S>(
+    w_handle: Inner<K, V, M, S>,
+    r_handle: ReadHandle<K, V, M, S>,
+) -> WriteHandle<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+    M: 'static + Clone,
 {
     let m = w_handle.meta.clone();
     WriteHandle {
@@ -73,10 +76,11 @@ pub fn new<K, V, M, S>(w_handle: Inner<K, V, M, S>,
 }
 
 impl<K, V, M, S> WriteHandle<K, V, M, S>
-    where K: Eq + Hash + Clone,
-          S: BuildHasher + Clone,
-          V: Eq + Clone,
-          M: 'static + Clone
+where
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
+    V: Eq + Clone,
+    M: 'static + Clone,
 {
     /// Refresh the handle used by readers so that pending writes are made visible.
     ///
@@ -105,23 +109,18 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
             if first {
                 // fast path -- read all and see if all have changed (which is likely)
                 let epochs_checked = &mut self.epochs_checked;
-                all_left = last_epochs
-                    .iter()
-                    .enumerate()
-                    .all(|(i, &e)| {
-                             let now = epochs[i].load(atomic::Ordering::Acquire);
-                             epochs_checked[i] = now == 0 || now != e || now & high_bit != 0;
-                             epochs_checked[i]
-                         });
+                all_left = last_epochs.iter().enumerate().all(|(i, &e)| {
+                    let now = epochs[i].load(atomic::Ordering::Acquire);
+                    epochs_checked[i] = now == 0 || now != e || now & high_bit != 0;
+                    epochs_checked[i]
+                });
                 first = false;
             }
 
             if !all_left {
                 // slow path -- only some have changed
-                all_left = self.epochs_checked
-                    .iter_mut()
-                    .enumerate()
-                    .all(|(i, epoch)| {
+                all_left = self.epochs_checked.iter_mut().enumerate().all(
+                    |(i, epoch)| {
                         if *epoch {
                             return true;
                         }
@@ -149,7 +148,8 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                         }
 
                         false
-                    });
+                    },
+                );
             }
 
             if all_left {
@@ -217,9 +217,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
         // swap in our w_handle, and get r_handle in return
         // note that this *technically* only needs to be Ordering::Release, but we make it SeqCst
         // to ensure that the subsequent epoch reads aren't re-ordered to before the swap.
-        let r_handle = self.r_handle
-            .inner
-            .swap(w_handle, atomic::Ordering::SeqCst);
+        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
         self.last_epochs.clear();
@@ -302,11 +300,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
                 v.clear();
             }
             Operation::Add(key, value) => {
-                inner
-                    .data
-                    .entry(key)
-                    .or_insert_with(Vec::new)
-                    .push(value);
+                inner.data.entry(key).or_insert_with(Vec::new).push(value);
             }
             Operation::Empty(key) => {
                 inner.data.remove(&key);
@@ -324,10 +318,11 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
 }
 
 impl<K, V, M, S> Extend<(K, V)> for WriteHandle<K, V, M, S>
-    where K: Eq + Hash + Clone,
-          S: BuildHasher + Clone,
-          V: Eq + Clone,
-          M: 'static + Clone
+where
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
+    V: Eq + Clone,
+    M: 'static + Clone,
 {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
         for (k, v) in iter {
@@ -339,10 +334,11 @@ impl<K, V, M, S> Extend<(K, V)> for WriteHandle<K, V, M, S>
 // allow using write handle for reads
 use std::ops::Deref;
 impl<K, V, M, S> Deref for WriteHandle<K, V, M, S>
-    where K: Eq + Hash + Clone,
-          S: BuildHasher + Clone,
-          V: Eq + Clone,
-          M: 'static + Clone
+where
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
+    V: Eq + Clone,
+    M: 'static + Clone,
 {
     type Target = ReadHandle<K, V, M, S>;
     fn deref(&self) -> &Self::Target {

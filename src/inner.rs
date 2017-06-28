@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, atomic};
 
 pub struct Inner<K, V, M, S>
-    where K: Eq + Hash,
-          S: BuildHasher
+where
+    K: Eq + Hash,
+    S: BuildHasher,
 {
     pub data: HashMap<K, Vec<V>, S>,
     pub epochs: Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>,
@@ -13,10 +14,11 @@ pub struct Inner<K, V, M, S>
 }
 
 impl<K, V, M, S> Clone for Inner<K, V, M, S>
-    where K: Eq + Hash + Clone,
-          S: BuildHasher + Clone,
-          V: Clone,
-          M: Clone
+where
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
+    V: Clone,
+    M: Clone,
 {
     fn clone(&self) -> Self {
         Inner {
@@ -29,8 +31,9 @@ impl<K, V, M, S> Clone for Inner<K, V, M, S>
 }
 
 impl<K, V, M, S> Inner<K, V, M, S>
-    where K: Eq + Hash,
-          S: BuildHasher
+where
+    K: Eq + Hash,
+    S: BuildHasher,
 {
     pub fn with_hasher(m: M, hash_builder: S) -> Self {
         Inner {
@@ -59,9 +62,6 @@ impl<K, V, M, S> Inner<K, V, M, S>
     }
 
     pub fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
-        self.epochs
-            .lock()
-            .unwrap()
-            .push(epoch.clone());
+        self.epochs.lock().unwrap().push(epoch.clone());
     }
 }

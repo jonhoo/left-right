@@ -130,7 +130,8 @@ pub use read::ReadHandle;
 /// In particular, the options dictate the hashing function, meta type, and initial capacity of the
 /// map.
 pub struct Options<M, S>
-    where S: BuildHasher
+where
+    S: BuildHasher,
 {
     meta: M,
     hasher: S,
@@ -148,7 +149,8 @@ impl Default for Options<(), RandomState> {
 }
 
 impl<M, S> Options<M, S>
-    where S: BuildHasher
+where
+    S: BuildHasher,
 {
     /// Set the initial meta value for the map.
     pub fn with_meta<M2>(self, meta: M2) -> Options<M2, S> {
@@ -161,7 +163,8 @@ impl<M, S> Options<M, S>
 
     /// Set the hasher used for the map.
     pub fn with_hasher<S2>(self, hash_builder: S2) -> Options<M, S2>
-        where S2: BuildHasher
+    where
+        S2: BuildHasher,
     {
         Options {
             meta: self.meta,
@@ -182,10 +185,11 @@ impl<M, S> Options<M, S>
     /// Create the map, and construct the read and write handles used to access it.
     #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
     pub fn construct<K, V>(self) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
-        where K: Eq + Hash + Clone,
-              S: Clone,
-              V: Clone,
-              M: 'static + Clone
+    where
+        K: Eq + Hash + Clone,
+        S: Clone,
+        V: Clone,
+        M: 'static + Clone,
     {
         let inner = if let Some(cap) = self.capacity {
             Inner::with_capacity_and_hasher(self.meta, cap, self.hasher)
@@ -203,21 +207,30 @@ impl<M, S> Options<M, S>
 
 /// Create an empty eventually consistent map.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
-pub fn new<K, V>() -> (ReadHandle<K, V, (), RandomState>, WriteHandle<K, V, (), RandomState>)
-    where K: Eq + Hash + Clone,
-          V: Clone
+pub fn new<K, V>()
+    -> (
+    ReadHandle<K, V, (), RandomState>,
+    WriteHandle<K, V, (), RandomState>,
+)
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
 {
     Options::default().construct()
 }
 
 /// Create an empty eventually consistent map with meta information.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
-pub fn with_meta<K, V, M>
-    (meta: M)
-     -> (ReadHandle<K, V, M, RandomState>, WriteHandle<K, V, M, RandomState>)
-    where K: Eq + Hash + Clone,
-          M: 'static + Clone,
-          V: 'static + Clone
+pub fn with_meta<K, V, M>(
+    meta: M,
+) -> (
+    ReadHandle<K, V, M, RandomState>,
+    WriteHandle<K, V, M, RandomState>,
+)
+where
+    K: Eq + Hash + Clone,
+    M: 'static + Clone,
+    V: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
 }

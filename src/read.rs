@@ -17,8 +17,9 @@ use std::marker::PhantomData;
 /// `refresh()`. In other words, all operations performed on a `ReadHandle` will *only* see writes
 /// to the map that preceeded the last call to `refresh()`.
 pub struct ReadHandle<K, V, M = (), S = RandomState>
-    where K: Eq + Hash,
-          S: BuildHasher
+where
+    K: Eq + Hash,
+    S: BuildHasher,
 {
     // TODO: pub(crate)
     #[doc(hidden)]
@@ -35,9 +36,10 @@ pub struct ReadHandle<K, V, M = (), S = RandomState>
 }
 
 impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
-    where K: Eq + Hash,
-          S: BuildHasher,
-          M: Clone
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+    M: Clone,
 {
     fn clone(&self) -> Self {
         let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
@@ -51,8 +53,9 @@ impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
 }
 
 pub fn new<K, V, M, S>(inner: Inner<K, V, M, S>) -> ReadHandle<K, V, M, S>
-    where K: Eq + Hash,
-          S: BuildHasher
+where
+    K: Eq + Hash,
+    S: BuildHasher,
 {
     // tell writer about our epoch tracker
     let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
@@ -67,12 +70,14 @@ pub fn new<K, V, M, S>(inner: Inner<K, V, M, S>) -> ReadHandle<K, V, M, S>
 }
 
 impl<K, V, M, S> ReadHandle<K, V, M, S>
-    where K: Eq + Hash,
-          S: BuildHasher,
-          M: Clone
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+    M: Clone,
 {
     fn with_handle<F, T>(&self, f: F) -> T
-        where F: FnOnce(&Inner<K, V, M, S>) -> T
+    where
+        F: FnOnce(&Inner<K, V, M, S>) -> T,
     {
         // once we update our epoch, the writer can no longer do a swap until we set the MSB to
         // indicate that we've finished our read. however, we still need to deal with the case of a
@@ -114,8 +119,10 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
         mem::forget(rs); // don't free the Box!
 
         // we've finished reading -- let the writer know
-        self.epoch.store((epoch + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),
-                         atomic::Ordering::Release);
+        self.epoch.store(
+            (epoch + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),
+            atomic::Ordering::Release,
+        );
 
         res
     }
@@ -146,15 +153,16 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
     /// If no values exist for the given key, the function will not be called, and `None` will be
     /// returned.
     pub fn get_and<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<T>
-        where F: FnOnce(&[V]) -> T,
-              K: Borrow<Q>,
-              Q: Hash + Eq
+    where
+        F: FnOnce(&[V]) -> T,
+        K: Borrow<Q>,
+        Q: Hash + Eq,
     {
         self.with_handle(move |inner| if !inner.is_ready() {
-                             None
-                         } else {
-                             inner.data.get(key).map(move |v| then(&**v))
-                         })
+            None
+        } else {
+            inner.data.get(key).map(move |v| then(&**v))
+        })
     }
 
     /// Applies a function to the values corresponding to the key, and returns the result alongside
@@ -169,17 +177,18 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
     /// If no values exist for the given key, the function will not be called, and `Some(None, _)`
     /// will be returned.
     pub fn meta_get_and<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<(Option<T>, M)>
-        where F: FnOnce(&[V]) -> T,
-              K: Borrow<Q>,
-              Q: Hash + Eq
+    where
+        F: FnOnce(&[V]) -> T,
+        K: Borrow<Q>,
+        Q: Hash + Eq,
     {
         self.with_handle(move |inner| if !inner.is_ready() {
-                             None
-                         } else {
-                             let res = inner.data.get(key).map(move |v| then(&**v));
-                             let res = (res, inner.meta.clone());
-                             Some(res)
-                         })
+            None
+        } else {
+            let res = inner.data.get(key).map(move |v| then(&**v));
+            let res = (res, inner.meta.clone());
+            Some(res)
+        })
     }
 
     /// Returns true if the map contains any values for the specified key.
@@ -187,8 +196,9 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
     /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
     /// form *must* match those for the key type.
     pub fn contains_key<Q: ?Sized>(&self, key: &Q) -> bool
-        where K: Borrow<Q>,
-              Q: Hash + Eq
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
     {
         self.with_handle(move |inner| inner.data.contains_key(key))
     }
@@ -198,20 +208,22 @@ impl<K, V, M, S> ReadHandle<K, V, M, S>
     /// Be careful with this function! While the iteration is ongoing, any writer that tries to
     /// refresh will block waiting on this reader to finish.
     pub fn for_each<F>(&self, mut f: F)
-        where F: FnMut(&K, &[V])
+    where
+        F: FnMut(&K, &[V]),
     {
         self.with_handle(move |inner| for (k, vs) in &inner.data {
-                             f(k, &vs[..])
-                         })
+            f(k, &vs[..])
+        })
     }
 
     /// Read all values in the map, and transform them into a new collection.
     pub fn map_into<Map, Collector, Target>(&self, mut f: Map) -> Collector
-        where Map: FnMut(&K, &[V]) -> Target,
-              Collector: FromIterator<Target>
+    where
+        Map: FnMut(&K, &[V]) -> Target,
+        Collector: FromIterator<Target>,
     {
         self.with_handle(move |inner| {
-                             Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
-                         })
+            Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
+        })
     }
 }
