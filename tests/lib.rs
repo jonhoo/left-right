@@ -27,8 +27,10 @@ fn it_works() {
     // but after the swap, the record is there!
     assert_eq!(r.get_and(&x.0, |rs| rs.len()), Some(1));
     assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((Some(1), ())));
-    assert_eq!(r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
-               Some(true));
+    assert_eq!(
+        r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
+        Some(true)
+    );
 
     // non-existing records return None
     assert_eq!(r.get_and(&'y', |rs| rs.len()), None);
@@ -302,8 +304,8 @@ fn foreach() {
     w.insert(1, "x");
 
     r.for_each(|&k, vs| match k {
-                   1 => assert_eq!(vs, &*vec!["a", "b"]),
-                   2 => assert_eq!(vs, &*vec!["c"]),
-                   _ => unreachable!(),
-               });
+        1 => assert_eq!(vs, &*vec!["a", "b"]),
+        2 => assert_eq!(vs, &*vec!["c"]),
+        _ => unreachable!(),
+    });
 }
