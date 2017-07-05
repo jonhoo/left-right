@@ -1,6 +1,6 @@
 [package]
 name = "evmap"
-version = "0.6.5"
+version = "1.0.0"
 
 description = "A lock-free, eventually consistent, concurrent multi-value map."
 readme = "README.md"
