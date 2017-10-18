@@ -34,6 +34,14 @@ fn main() {
                 .help("Also benchmark Arc<RwLock<HashMap>> and CHashMap"),
         )
         .arg(
+            Arg::with_name("eventual")
+                .short("e")
+                .takes_value(true)
+                .default_value("1")
+                .value_name("N")
+                .help("Refresh evmap every N writes"),
+        )
+        .arg(
             Arg::with_name("writers")
                 .short("w")
                 .long("writers")
@@ -52,6 +60,7 @@ fn main() {
         )
         .get_matches();
 
+    let refresh = value_t!(matches, "eventual", usize).unwrap_or_else(|e| e.exit());
     let readers = value_t!(matches, "readers", usize).unwrap_or_else(|e| e.exit());
     let writers = value_t!(matches, "writers", usize).unwrap_or_else(|e| e.exit());
     let dist = matches.value_of("distribution").unwrap_or("uniform");
@@ -125,7 +134,7 @@ fn main() {
         let (r, w) = evmap::Options::default()
             .with_capacity(5_000_000)
             .construct();
-        let w = sync::Arc::new(sync::Mutex::new(w));
+        let w = sync::Arc::new(sync::Mutex::new((w, 0, refresh)));
         let start = time::Instant::now();
         let end = start + dur;
         join.extend((0..readers).into_iter().map(|_| {
@@ -141,8 +150,8 @@ fn main() {
         let (wres, rres): (Vec<_>, _) = join.drain(..)
             .map(|jh| jh.join().unwrap())
             .partition(|&(write, _)| write);
-        stat("evmap-sorted", "write", wres);
-        stat("evmap-sorted", "read", rres);
+        stat("evmap", "write", wres);
+        stat("evmap", "read", rres);
     }
 }
 
@@ -202,7 +211,7 @@ impl Backend for sync::Arc<sync::RwLock<HashMap<u64, u64>>> {
 
 enum EvHandle {
     Read(evmap::ReadHandle<u64, u64>),
-    Write(sync::Arc<sync::Mutex<evmap::WriteHandle<u64, u64>>>),
+    Write(sync::Arc<sync::Mutex<(evmap::WriteHandle<u64, u64>, usize, usize)>>),
 }
 
 impl Backend for EvHandle {
@@ -217,8 +226,12 @@ impl Backend for EvHandle {
     fn b_put(&mut self, key: u64, value: u64) {
         if let EvHandle::Write(ref w) = *self {
             let mut w = w.lock().unwrap();
-            w.update(key, value);
-            w.refresh();
+            w.0.update(key, value);
+            w.1 += 1;
+            if w.1 == w.2 {
+                w.1 = 0;
+                w.0.refresh();
+            }
         } else {
             unreachable!();
         }
