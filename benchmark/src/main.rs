@@ -1,13 +1,13 @@
-extern crate evmap;
 extern crate chashmap;
-extern crate zipf;
 #[macro_use]
 extern crate clap;
+extern crate evmap;
 extern crate rand;
+extern crate zipf;
 
 use chashmap::CHashMap;
 use std::collections::HashMap;
-use clap::{Arg, App};
+use clap::{App, Arg};
 
 use std::time;
 use std::sync;
@@ -17,29 +17,39 @@ fn main() {
     let matches = App::new("Concurrent HashMap Benchmarker")
         .version(crate_version!())
         .author("Jon Gjengset <jon@thesquareplanet.com>")
-        .about("Benchmark multiple implementations of concurrent HashMaps with varying read/write load")
-        .arg(Arg::with_name("readers")
-            .short("r")
-            .long("readers")
-            .help("Set the number of readers")
-            .required(true)
-            .takes_value(true))
-        .arg(Arg::with_name("compare")
-            .short("c")
-            .help("Also benchmark Arc<RwLock<HashMap>> and CHashMap"))
-        .arg(Arg::with_name("writers")
-            .short("w")
-            .long("writers")
-            .required(true)
-            .help("Set the number of writers")
-            .takes_value(true))
-        .arg(Arg::with_name("distribution")
-            .short("d")
-            .long("dist")
-            .possible_values(&["uniform", "skewed"])
-            .default_value("uniform")
-            .help("Set the distribution for reads and writes")
-            .takes_value(true))
+        .about(
+            "Benchmark multiple implementations of concurrent HashMaps with varying read/write load",
+        )
+        .arg(
+            Arg::with_name("readers")
+                .short("r")
+                .long("readers")
+                .help("Set the number of readers")
+                .required(true)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("compare")
+                .short("c")
+                .help("Also benchmark Arc<RwLock<HashMap>> and CHashMap"),
+        )
+        .arg(
+            Arg::with_name("writers")
+                .short("w")
+                .long("writers")
+                .required(true)
+                .help("Set the number of writers")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("distribution")
+                .short("d")
+                .long("dist")
+                .possible_values(&["uniform", "skewed"])
+                .default_value("uniform")
+                .help("Set the distribution for reads and writes")
+                .takes_value(true),
+        )
         .get_matches();
 
     let readers = value_t!(matches, "readers", usize).unwrap_or_else(|e| e.exit());
@@ -50,16 +60,17 @@ fn main() {
     let dur_in_s = dur_in_ns as f64 / 1_000_000_000_f64;
     let span = 10000;
 
-    let stat = |var, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter()
-            .enumerate() {
-        println!("{:2} {:2} {:10} {:10} {:8.0} ops/s {} {}",
-                 readers,
-                 writers,
-                 dist,
-                 var,
-                 res.1 as f64 / dur_in_s as f64,
-                 op,
-                 i)
+    let stat = |var, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter().enumerate() {
+        println!(
+            "{:2} {:2} {:10} {:10} {:8.0} ops/s {} {}",
+            readers,
+            writers,
+            dist,
+            var,
+            res.1 as f64 / dur_in_s as f64,
+            op,
+            i
+        )
     };
 
     let mut join = Vec::with_capacity(readers + writers);
@@ -79,8 +90,9 @@ fn main() {
             let dist = dist.to_owned();
             thread::spawn(move || drive(map, end, dist, true, span))
         }));
-        let (wres, rres): (Vec<_>, _) =
-            join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
+        let (wres, rres): (Vec<_>, _) = join.drain(..)
+            .map(|jh| jh.join().unwrap())
+            .partition(|&(write, _)| write);
         stat("std", "write", wres);
         stat("std", "read", rres);
     }
@@ -101,15 +113,18 @@ fn main() {
             let dist = dist.to_owned();
             thread::spawn(move || drive(map, end, dist, true, span))
         }));
-        let (wres, rres): (Vec<_>, _) =
-            join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
+        let (wres, rres): (Vec<_>, _) = join.drain(..)
+            .map(|jh| jh.join().unwrap())
+            .partition(|&(write, _)| write);
         stat("chashmap", "write", wres);
         stat("chashmap", "read", rres);
     }
 
     // finally, benchmark evmap
     {
-        let (r, w) = evmap::Options::default().with_capacity(5_000_000).construct();
+        let (r, w) = evmap::Options::default()
+            .with_capacity(5_000_000)
+            .construct();
         let w = sync::Arc::new(sync::Mutex::new(w));
         let start = time::Instant::now();
         let end = start + dur;
@@ -123,10 +138,11 @@ fn main() {
             let dist = dist.to_owned();
             thread::spawn(move || drive(map, end, dist, true, span))
         }));
-        let (wres, rres): (Vec<_>, _) =
-            join.drain(..).map(|jh| jh.join().unwrap()).partition(|&(write, _)| write);
-        stat("evmap", "write", wres);
-        stat("evmap", "read", rres);
+        let (wres, rres): (Vec<_>, _) = join.drain(..)
+            .map(|jh| jh.join().unwrap())
+            .partition(|&(write, _)| write);
+        stat("evmap-sorted", "write", wres);
+        stat("evmap-sorted", "read", rres);
     }
 }
 
@@ -135,12 +151,13 @@ trait Backend {
     fn b_put(&mut self, key: u64, value: u64);
 }
 
-fn drive<B: Backend>(mut backend: B,
-                     end: time::Instant,
-                     dist: String,
-                     write: bool,
-                     span: usize)
-                     -> (bool, usize) {
+fn drive<B: Backend>(
+    mut backend: B,
+    end: time::Instant,
+    dist: String,
+    write: bool,
+    span: usize,
+) -> (bool, usize) {
     use rand::Rng;
 
     let mut ops = 0;
@@ -175,11 +192,7 @@ impl Backend for sync::Arc<CHashMap<u64, u64>> {
 
 impl Backend for sync::Arc<sync::RwLock<HashMap<u64, u64>>> {
     fn b_get(&self, key: u64) -> u64 {
-        self.read()
-            .unwrap()
-            .get(&key)
-            .map(|&v| v)
-            .unwrap_or(0)
+        self.read().unwrap().get(&key).map(|&v| v).unwrap_or(0)
     }
 
     fn b_put(&mut self, key: u64, value: u64) {
