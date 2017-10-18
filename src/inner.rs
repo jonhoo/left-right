@@ -1,6 +1,6 @@
-use std::hash::{Hash, BuildHasher};
+use std::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, atomic};
+use std::sync::{atomic, Arc, Mutex};
 
 pub struct Inner<K, V, M, S>
 where

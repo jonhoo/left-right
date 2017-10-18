@@ -182,7 +182,7 @@
 #![deny(missing_docs)]
 
 use std::collections::hash_map::RandomState;
-use std::hash::{Hash, BuildHasher};
+use std::hash::{BuildHasher, Hash};
 
 mod inner;
 use inner::Inner;
@@ -284,8 +284,7 @@ where
 
 /// Create an empty eventually consistent map.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
-pub fn new<K, V>()
-    -> (
+pub fn new<K, V>() -> (
     ReadHandle<K, V, (), RandomState>,
     WriteHandle<K, V, (), RandomState>,
 )

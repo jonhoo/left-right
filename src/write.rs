@@ -3,7 +3,7 @@ use inner::Inner;
 use read::ReadHandle;
 
 use std::sync::atomic;
-use std::hash::{Hash, BuildHasher};
+use std::hash::{BuildHasher, Hash};
 use std::collections::hash_map::RandomState;
 
 /// A handle that may be used to modify the eventually consistent map.
@@ -119,8 +119,10 @@ where
 
             if !all_left {
                 // slow path -- only some have changed
-                all_left = self.epochs_checked.iter_mut().enumerate().all(
-                    |(i, epoch)| {
+                all_left = self.epochs_checked
+                    .iter_mut()
+                    .enumerate()
+                    .all(|(i, epoch)| {
                         if *epoch {
                             return true;
                         }
@@ -148,8 +150,7 @@ where
                         }
 
                         false
-                    },
-                );
+                    });
             }
 
             if all_left {

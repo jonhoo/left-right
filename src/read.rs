@@ -4,7 +4,7 @@ use std::mem;
 use std::sync;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
-use std::hash::{Hash, BuildHasher};
+use std::hash::{BuildHasher, Hash};
 use std::collections::hash_map::RandomState;
 use std::borrow::Borrow;
 use std::iter::FromIterator;
@@ -22,8 +22,7 @@ where
     S: BuildHasher,
 {
     // TODO: pub(crate)
-    #[doc(hidden)]
-    pub inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
+    #[doc(hidden)] pub inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
 
     // Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to
@@ -43,7 +42,9 @@ where
 {
     fn clone(&self) -> Self {
         let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
-        self.with_handle(|inner| { inner.register_epoch(&epoch); });
+        self.with_handle(|inner| {
+            inner.register_epoch(&epoch);
+        });
         ReadHandle {
             epoch: epoch,
             inner: self.inner.clone(),
