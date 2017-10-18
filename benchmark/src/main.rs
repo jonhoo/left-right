@@ -69,18 +69,19 @@ fn main() {
     let dur_in_s = dur_in_ns as f64 / 1_000_000_000_f64;
     let span = 10000;
 
-    let stat = |var, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter().enumerate() {
-        println!(
-            "{:2} {:2} {:10} {:10} {:8.0} ops/s {} {}",
-            readers,
-            writers,
-            dist,
-            var,
-            res.1 as f64 / dur_in_s as f64,
-            op,
-            i
-        )
-    };
+    let stat =
+        |var: &str, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter().enumerate() {
+            println!(
+                "{:2} {:2} {:10} {:10} {:8.0} ops/s {} {}",
+                readers,
+                writers,
+                dist,
+                var,
+                res.1 as f64 / dur_in_s as f64,
+                op,
+                i
+            )
+        };
 
     let mut join = Vec::with_capacity(readers + writers);
     // first, benchmark Arc<RwLock<HashMap>>
@@ -150,8 +151,14 @@ fn main() {
         let (wres, rres): (Vec<_>, _) = join.drain(..)
             .map(|jh| jh.join().unwrap())
             .partition(|&(write, _)| write);
-        stat("evmap", "write", wres);
-        stat("evmap", "read", rres);
+
+        let n = if refresh == 1 {
+            "evmap".to_owned()
+        } else {
+            format!("evmap-refresh{}", refresh)
+        };
+        stat(&n, "write", wres);
+        stat(&n, "read", rres);
     }
 }
 
