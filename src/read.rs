@@ -24,6 +24,7 @@ where
     // TODO: pub(crate)
     #[doc(hidden)] pub inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
+    my_epoch: sync::atomic::AtomicUsize,
 
     // Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to
     // call `with_handle` at the same time. We *could* keep it `Sync` and make `with_handle`
@@ -47,6 +48,7 @@ where
         });
         ReadHandle {
             epoch: epoch,
+            my_epoch: atomic::AtomicUsize::new(0),
             inner: self.inner.clone(),
             _not_sync_no_feature: PhantomData,
         }
@@ -65,6 +67,7 @@ where
     let store = Box::into_raw(Box::new(inner));
     ReadHandle {
         epoch: epoch,
+        my_epoch: atomic::AtomicUsize::new(0),
         inner: sync::Arc::new(AtomicPtr::new(store)),
         _not_sync_no_feature: PhantomData,
     }
@@ -107,8 +110,8 @@ where
         //
         // in all cases, using a pointer we read *after* updating our epoch is safe.
 
-        // so, update our epoch tracker (the bit shifts clear MSB).
-        let epoch = self.epoch.load(atomic::Ordering::Relaxed) << 1 >> 1;
+        // so, update our epoch tracker.
+        let epoch = self.my_epoch.fetch_add(1, atomic::Ordering::Relaxed);
         // this technically only needs to be an Ordering::Release, but to ensure that the pointer
         // read happens strictly after updating the epoch, we make it a SeqCst.
         self.epoch.store(epoch + 1, atomic::Ordering::SeqCst);
