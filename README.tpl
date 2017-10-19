@@ -14,7 +14,7 @@ lock](https://doc.rust-lang.org/std/sync/struct.RwLock.html), as well as
 against [chashmap](https://crates.io/crates/chashmap) — a crate which provides
 "concurrent hash maps, based on bucket-level multi-reader locks". The
 benchmarks were run using the binary in [benchmark/](benchmark/src/main.rs) on
-a [48-core machine](https://github.com/mit-pdos/wiki/blob/master/hosts/tom.csail.mit.edu.md#hardware-specifications).
+a 40-core machine with Intel(R) Xeon(R) CPU E5-2660 v3 @ 2.60GHz CPUs.
 
 The benchmark runs a number of reader and writer threads in tight loops, each
 of which does a read or write to a random key in the map respectively. Results
@@ -24,8 +24,9 @@ readers and writers increases.
 
 Preliminary results show that `evmap` performs well under contention,
 especially on the read side. This benchmark represents the worst-case usage of
-`evmap` in which every write also does a `refresh`. If the map was refreshed
-less often, performance would increase.
+`evmap` in which every write also does a `refresh`. If the map is refreshed
+less often, performance increases (see bottom plot).
 
 ![Read throughput](benchmark/read-throughput.png)
 ![Write throughput](benchmark/write-throughput.png)
+![Write throughput](benchmark/write-with-refresh.png)
