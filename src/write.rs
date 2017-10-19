@@ -2,6 +2,7 @@ use super::Operation;
 use inner::Inner;
 use read::ReadHandle;
 
+use std::sync::Arc;
 use std::sync::atomic;
 use std::hash::{BuildHasher, Hash};
 use std::collections::hash_map::RandomState;
@@ -96,7 +97,7 @@ where
         // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
         // only block on pre-existing readers, and they are never waiting to push onto epochs
         // unless they have finished reading.
-        let epochs = self.w_handle.as_ref().unwrap().epochs.clone();
+        let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
         let epochs = epochs.lock().unwrap();
         self.last_epochs.resize(epochs.len(), 0);
 
@@ -105,8 +106,8 @@ where
         let high_bit = 1usize << (mem::size_of::<usize>() * 8 - 1);
         'retry: loop {
             // read all and see if all have changed (which is likely)
-            for i in starti..epochs.len() {
-                let now = epochs[i].load(atomic::Ordering::Acquire);
+            for (i, epoch) in epochs.iter().enumerate().skip(starti) {
+                let now = epoch.load(atomic::Ordering::Acquire);
                 if (now != self.last_epochs[i]) | (now & high_bit != 0) | (now == 0) {
                     // reader must have seen last swap
                 } else {
@@ -188,8 +189,8 @@ where
         let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
-        for i in 0..epochs.len() {
-            self.last_epochs[i] = epochs[i].load(atomic::Ordering::Acquire);
+        for (i, epoch) in epochs.iter().enumerate() {
+            self.last_epochs[i] = epoch.load(atomic::Ordering::Acquire);
         }
 
         // NOTE: at this point, there are likely still readers using the w_handle we got
@@ -256,12 +257,12 @@ where
     fn apply_op(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
         match op {
             Operation::Replace(key, value) => {
-                let mut v = inner.data.entry(key).or_insert_with(Vec::new);
+                let v = inner.data.entry(key).or_insert_with(Vec::new);
                 v.clear();
                 v.push(value);
             }
             Operation::Clear(key) => {
-                let mut v = inner.data.entry(key).or_insert_with(Vec::new);
+                let v = inner.data.entry(key).or_insert_with(Vec::new);
                 v.clear();
             }
             Operation::Add(key, value) => {
@@ -271,7 +272,7 @@ where
                 inner.data.remove(&key);
             }
             Operation::Remove(key, value) => {
-                if let Some(mut e) = inner.data.get_mut(&key) {
+                if let Some(e) = inner.data.get_mut(&key) {
                     // find the first entry that matches all fields
                     if let Some(i) = e.iter().position(|v| v == &value) {
                         e.swap_remove(i);

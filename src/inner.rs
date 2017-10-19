@@ -23,7 +23,7 @@ where
     fn clone(&self) -> Self {
         Inner {
             data: self.data.clone(),
-            epochs: self.epochs.clone(),
+            epochs: Arc::clone(&self.epochs),
             meta: self.meta.clone(),
             ready: self.ready,
         }
@@ -62,6 +62,6 @@ where
     }
 
     pub fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
-        self.epochs.lock().unwrap().push(epoch.clone());
+        self.epochs.lock().unwrap().push(Arc::clone(epoch));
     }
 }

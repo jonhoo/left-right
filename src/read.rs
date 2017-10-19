@@ -49,7 +49,7 @@ where
         ReadHandle {
             epoch: epoch,
             my_epoch: atomic::AtomicUsize::new(0),
-            inner: self.inner.clone(),
+            inner: sync::Arc::clone(&self.inner),
             _not_sync_no_feature: PhantomData,
         }
     }
