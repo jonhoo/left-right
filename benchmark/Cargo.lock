@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
  "chashmap 2.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.26.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "evmap 1.0.1",
+ "evmap 1.0.2",
  "rand 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "zipf 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "evmap"
-version = "1.0.1"
+version = "1.0.2"
 
 [[package]]
 name = "fuchsia-zircon"
