@@ -107,6 +107,12 @@ where
         'retry: loop {
             // read all and see if all have changed (which is likely)
             for (i, epoch) in epochs.iter().enumerate().skip(starti) {
+                if self.last_epochs[i] & high_bit != 0 {
+                    // reader was not active right after last swap
+                    // and therefore *must* only see new pointer
+                    continue;
+                }
+
                 let now = epoch.load(atomic::Ordering::Acquire);
                 if (now != self.last_epochs[i]) | (now & high_bit != 0) | (now == 0) {
                     // reader must have seen last swap
