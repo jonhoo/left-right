@@ -112,9 +112,10 @@ where
 
         // so, update our epoch tracker.
         let epoch = self.my_epoch.fetch_add(1, atomic::Ordering::Relaxed);
-        // this technically only needs to be an Ordering::Release, but to ensure that the pointer
-        // read happens strictly after updating the epoch, we make it a SeqCst.
-        self.epoch.store(epoch + 1, atomic::Ordering::SeqCst);
+        self.epoch.store(epoch + 1, atomic::Ordering::Release);
+
+        // ensure that the pointer read happens strictly after updating the epoch
+        atomic::fence(atomic::Ordering::SeqCst);
 
         // then, atomically read pointer, and use the map being pointed to
         let r_handle = self.inner.load(atomic::Ordering::Acquire);

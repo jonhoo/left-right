@@ -184,10 +184,13 @@ where
         let w_handle = Box::into_raw(w_handle);
 
         // swap in our w_handle, and get r_handle in return
-        // note that this *technically* only needs to be Ordering::Release, but we make it SeqCst
-        // to ensure that the subsequent epoch reads aren't re-ordered to before the swap.
-        let r_handle = self.r_handle.inner.swap(w_handle, atomic::Ordering::SeqCst);
+        let r_handle = self.r_handle
+            .inner
+            .swap(w_handle, atomic::Ordering::Release);
         let r_handle = unsafe { Box::from_raw(r_handle) };
+
+        // ensure that the subsequent epoch reads aren't re-ordered to before the swap
+        atomic::fence(atomic::Ordering::SeqCst);
 
         for (i, epoch) in epochs.iter().enumerate() {
             self.last_epochs[i] = epoch.load(atomic::Ordering::Acquire);
