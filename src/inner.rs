@@ -16,13 +16,13 @@ where
 impl<K, V, M, S> Clone for Inner<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Clone,
-    V: Clone,
+    S: BuildHasher + Default,
     M: Clone,
 {
     fn clone(&self) -> Self {
+        assert!(self.data.is_empty());
         Inner {
-            data: self.data.clone(),
+            data: Default::default(),
             epochs: Arc::clone(&self.epochs),
             meta: self.meta.clone(),
             ready: self.ready,

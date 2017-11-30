@@ -202,6 +202,9 @@ pub use write::WriteHandle;
 mod read;
 pub use read::ReadHandle;
 
+mod shallow_copy;
+pub use shallow_copy::ShallowCopy;
+
 /// Options for how to initialize the map.
 ///
 /// In particular, the options dictate the hashing function, meta type, and initial capacity of the
@@ -264,8 +267,8 @@ where
     pub fn construct<K, V>(self) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
     where
         K: Eq + Hash + Clone,
-        S: Clone,
-        V: Clone,
+        S: BuildHasher + Default,
+        V: Eq + ShallowCopy,
         M: 'static + Clone,
     {
         let inner = if let Some(cap) = self.capacity {
@@ -290,7 +293,7 @@ pub fn new<K, V>() -> (
 )
 where
     K: Eq + Hash + Clone,
-    V: Clone,
+    V: Eq + ShallowCopy,
 {
     Options::default().construct()
 }
@@ -305,8 +308,8 @@ pub fn with_meta<K, V, M>(
 )
 where
     K: Eq + Hash + Clone,
+    V: Eq + ShallowCopy,
     M: 'static + Clone,
-    V: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
 }

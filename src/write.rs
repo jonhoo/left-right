@@ -1,4 +1,4 @@
-use super::Operation;
+use super::{Operation, ShallowCopy};
 use inner::Inner;
 use read::ReadHandle;
 
@@ -39,8 +39,10 @@ use std::collections::hash_map::RandomState;
 /// ```
 pub struct WriteHandle<K, V, M = (), S = RandomState>
 where
-    K: Eq + Hash,
-    S: BuildHasher,
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Default,
+    V: Eq + ShallowCopy,
+    M: 'static + Clone,
 {
     w_handle: Option<Box<Inner<K, V, M, S>>>,
     oplog: Vec<Operation<K, V>>,
@@ -57,8 +59,9 @@ pub(crate) fn new<K, V, M, S>(
     r_handle: ReadHandle<K, V, M, S>,
 ) -> WriteHandle<K, V, M, S>
 where
-    K: Eq + Hash,
-    S: BuildHasher,
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Default,
+    V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
     let m = w_handle.meta.clone();
@@ -74,11 +77,52 @@ where
     }
 }
 
+impl<K, V, M, S> Drop for WriteHandle<K, V, M, S>
+where
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Default,
+    V: Eq + ShallowCopy,
+    M: 'static + Clone,
+{
+    fn drop(&mut self) {
+        // eventually, the last Arc<Inner> will be dropped, and that will cause the entire read map
+        // to be dropped. this will, in turn, call the destructors for the values that are there.
+        // we need to make sure that we don't end up dropping some aliased values twice, and that
+        // we don't forget to drop any values.
+        //
+        // we *could* laboriously walk through .data and .oplog to figure out exactly what
+        // destructors we do or don't need to call to ensure exactly-once dropping. but, instead,
+        // we'll just let refresh do the work for us.
+        if !self.oplog.is_empty() {
+            // applies oplog entries that are in r_handle to w_handle and applies new oplog entries
+            // to w_handle, then swaps. oplog is *not* guaranteed to be empty, but *is* guaranteed
+            // to only have ops that have been applied to exactly one map.
+            self.refresh();
+        }
+        if !self.oplog.is_empty() {
+            // applies oplog entries that are in (old) w_handle to (old) r_handle. this leaves
+            // oplog empty, and the two data maps identical.
+            self.refresh();
+        }
+        assert!(self.oplog.is_empty());
+
+        // since the two maps are exactly equal, we need to make sure that we *don't* call the
+        // destructors of any of the values that are in our map, as they'll all be called when the
+        // last read handle goes out of scope.
+        use std::mem;
+        for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain() {
+            for v in vs.drain(..) {
+                mem::forget(v);
+            }
+        }
+    }
+}
+
 impl<K, V, M, S> WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Clone,
-    V: Eq + Clone,
+    S: BuildHasher + Default,
+    V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
     /// Refresh the handle used by readers so that pending writes are made visible.
@@ -148,9 +192,20 @@ where
                 // this may seem unnecessarily complex, but it has the major advantage that it
                 // is relatively efficient to do lots of writes to the evmap at startup to
                 // populate it, and then refresh().
-                let r_handle =
+                let mut r_handle =
                     unsafe { Box::from_raw(self.r_handle.inner.load(atomic::Ordering::Relaxed)) };
-                w_handle.data = r_handle.data.clone();
+                // XXX: it really is too bad that we can't just .clone() the data here and save
+                // ourselves a lot of re-hashing, re-bucketization, etc.
+                w_handle.data = r_handle
+                    .data
+                    .iter_mut()
+                    .map(|(k, vs)| {
+                        (
+                            k.clone(),
+                            vs.iter_mut().map(|v| unsafe { v.shallow_copy() }).collect(),
+                        )
+                    })
+                    .collect();
                 mem::forget(r_handle);
             }
 
@@ -158,14 +213,24 @@ where
             // the r_handle map has not seen any of the writes following swap_index
             if self.swap_index != 0 {
                 // we can drain out the operations that only the w_handle map needs
+                //
                 // NOTE: the if above is because drain(0..0) would remove 0
+                //
+                // NOTE: the distinction between apply_first and apply_second is the reason why our
+                // use of shallow_copy is safe. we apply each op in the oplog twice, first with
+                // apply_first, and then with apply_second. on apply_first, no destructors are
+                // called for removed values (since those values all still exist in the other map),
+                // and all new values are shallow copied in (since we need the original for the
+                // other map). on apply_second, we call the destructor for anything that's been
+                // removed (since those removals have already happened on the other map, and
+                // without calling their destructor).
                 for op in self.oplog.drain(0..self.swap_index) {
-                    Self::apply_op(w_handle, op);
+                    Self::apply_second(w_handle, op);
                 }
             }
             // the rest have to be cloned because they'll also be needed by the r_handle map
-            for op in self.oplog.iter().cloned() {
-                Self::apply_op(w_handle, op);
+            for op in self.oplog.iter_mut() {
+                Self::apply_first(w_handle, op);
             }
             // the w_handle map is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
@@ -223,7 +288,7 @@ where
         } else {
             // we know there are no outstanding w_handle readers, so we can modify it directly!
             let inner = self.w_handle.as_mut().unwrap();
-            Self::apply_op(inner, op);
+            Self::apply_second(inner, op);
             // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
     }
@@ -263,7 +328,54 @@ where
         self.add_op(Operation::Empty(k));
     }
 
-    fn apply_op(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
+    fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
+        use std::mem;
+        match *op {
+            Operation::Replace(ref key, ref mut value) => {
+                let vs = inner.data.entry(key.clone()).or_insert_with(Vec::new);
+                // don't run destructors yet -- still in use by other map
+                for v in vs.drain(..) {
+                    mem::forget(v);
+                }
+                vs.push(unsafe { value.shallow_copy() });
+            }
+            Operation::Clear(ref key) => {
+                if let Some(vs) = inner.data.get_mut(key) {
+                    // don't run destructors yet -- still in use by other map
+                    for v in vs.drain(..) {
+                        mem::forget(v);
+                    }
+                }
+            }
+            Operation::Add(ref key, ref mut value) => {
+                inner
+                    .data
+                    .entry(key.clone())
+                    .or_insert_with(Vec::new)
+                    .push(unsafe { value.shallow_copy() });
+            }
+            Operation::Empty(ref key) => {
+                if let Some(mut vs) = inner.data.remove(key) {
+                    // don't run destructors yet -- still in use by other map
+                    for v in vs.drain(..) {
+                        mem::forget(v);
+                    }
+                }
+            }
+            Operation::Remove(ref key, ref value) => {
+                if let Some(e) = inner.data.get_mut(key) {
+                    // find the first entry that matches all fields
+                    if let Some(i) = e.iter().position(|v| v == value) {
+                        let v = e.swap_remove(i);
+                        // don't run destructor yet -- still in use by other map
+                        mem::forget(v);
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
         match op {
             Operation::Replace(key, value) => {
                 let v = inner.data.entry(key).or_insert_with(Vec::new);
@@ -295,8 +407,8 @@ where
 impl<K, V, M, S> Extend<(K, V)> for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Clone,
-    V: Eq + Clone,
+    S: BuildHasher + Default,
+    V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
@@ -311,8 +423,8 @@ use std::ops::Deref;
 impl<K, V, M, S> Deref for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Clone,
-    V: Eq + Clone,
+    S: BuildHasher + Default,
+    V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
     type Target = ReadHandle<K, V, M, S>;
