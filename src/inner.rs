@@ -2,14 +2,14 @@ use std::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
 use std::sync::{atomic, Arc, Mutex};
 
-pub struct Inner<K, V, M, S>
+pub(crate) struct Inner<K, V, M, S>
 where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub data: HashMap<K, Vec<V>, S>,
-    pub epochs: Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>,
-    pub meta: M,
+    pub(crate) data: HashMap<K, Vec<V>, S>,
+    pub(crate) epochs: Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>,
+    pub(crate) meta: M,
     ready: bool,
 }
 

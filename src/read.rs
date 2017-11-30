@@ -21,8 +21,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    // TODO: pub(crate)
-    #[doc(hidden)] pub inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
+    pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
     my_epoch: sync::atomic::AtomicUsize,
 
@@ -55,7 +54,7 @@ where
     }
 }
 
-pub fn new<K, V, M, S>(inner: Inner<K, V, M, S>) -> ReadHandle<K, V, M, S>
+pub(crate) fn new<K, V, M, S>(inner: Inner<K, V, M, S>) -> ReadHandle<K, V, M, S>
 where
     K: Eq + Hash,
     S: BuildHasher,

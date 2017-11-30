@@ -52,7 +52,7 @@ where
     second: bool,
 }
 
-pub fn new<K, V, M, S>(
+pub(crate) fn new<K, V, M, S>(
     w_handle: Inner<K, V, M, S>,
     r_handle: ReadHandle<K, V, M, S>,
 ) -> WriteHandle<K, V, M, S>
