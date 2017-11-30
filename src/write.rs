@@ -309,6 +309,7 @@ where
 
     /// Clear the value-set of the given key, without removing it.
     ///
+    /// This will allocate an empty value-set for the key if it does not already exist.
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn clear(&mut self, k: K) {
         self.add_op(Operation::Clear(k));
@@ -340,11 +341,14 @@ where
                 vs.push(unsafe { value.shallow_copy() });
             }
             Operation::Clear(ref key) => {
-                if let Some(vs) = inner.data.get_mut(key) {
-                    // don't run destructors yet -- still in use by other map
-                    for v in vs.drain(..) {
-                        mem::forget(v);
-                    }
+                // don't run destructors yet -- still in use by other map
+                for v in inner
+                    .data
+                    .entry(key.clone())
+                    .or_insert_with(Vec::new)
+                    .drain(..)
+                {
+                    mem::forget(v);
                 }
             }
             Operation::Add(ref key, ref mut value) => {

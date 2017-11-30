@@ -150,6 +150,26 @@ fn minimal_query() {
 }
 
 #[test]
+fn clear_vs_empty() {
+    let (r, mut w) = evmap::new::<_, ()>();
+    w.refresh();
+    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
+    w.clear(1);
+    w.refresh();
+    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
+    w.empty(1);
+    w.refresh();
+    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
+    // and again to test both apply_first and apply_second
+    w.clear(1);
+    w.refresh();
+    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
+    w.empty(1);
+    w.refresh();
+    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
+}
+
+#[test]
 fn non_copy_values() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a".to_string());
