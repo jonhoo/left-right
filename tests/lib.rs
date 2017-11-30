@@ -98,6 +98,47 @@ fn busybusybusy_inner(slow: bool) {
 }
 
 #[test]
+fn busybusybusy_heap() {
+    use std::thread;
+
+    let threads = 2;
+    let n = 1000;
+    let (r, mut w) = evmap::new::<_, Vec<_>>();
+
+    let rs: Vec<_> = (0..threads)
+        .map(|_| {
+            let r = r.clone();
+            thread::spawn(move || {
+                for i in 0..n {
+                    let i = i.into();
+                    loop {
+                        match r.get_and(&i, |rs| Vec::from(rs)) {
+                            Some(rs) => {
+                                assert_eq!(rs.len(), 1);
+                                assert_eq!(rs[0].len(), i);
+                                break;
+                            }
+                            None => {
+                                thread::yield_now();
+                            }
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    for i in 0..n {
+        w.insert(i, (0..i).collect());
+        w.refresh();
+    }
+
+    for r in rs {
+        r.join().unwrap();
+    }
+}
+
+#[test]
 fn minimal_query() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a");
