@@ -163,10 +163,12 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.with_handle(move |inner| if !inner.is_ready() {
-            None
-        } else {
-            inner.data.get(key).map(move |v| then(&**v))
+        self.with_handle(move |inner| {
+            if !inner.is_ready() {
+                None
+            } else {
+                inner.data.get(key).map(move |v| then(&**v))
+            }
         })
     }
 
@@ -187,12 +189,14 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.with_handle(move |inner| if !inner.is_ready() {
-            None
-        } else {
-            let res = inner.data.get(key).map(move |v| then(&**v));
-            let res = (res, inner.meta.clone());
-            Some(res)
+        self.with_handle(move |inner| {
+            if !inner.is_ready() {
+                None
+            } else {
+                let res = inner.data.get(key).map(move |v| then(&**v));
+                let res = (res, inner.meta.clone());
+                Some(res)
+            }
         })
     }
 
@@ -216,8 +220,10 @@ where
     where
         F: FnMut(&K, &[V]),
     {
-        self.with_handle(move |inner| for (k, vs) in &inner.data {
-            f(k, &vs[..])
+        self.with_handle(move |inner| {
+            for (k, vs) in &inner.data {
+                f(k, &vs[..])
+            }
         })
     }
 
