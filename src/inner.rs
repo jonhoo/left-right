@@ -60,8 +60,4 @@ where
     pub fn is_ready(&self) -> bool {
         self.ready
     }
-
-    pub fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
-        self.epochs.lock().unwrap().push(Arc::clone(epoch));
-    }
 }

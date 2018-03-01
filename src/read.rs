@@ -1,7 +1,7 @@
 use inner::Inner;
 
 use std::mem;
-use std::sync;
+use std::sync::{self, Arc};
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::hash::{BuildHasher, Hash};
@@ -42,9 +42,7 @@ where
 {
     fn clone(&self) -> Self {
         let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
-        self.with_handle(|inner| {
-            inner.register_epoch(&epoch);
-        });
+        self.register_epoch(&epoch);
         ReadHandle {
             epoch: epoch,
             my_epoch: atomic::AtomicUsize::new(0),
@@ -61,7 +59,7 @@ where
 {
     // tell writer about our epoch tracker
     let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
-    inner.register_epoch(&epoch);
+    inner.epochs.lock().unwrap().push(Arc::clone(&epoch));
 
     let store = Box::into_raw(Box::new(inner));
     ReadHandle {
@@ -78,6 +76,11 @@ where
     S: BuildHasher,
     M: Clone,
 {
+    fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
+        let epochs = self.with_handle(|inner| Arc::clone(&inner.epochs));
+        epochs.lock().unwrap().push(Arc::clone(epoch));
+    }
+
     fn with_handle<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&Inner<K, V, M, S>) -> T,

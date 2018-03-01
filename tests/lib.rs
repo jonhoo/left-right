@@ -46,7 +46,6 @@ fn busybusybusy_slow() {
     busybusybusy_inner(true);
 }
 
-
 fn busybusybusy_inner(slow: bool) {
     use std::time;
     use std::thread;
@@ -353,6 +352,24 @@ fn map_into() {
     assert_eq!(copy[&2].len(), 1);
     assert_eq!(copy[&1], vec!["a", "b"]);
     assert_eq!(copy[&2], vec!["c"]);
+}
+
+#[test]
+fn clone_churn() {
+    use std::thread;
+    let (r, mut w) = evmap::new();
+
+    thread::spawn(move || loop {
+        let r = r.clone();
+        if let Some(_) = r.get_and(&1, |rs| rs.len()) {
+            thread::yield_now();
+        }
+    });
+
+    for i in 0..1000 {
+        w.insert(1, i);
+        w.refresh();
+    }
 }
 
 #[test]
