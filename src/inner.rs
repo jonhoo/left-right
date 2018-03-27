@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rahashmap::HashMap;
 use std::hash::{BuildHasher, Hash};
 use std::sync::{atomic, Arc, Mutex};
 

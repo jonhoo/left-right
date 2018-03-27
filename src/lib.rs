@@ -181,6 +181,8 @@
 //!
 #![deny(missing_docs)]
 
+extern crate rahashmap;
+
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 
