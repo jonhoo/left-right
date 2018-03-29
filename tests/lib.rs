@@ -47,8 +47,8 @@ fn busybusybusy_slow() {
 }
 
 fn busybusybusy_inner(slow: bool) {
-    use std::time;
     use std::thread;
+    use std::time;
 
     let threads = 4;
     let mut n = 1000;

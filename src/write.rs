@@ -2,10 +2,10 @@ use super::{Operation, ShallowCopy};
 use inner::Inner;
 use read::ReadHandle;
 
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hash};
 use std::sync::Arc;
 use std::sync::atomic;
-use std::hash::{BuildHasher, Hash};
-use std::collections::hash_map::RandomState;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
@@ -131,8 +131,8 @@ where
     /// the operational log onto the stale map copy the readers used to use. This can take some
     /// time, especially if readers are executing slow operations, or if there are many of them.
     pub fn refresh(&mut self) {
-        use std::thread;
         use std::mem;
+        use std::thread;
 
         // we need to wait until all epochs have changed since the swaps *or* until a "finished"
         // flag has been observed to be on for two subsequent iterations (there still may be some

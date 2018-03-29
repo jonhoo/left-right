@@ -1,5 +1,5 @@
-use std::hash::{BuildHasher, Hash};
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hash};
 use std::sync::{atomic, Arc, Mutex};
 
 pub(crate) struct Inner<K, V, M, S>

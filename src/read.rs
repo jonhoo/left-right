@@ -1,15 +1,15 @@
 use inner::Inner;
 
+use std::borrow::Borrow;
+use std::cell;
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hash};
+use std::iter::FromIterator;
+use std::marker::PhantomData;
 use std::mem;
-use std::sync::{self, Arc};
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
-use std::hash::{BuildHasher, Hash};
-use std::collections::hash_map::RandomState;
-use std::borrow::Borrow;
-use std::iter::FromIterator;
-use std::cell;
-use std::marker::PhantomData;
+use std::sync::{self, Arc};
 
 /// A handle that may be used to read from the eventually consistent map.
 ///
