@@ -267,7 +267,7 @@ where
     pub fn construct<K, V>(self) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
     where
         K: Eq + Hash + Clone,
-        S: BuildHasher + Default,
+        S: BuildHasher + Clone,
         V: Eq + ShallowCopy,
         M: 'static + Clone,
     {

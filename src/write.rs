@@ -40,7 +40,7 @@ use std::sync::atomic;
 pub struct WriteHandle<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Default,
+    S: BuildHasher + Clone,
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
@@ -60,7 +60,7 @@ pub(crate) fn new<K, V, M, S>(
 ) -> WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Default,
+    S: BuildHasher + Clone,
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
@@ -80,7 +80,7 @@ where
 impl<K, V, M, S> Drop for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Default,
+    S: BuildHasher + Clone,
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
@@ -121,7 +121,7 @@ where
 impl<K, V, M, S> WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Default,
+    S: BuildHasher + Clone,
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
@@ -196,16 +196,14 @@ where
                     unsafe { Box::from_raw(self.r_handle.inner.load(atomic::Ordering::Relaxed)) };
                 // XXX: it really is too bad that we can't just .clone() the data here and save
                 // ourselves a lot of re-hashing, re-bucketization, etc.
-                w_handle.data = r_handle
+                w_handle
                     .data
-                    .iter_mut()
-                    .map(|(k, vs)| {
+                    .extend(r_handle.data.iter_mut().map(|(k, vs)| {
                         (
                             k.clone(),
                             vs.iter_mut().map(|v| unsafe { v.shallow_copy() }).collect(),
                         )
-                    })
-                    .collect();
+                    }));
                 mem::forget(r_handle);
             }
 
@@ -411,7 +409,7 @@ where
 impl<K, V, M, S> Extend<(K, V)> for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Default,
+    S: BuildHasher + Clone,
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
@@ -427,7 +425,7 @@ use std::ops::Deref;
 impl<K, V, M, S> Deref for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
-    S: BuildHasher + Default,
+    S: BuildHasher + Clone,
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
