@@ -195,6 +195,7 @@ enum Operation<K, V> {
     Add(K, V),
     Remove(K, V),
     Empty(K),
+    EmptyRandom(usize),
     Clear(K),
 }
 

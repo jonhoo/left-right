@@ -327,6 +327,14 @@ where
         self.add_op(Operation::Empty(k));
     }
 
+    /// Remove the value-set for a key at a specified index.
+    ///
+    /// This is effectively random removal
+    /// The value-set will only disappear from readers after the next call to `refresh()`.
+    pub fn empty_at_index(&mut self, index: usize) {
+        self.add_op(Operation::EmptyRandom(index));
+    }
+
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
         use std::mem;
         match *op {
@@ -364,6 +372,14 @@ where
                     }
                 }
             }
+            Operation::EmptyRandom(index) => {
+                if let Some((_k, mut vs)) = inner.data.remove_at_index(index) {
+                    // don't run destructors yet -- still in use by other map
+                    for v in vs.drain(..) {
+                        mem::forget(v);
+                    }
+                }
+            }
             Operation::Remove(ref key, ref value) => {
                 if let Some(e) = inner.data.get_mut(key) {
                     // find the first entry that matches all fields
@@ -393,6 +409,9 @@ where
             }
             Operation::Empty(key) => {
                 inner.data.remove(&key);
+            }
+            Operation::EmptyRandom(index) => {
+                inner.data.remove_at_index(index);
             }
             Operation::Remove(key, value) => {
                 if let Some(e) = inner.data.get_mut(&key) {
