@@ -333,10 +333,11 @@ where
     /// The value-set will only disappear from readers after the next call to `refresh()`.
     pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &Vec<V>)> {
         self.add_op(Operation::EmptyRandom(index));
-        // it's okay to fetch the entries second, since we won't drop them until refresh() is
-        // called
-        let inner = &*self.w_handle.as_ref().unwrap();
-        inner.data.at_index(index)
+        // the actual emptying won't happen until refresh(), which needs &mut self
+        // so it's okay for us to return the references here
+        self.w_handle
+            .as_ref()
+            .and_then(|inner| inner.data.at_index(index))
     }
 
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
