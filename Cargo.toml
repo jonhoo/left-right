@@ -20,4 +20,4 @@ license = "MIT/Apache-2.0"
 travis-ci = { repository = "jonhoo/rust-evmap" }
 
 [dependencies]
-rahashmap = "0.2.1"
+rahashmap = { git = "https://github.com/ms705/rahashmap.git", branch = "no-reorder" }
