@@ -331,8 +331,11 @@ where
     ///
     /// This is effectively random removal
     /// The value-set will only disappear from readers after the next call to `refresh()`.
-    pub fn empty_at_index(&mut self, index: usize) {
+    pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &Vec<V>)> {
+        let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
         self.add_op(Operation::EmptyRandom(index));
+        // ok to do second as we haven't refreshed yet
+        unsafe { (*inner).data.at_index(index) }
     }
 
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
