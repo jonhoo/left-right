@@ -271,6 +271,42 @@ where
         self.first = false;
     }
 
+    /// Gives the sequence of operations that have not yet been applied.
+    ///
+    /// Note that until the *first* call to `refresh`, the sequence of operations is always empty.
+    ///
+    /// ```
+    /// # use evmap::Operation;
+    /// let x = ('x', 42);
+    ///
+    /// let (r, mut w) = evmap::new();
+    ///
+    /// // before the first refresh, no oplog is kept
+    /// w.refresh();
+    ///
+    /// assert_eq!(w.pending(), &[]);
+    /// w.insert(x.0, x);
+    /// assert_eq!(w.pending(), &[Operation::Add(x.0, x)]);
+    /// w.refresh();
+    /// w.remove(x.0, x);
+    /// assert_eq!(w.pending(), &[Operation::Remove(x.0, x)]);
+    /// w.refresh();
+    /// assert_eq!(w.pending(), &[]);
+    /// ```
+    pub fn pending(&self) -> &[Operation<K, V>] {
+        &self.oplog[self.swap_index..]
+    }
+
+    /// Refresh as necessary to ensure that all operations are visible to readers.
+    ///
+    /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
+    /// This method will only do so if there are pending operations.
+    pub fn flush(&mut self) {
+        if !self.pending().is_empty() {
+            self.refresh();
+        }
+    }
+
     /// Set the metadata.
     ///
     /// Will only be visible to readers after the next call to `refresh()`.
