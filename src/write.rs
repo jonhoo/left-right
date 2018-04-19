@@ -4,8 +4,8 @@ use read::ReadHandle;
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
-use std::sync::Arc;
 use std::sync::atomic;
+use std::sync::Arc;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
