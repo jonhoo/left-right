@@ -463,6 +463,12 @@ where
         self.add_op(Operation::EmptyRandom(index));
         // the actual emptying won't happen until refresh(), which needs &mut self
         // so it's okay for us to return the references here
+
+        // NOTE to future zealots intent on removing the unsafe code: it's **NOT** okay to use
+        // self.w_handle here, since that does not have all pending operations applied to it yet.
+        // Specifically, there may be an *eviction* pending that already has been applied to the
+        // r_handle side, but not to the w_handle (will be applied on the next swap). We must make
+        // sure that we read the most up to date map here.
         let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
         unsafe { (*inner).data.at_index(index) }
     }
