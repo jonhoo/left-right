@@ -463,9 +463,8 @@ where
         self.add_op(Operation::EmptyRandom(index));
         // the actual emptying won't happen until refresh(), which needs &mut self
         // so it's okay for us to return the references here
-        self.w_handle
-            .as_ref()
-            .and_then(|inner| inner.data.at_index(index))
+        let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
+        unsafe { (*inner).data.at_index(index) }
     }
 
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
