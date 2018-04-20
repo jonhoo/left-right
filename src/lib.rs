@@ -203,6 +203,7 @@ pub enum Operation<K, V> {
     Remove(K, V),
     /// Remove the value set for this key.
     Empty(K),
+    /// Drop a key at a random index
     EmptyRandom(usize),
     /// Remove all values in the value set for this key.
     Clear(K),
