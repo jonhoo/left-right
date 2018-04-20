@@ -5,7 +5,8 @@ use read::ReadHandle;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::sync::atomic;
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
+use std::{mem, thread};
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
@@ -52,6 +53,8 @@ where
     meta: M,
     first: bool,
     second: bool,
+
+    drop_dont_refresh: bool,
 }
 
 pub(crate) fn new<K, V, M, S>(
@@ -74,6 +77,8 @@ where
         meta: m,
         first: true,
         second: false,
+
+        drop_dont_refresh: false,
     }
 }
 
@@ -85,31 +90,32 @@ where
     M: 'static + Clone,
 {
     fn drop(&mut self) {
-        // eventually, the last Arc<Inner> will be dropped, and that will cause the entire read map
-        // to be dropped. this will, in turn, call the destructors for the values that are there.
-        // we need to make sure that we don't end up dropping some aliased values twice, and that
-        // we don't forget to drop any values.
-        //
-        // we *could* laboriously walk through .data and .oplog to figure out exactly what
-        // destructors we do or don't need to call to ensure exactly-once dropping. but, instead,
-        // we'll just let refresh do the work for us.
-        if !self.oplog.is_empty() {
-            // applies oplog entries that are in r_handle to w_handle and applies new oplog entries
-            // to w_handle, then swaps. oplog is *not* guaranteed to be empty, but *is* guaranteed
-            // to only have ops that have been applied to exactly one map.
-            self.refresh();
-        }
-        if !self.oplog.is_empty() {
-            // applies oplog entries that are in (old) w_handle to (old) r_handle. this leaves
-            // oplog empty, and the two data maps identical.
-            self.refresh();
+        if !self.drop_dont_refresh {
+            // eventually, the last Arc<Inner> will be dropped, and that will cause the entire read map
+            // to be dropped. this will, in turn, call the destructors for the values that are there.
+            // we need to make sure that we don't end up dropping some aliased values twice, and that
+            // we don't forget to drop any values.
+            //
+            // we *could* laboriously walk through .data and .oplog to figure out exactly what
+            // destructors we do or don't need to call to ensure exactly-once dropping. but, instead,
+            // we'll just let refresh do the work for us.
+            if !self.oplog.is_empty() {
+                // applies oplog entries that are in r_handle to w_handle and applies new oplog entries
+                // to w_handle, then swaps. oplog is *not* guaranteed to be empty, but *is* guaranteed
+                // to only have ops that have been applied to exactly one map.
+                self.refresh();
+            }
+            if !self.oplog.is_empty() {
+                // applies oplog entries that are in (old) w_handle to (old) r_handle. this leaves
+                // oplog empty, and the two data maps identical.
+                self.refresh();
+            }
         }
         assert!(self.oplog.is_empty());
 
         // since the two maps are exactly equal, we need to make sure that we *don't* call the
         // destructors of any of the values that are in our map, as they'll all be called when the
         // last read handle goes out of scope.
-        use std::mem;
         for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain() {
             for v in vs.drain(..) {
                 mem::forget(v);
@@ -125,29 +131,11 @@ where
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
-    /// Refresh the handle used by readers so that pending writes are made visible.
-    ///
-    /// This method needs to wait for all readers to move to the new handle so that it can replay
-    /// the operational log onto the stale map copy the readers used to use. This can take some
-    /// time, especially if readers are executing slow operations, or if there are many of them.
-    pub fn refresh(&mut self) {
-        use std::mem;
-        use std::thread;
-
-        // we need to wait until all epochs have changed since the swaps *or* until a "finished"
-        // flag has been observed to be on for two subsequent iterations (there still may be some
-        // readers present since we did the previous refresh)
-        //
-        // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
-        // only block on pre-existing readers, and they are never waiting to push onto epochs
-        // unless they have finished reading.
-        let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
-        let epochs = epochs.lock().unwrap();
-        self.last_epochs.resize(epochs.len(), 0);
-
+    fn wait(&mut self, epochs: &mut MutexGuard<Vec<Arc<atomic::AtomicUsize>>>) {
         let mut iter = 0;
         let mut starti = 0;
         let high_bit = 1usize << (mem::size_of::<usize>() * 8 - 1);
+        self.last_epochs.resize(epochs.len(), 0);
         'retry: loop {
             // read all and see if all have changed (which is likely)
             for (i, epoch) in epochs.iter().enumerate().skip(starti) {
@@ -175,13 +163,33 @@ where
                     continue 'retry;
                 }
             }
+            break;
+        }
+    }
 
+    /// Refresh the handle used by readers so that pending writes are made visible.
+    ///
+    /// This method needs to wait for all readers to move to the new handle so that it can replay
+    /// the operational log onto the stale map copy the readers used to use. This can take some
+    /// time, especially if readers are executing slow operations, or if there are many of them.
+    pub fn refresh(&mut self) {
+        // we need to wait until all epochs have changed since the swaps *or* until a "finished"
+        // flag has been observed to be on for two subsequent iterations (there still may be some
+        // readers present since we did the previous refresh)
+        //
+        // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
+        // only block on pre-existing readers, and they are never waiting to push onto epochs
+        // unless they have finished reading.
+        let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
+        let mut epochs = epochs.lock().unwrap();
+        self.wait(&mut epochs);
+
+        {
             // all the readers have left!
             // we can safely bring the w_handle up to date.
             let w_handle = self.w_handle.as_mut().unwrap();
 
             if self.second {
-                use std::mem;
                 // before the first refresh, all writes went directly to w_handle. then, at the
                 // first refresh, r_handle and w_handle were swapped. thus, the w_handle we
                 // have now is empty, *and* none of the writes in r_handle are in the oplog.
@@ -237,7 +245,6 @@ where
             w_handle.mark_ready();
 
             // w_handle (the old r_handle) is now fully up to date!
-            break;
         }
 
         // at this point, we have exclusive access to w_handle, and it is up-to-date with all
@@ -269,6 +276,92 @@ where
         self.w_handle = Some(r_handle);
         self.second = self.first;
         self.first = false;
+    }
+
+    /// Drop this map without preserving one side for reads.
+    ///
+    /// Normally, the maps are not deallocated until all readers have also gone away.
+    /// When this method is called, the map is immediately (but safely) taken away from all
+    /// readers, causing all future lookups to return `None`.
+    ///
+    /// ```
+    /// use std::thread;
+    /// let (r, mut w) = evmap::new();
+    ///
+    /// // start some readers
+    /// let readers: Vec<_> = (0..4).map(|_| {
+    ///     let r = r.clone();
+    ///     thread::spawn(move || {
+    ///         loop {
+    ///             let l = r.len();
+    ///             if l == 0 {
+    ///                 if r.is_destroyed() {
+    ///                     // the writer destroyed the map!
+    ///                     break;
+    ///                 }
+    ///                 thread::yield_now();
+    ///             } else {
+    ///                 // the reader will either see all the reviews,
+    ///                 // or none of them, since refresh() is atomic.
+    ///                 assert_eq!(l, 4);
+    ///             }
+    ///         }
+    ///     })
+    /// }).collect();
+    ///
+    /// // do some writes
+    /// w.insert(0, String::from("foo"));
+    /// w.insert(1, String::from("bar"));
+    /// w.insert(2, String::from("baz"));
+    /// w.insert(3, String::from("qux"));
+    /// // expose the writes
+    /// w.refresh();
+    /// assert_eq!(r.len(), 4);
+    ///
+    /// // refresh a few times to exercise the readers
+    /// for _ in 0..10 {
+    ///     w.refresh();
+    /// }
+    ///
+    /// // now blow the map away
+    /// w.destroy();
+    ///
+    /// // all the threads should eventually see that the map was destroyed
+    /// for r in readers.into_iter() {
+    ///     assert!(r.join().is_ok());
+    /// }
+    /// ```
+    pub fn destroy(mut self) {
+        use std::ptr;
+
+        // first, ensure both maps are up to date
+        // (otherwise safely dropping deduplicated rows is a pain)
+        // see also impl Drop
+        self.refresh();
+        self.refresh();
+
+        // next, grab the read handle and set it to NULL
+        let r_handle = self.r_handle
+            .inner
+            .swap(ptr::null_mut(), atomic::Ordering::Release);
+        let r_handle = unsafe { Box::from_raw(r_handle) };
+
+        // now, wait for all readers to depart
+        let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
+        let mut epochs = epochs.lock().unwrap();
+        self.wait(&mut epochs);
+
+        // ensure that the subsequent epoch reads aren't re-ordered to before the swap
+        atomic::fence(atomic::Ordering::SeqCst);
+
+        // all readers have now observed the NULL, so we own both handles.
+        // all records are duplicated between w_handle and r_handle.
+        // we should *only* call the destructor for each record once!
+        // first, we drop self, which will forget all the records in w_handle
+        self.drop_dont_refresh = true;
+        drop(self);
+        // then we drop r_handle, which will free all the records
+        drop(r_handle);
     }
 
     /// Gives the sequence of operations that have not yet been applied.
@@ -311,7 +404,6 @@ where
     ///
     /// Will only be visible to readers after the next call to `refresh()`.
     pub fn set_meta(&mut self, mut meta: M) -> M {
-        use std::mem;
         mem::swap(&mut self.meta, &mut meta);
         meta
     }
@@ -364,7 +456,6 @@ where
     }
 
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
-        use std::mem;
         match *op {
             Operation::Replace(ref key, ref mut value) => {
                 let vs = inner.data.entry(key.clone()).or_insert_with(Vec::new);

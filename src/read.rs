@@ -4,7 +4,7 @@ use std::borrow::Borrow;
 use std::cell;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
-use std::iter::FromIterator;
+use std::iter::{self, FromIterator};
 use std::marker::PhantomData;
 use std::mem;
 use std::sync::atomic;
@@ -77,11 +77,12 @@ where
     M: Clone,
 {
     fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
-        let epochs = self.with_handle(|inner| Arc::clone(&inner.epochs));
-        epochs.lock().unwrap().push(Arc::clone(epoch));
+        if let Some(epochs) = self.with_handle(|inner| Arc::clone(&inner.epochs)) {
+            epochs.lock().unwrap().push(Arc::clone(epoch));
+        }
     }
 
-    fn with_handle<F, T>(&self, f: F) -> T
+    fn with_handle<F, T>(&self, f: F) -> Option<T>
     where
         F: FnOnce(&Inner<K, V, M, S>) -> T,
     {
@@ -121,9 +122,13 @@ where
 
         // then, atomically read pointer, and use the map being pointed to
         let r_handle = self.inner.load(atomic::Ordering::Acquire);
-        let rs = unsafe { Box::from_raw(r_handle) };
-        let res = f(&*rs);
-        mem::forget(rs); // don't free the Box!
+
+        let mut res = None;
+        if !r_handle.is_null() {
+            let rs = unsafe { Box::from_raw(r_handle) };
+            res = Some(f(&*rs));
+            mem::forget(rs); // don't free the Box!
+        }
 
         // we've finished reading -- let the writer know
         self.epoch.store(
@@ -136,16 +141,17 @@ where
 
     /// Returns the number of non-empty keys present in the map.
     pub fn len(&self) -> usize {
-        self.with_handle(|inner| inner.data.len())
+        self.with_handle(|inner| inner.data.len()).unwrap_or(0)
     }
 
     /// Returns true if the map contains no elements.
     pub fn is_empty(&self) -> bool {
         self.with_handle(|inner| inner.data.is_empty())
+            .unwrap_or(true)
     }
 
     /// Get the current meta value.
-    pub fn meta(&self) -> M {
+    pub fn meta(&self) -> Option<M> {
         self.with_handle(|inner| inner.meta.clone())
     }
 
@@ -157,8 +163,8 @@ where
     /// Note that not all writes will be included with this read -- only those that have been
     /// refreshed by the writer. If no refresh has happened, this function returns `None`.
     ///
-    /// If no values exist for the given key, the function will not be called, and `None` will be
-    /// returned.
+    /// If no values exist for the given key, no refresh has happened, or the map has been
+    /// destroyed, `then` will not be called, and `None` will be returned.
     pub fn get_and<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<T>
     where
         F: FnOnce(&[V]) -> T,
@@ -171,7 +177,7 @@ where
             } else {
                 inner.data.get(key).map(move |v| then(&**v))
             }
-        })
+        }).unwrap_or(None)
     }
 
     /// Applies a function to the values corresponding to the key, and returns the result alongside
@@ -181,10 +187,11 @@ where
     /// form *must* match those for the key type.
     ///
     /// Note that not all writes will be included with this read -- only those that have been
-    /// refreshed by the writer. If no refresh has happened, this function returns `None`.
+    /// refreshed by the writer. If no refresh has happened, or if the map has been closed by the
+    /// writer, this function returns `None`.
     ///
-    /// If no values exist for the given key, the function will not be called, and `Some(None, _)`
-    /// will be returned.
+    /// If no values exist for the given key, `then` will not be called, and `Some(None, _)` is
+    /// returned.
     pub fn meta_get_and<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<(Option<T>, M)>
     where
         F: FnOnce(&[V]) -> T,
@@ -199,7 +206,14 @@ where
                 let res = (res, inner.meta.clone());
                 Some(res)
             }
-        })
+        }).unwrap_or(None)
+    }
+
+    /// If the writer has destroyed this map, this method will return true.
+    ///
+    /// See `WriteHandle::destroy`.
+    pub fn is_destroyed(&self) -> bool {
+        self.with_handle(|_| ()).is_none()
     }
 
     /// Returns true if the map contains any values for the specified key.
@@ -212,6 +226,7 @@ where
         Q: Hash + Eq,
     {
         self.with_handle(move |inner| inner.data.contains_key(key))
+            .unwrap_or(false)
     }
 
     /// Read all values in the map, and transform them into a new collection.
@@ -226,7 +241,7 @@ where
             for (k, vs) in &inner.data {
                 f(k, &vs[..])
             }
-        })
+        });
     }
 
     /// Read all values in the map, and transform them into a new collection.
@@ -237,6 +252,6 @@ where
     {
         self.with_handle(move |inner| {
             Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
-        })
+        }).unwrap_or(Collector::from_iter(iter::empty()))
     }
 }
