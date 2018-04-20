@@ -123,6 +123,9 @@
 //! // expose the writes
 //! book_reviews_w.refresh();
 //!
+//! // you can read through the write handle
+//! assert_eq!(book_reviews_w.len(), 4);
+//!
 //! // the original read handle still works too
 //! assert_eq!(book_reviews_r.len(), 4);
 //!
@@ -189,13 +192,19 @@ use std::hash::{BuildHasher, Hash};
 mod inner;
 use inner::Inner;
 
-#[derive(Clone)]
-enum Operation<K, V> {
+/// A pending map operation.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Operation<K, V> {
+    /// Replace the set of entries for this key with this value.
     Replace(K, V),
+    /// Add this value to the set of entries for this key.
     Add(K, V),
+    /// Remove this value from the set of entries for this key.
     Remove(K, V),
+    /// Remove the value set for this key.
     Empty(K),
     EmptyRandom(usize),
+    /// Remove all values in the value set for this key.
     Clear(K),
 }
 
