@@ -184,9 +184,6 @@
 //!
 #![deny(missing_docs)]
 
-#[cfg(feature = "parking_lot")]
-extern crate parking_lot;
-
 #[cfg(feature = "hashbrown")]
 extern crate hashbrown;
 

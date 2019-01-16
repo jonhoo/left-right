@@ -61,15 +61,7 @@ where
     // tell writer about our epoch tracker
     let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
 
-    {
-        #[cfg(not(feature = "parking_lot"))]
-        let mut epochs = inner.epochs.lock().unwrap();
-
-        #[cfg(feature = "parking_lot")]
-        let mut epochs = inner.epochs.lock();
-
-        epochs.push(Arc::clone(&epoch));
-    }
+    inner.epochs.lock().unwrap().push(Arc::clone(&epoch));
 
     let store = Box::into_raw(Box::new(inner));
 
@@ -89,13 +81,7 @@ where
 {
     fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
         if let Some(epochs) = self.with_handle(|inner| Arc::clone(&inner.epochs)) {
-            #[cfg(not(feature = "parking_lot"))]
-            let mut epochs = epochs.lock().unwrap();
-
-            #[cfg(feature = "parking_lot")]
-            let mut epochs = epochs.lock();
-
-            epochs.push(Arc::clone(epoch));
+            epochs.lock().unwrap().push(Arc::clone(epoch));
         }
     }
 

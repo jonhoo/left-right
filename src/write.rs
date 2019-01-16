@@ -4,14 +4,8 @@ use read::ReadHandle;
 
 use std::hash::{BuildHasher, Hash};
 use std::sync::atomic;
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
 use std::{mem, thread};
-
-#[cfg(feature = "parking_lot")]
-use parking_lot::MutexGuard;
-
-#[cfg(not(feature = "parking_lot"))]
-use std::sync::MutexGuard;
 
 #[cfg(feature = "hashbrown")]
 use hashbrown::hash_map::Entry;
@@ -201,11 +195,7 @@ where
         // unless they have finished reading.
         let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
 
-        #[cfg(not(feature = "parking_lot"))]
         let mut epochs = epochs.lock().unwrap();
-
-        #[cfg(feature = "parking_lot")]
-        let mut epochs = epochs.lock();
 
         self.wait(&mut epochs);
 
@@ -376,11 +366,7 @@ where
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
 
-        #[cfg(not(feature = "parking_lot"))]
         let mut epochs = epochs.lock().unwrap();
-
-        #[cfg(feature = "parking_lot")]
-        let mut epochs = epochs.lock();
 
         self.wait(&mut epochs);
 
@@ -573,7 +559,11 @@ where
                 v.clear();
             }
             Operation::Add(key, value) => {
-                inner.data.entry(key).or_insert_with(Values::new).push(value);
+                inner
+                    .data
+                    .entry(key)
+                    .or_insert_with(Values::new)
+                    .push(value);
             }
             Operation::Empty(key) => {
                 inner.data.remove(&key);

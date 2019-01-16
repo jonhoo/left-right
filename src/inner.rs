@@ -1,17 +1,11 @@
+use std::hash::{BuildHasher, Hash};
+use std::sync::{atomic, Arc, Mutex};
+
 #[cfg(not(feature = "hashbrown"))]
 use std::collections::HashMap;
 
 #[cfg(feature = "hashbrown")]
 use hashbrown::HashMap;
-
-use std::hash::{BuildHasher, Hash};
-use std::sync::{atomic, Arc};
-
-#[cfg(not(feature = "parking_lot"))]
-use std::sync::Mutex;
-
-#[cfg(feature = "parking_lot")]
-use parking_lot::Mutex;
 
 #[cfg(not(feature = "smallvec"))]
 pub(crate) type Values<T> = Vec<T>;
