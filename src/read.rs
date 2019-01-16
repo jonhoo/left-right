@@ -2,7 +2,6 @@ use inner::Inner;
 
 use std::borrow::Borrow;
 use std::cell;
-use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::iter::{self, FromIterator};
 use std::marker::PhantomData;
@@ -11,12 +10,14 @@ use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
 
+use super::DefaultHashBuilder;
+
 /// A handle that may be used to read from the eventually consistent map.
 ///
 /// Note that any changes made to the map will not be made visible until the writer calls
 /// `refresh()`. In other words, all operations performed on a `ReadHandle` will *only* see writes
 /// to the map that preceeded the last call to `refresh()`.
-pub struct ReadHandle<K, V, M = (), S = RandomState>
+pub struct ReadHandle<K, V, M = (), S = DefaultHashBuilder>
 where
     K: Eq + Hash,
     S: BuildHasher,
@@ -59,9 +60,19 @@ where
 {
     // tell writer about our epoch tracker
     let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
-    inner.epochs.lock().unwrap().push(Arc::clone(&epoch));
+
+    {
+        #[cfg(not(feature = "parking_lot"))]
+        let mut epochs = inner.epochs.lock().unwrap();
+
+        #[cfg(feature = "parking_lot")]
+        let mut epochs = inner.epochs.lock();
+
+        epochs.push(Arc::clone(&epoch));
+    }
 
     let store = Box::into_raw(Box::new(inner));
+
     ReadHandle {
         epoch: epoch,
         my_epoch: atomic::AtomicUsize::new(0),
@@ -78,7 +89,13 @@ where
 {
     fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
         if let Some(epochs) = self.with_handle(|inner| Arc::clone(&inner.epochs)) {
-            epochs.lock().unwrap().push(Arc::clone(epoch));
+            #[cfg(not(feature = "parking_lot"))]
+            let mut epochs = epochs.lock().unwrap();
+
+            #[cfg(feature = "parking_lot")]
+            let mut epochs = epochs.lock();
+
+            epochs.push(Arc::clone(epoch));
         }
     }
 
@@ -177,7 +194,8 @@ where
             } else {
                 inner.data.get(key).map(move |v| then(&**v))
             }
-        }).unwrap_or(None)
+        })
+        .unwrap_or(None)
     }
 
     /// Applies a function to the values corresponding to the key, and returns the result alongside
@@ -206,7 +224,8 @@ where
                 let res = (res, inner.meta.clone());
                 Some(res)
             }
-        }).unwrap_or(None)
+        })
+        .unwrap_or(None)
     }
 
     /// If the writer has destroyed this map, this method will return true.
@@ -252,6 +271,7 @@ where
     {
         self.with_handle(move |inner| {
             Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
-        }).unwrap_or(Collector::from_iter(iter::empty()))
+        })
+        .unwrap_or_else(|| Collector::from_iter(iter::empty()))
     }
 }

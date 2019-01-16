@@ -184,7 +184,23 @@
 //!
 #![deny(missing_docs)]
 
-use std::collections::hash_map::RandomState;
+#[cfg(feature = "parking_lot")]
+extern crate parking_lot;
+
+#[cfg(feature = "hashbrown")]
+extern crate hashbrown;
+
+#[cfg(feature = "smallvec")]
+extern crate smallvec;
+
+/// Re-export default hash builder
+#[cfg(feature = "hashbrown")]
+pub type DefaultHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
+
+/// Re-export default hash builder
+#[cfg(not(feature = "hashbrown"))]
+pub type DefaultHashBuilder = std::collections::hash_map::RandomState;
+
 use std::hash::{BuildHasher, Hash};
 
 mod inner;
@@ -227,11 +243,11 @@ where
     capacity: Option<usize>,
 }
 
-impl Default for Options<(), RandomState> {
+impl Default for Options<(), DefaultHashBuilder> {
     fn default() -> Self {
         Options {
             meta: (),
-            hasher: RandomState::default(),
+            hasher: DefaultHashBuilder::default(),
             capacity: None,
         }
     }
@@ -297,8 +313,8 @@ where
 /// Create an empty eventually consistent map.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
 pub fn new<K, V>() -> (
-    ReadHandle<K, V, (), RandomState>,
-    WriteHandle<K, V, (), RandomState>,
+    ReadHandle<K, V, (), DefaultHashBuilder>,
+    WriteHandle<K, V, (), DefaultHashBuilder>,
 )
 where
     K: Eq + Hash + Clone,
@@ -312,8 +328,8 @@ where
 pub fn with_meta<K, V, M>(
     meta: M,
 ) -> (
-    ReadHandle<K, V, M, RandomState>,
-    WriteHandle<K, V, M, RandomState>,
+    ReadHandle<K, V, M, DefaultHashBuilder>,
+    WriteHandle<K, V, M, DefaultHashBuilder>,
 )
 where
     K: Eq + Hash + Clone,
