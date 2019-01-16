@@ -14,17 +14,17 @@ use std::sync::Mutex;
 use parking_lot::Mutex;
 
 #[cfg(not(feature = "smallvec"))]
-pub(crate) type Log<T> = Vec<T>;
+pub(crate) type Values<T> = Vec<T>;
 
 #[cfg(feature = "smallvec")]
-pub(crate) type Log<T> = smallvec::SmallVec<[T; 1]>;
+pub(crate) type Values<T> = smallvec::SmallVec<[T; 1]>;
 
 pub(crate) struct Inner<K, V, M, S>
 where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub(crate) data: HashMap<K, Log<V>, S>,
+    pub(crate) data: HashMap<K, Values<V>, S>,
     pub(crate) epochs: Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>,
     pub(crate) meta: M,
     ready: bool,

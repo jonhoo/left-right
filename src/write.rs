@@ -1,5 +1,5 @@
 use super::{Operation, ShallowCopy};
-use inner::{Inner, Log};
+use inner::{Inner, Values};
 use read::ReadHandle;
 
 use std::hash::{BuildHasher, Hash};
@@ -491,7 +491,7 @@ where
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
         match *op {
             Operation::Replace(ref key, ref mut value) => {
-                let vs = inner.data.entry(key.clone()).or_insert_with(Log::new);
+                let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
 
                 {
                     #[cfg(not(feature = "smallvec"))]
@@ -523,7 +523,7 @@ where
                         }
                     }
                     Entry::Vacant(vacant) => {
-                        vacant.insert(Log::new());
+                        vacant.insert(Values::new());
                     }
                 }
             }
@@ -531,7 +531,7 @@ where
                 inner
                     .data
                     .entry(key.clone())
-                    .or_insert_with(Log::new)
+                    .or_insert_with(Values::new)
                     .push(unsafe { value.shallow_copy() });
             }
             Operation::Empty(ref key) => {
@@ -564,16 +564,16 @@ where
     fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
         match op {
             Operation::Replace(key, value) => {
-                let v = inner.data.entry(key).or_insert_with(Log::new);
+                let v = inner.data.entry(key).or_insert_with(Values::new);
                 v.clear();
                 v.push(value);
             }
             Operation::Clear(key) => {
-                let v = inner.data.entry(key).or_insert_with(Log::new);
+                let v = inner.data.entry(key).or_insert_with(Values::new);
                 v.clear();
             }
             Operation::Add(key, value) => {
-                inner.data.entry(key).or_insert_with(Log::new).push(value);
+                inner.data.entry(key).or_insert_with(Values::new).push(value);
             }
             Operation::Empty(key) => {
                 inner.data.remove(&key);
