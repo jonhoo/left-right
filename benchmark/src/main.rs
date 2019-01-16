@@ -6,13 +6,6 @@ extern crate rand;
 extern crate zipf;
 extern crate parking_lot;
 
-#[cfg(all(not(target_env = "msvc"), feature = "nightly"))]
-extern crate jemallocator;
-
-#[cfg(all(not(target_env = "msvc"), feature = "nightly"))]
-#[global_allocator]
-static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
-
 use chashmap::CHashMap;
 use std::collections::HashMap;
 use clap::{App, Arg};

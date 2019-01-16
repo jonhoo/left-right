@@ -11,9 +11,6 @@ zipf = "0.2.0"
 rand = "0.3"
 parking_lot = "0.7.1"
 
-[target.'cgf(not(target_env = "msvc"))'.dependencies]
-jemallocator = {version = "0.1.9", optional = true }
-
 [profile.release]
 lto = true
 opt-level = 3
@@ -21,4 +18,4 @@ codegen-units = 1
 debug = false
 
 [features]
-nightly = ["evmap/nightly_hashbrown", "evmap/nightly_parking_lot", "evmap/nightly_smallvec", "jemallocator"]
+nightly = ["evmap/nightly_hashbrown", "evmap/nightly_parking_lot", "evmap/nightly_smallvec"]
