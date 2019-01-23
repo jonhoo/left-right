@@ -2,6 +2,7 @@ use inner::Inner;
 
 use std::borrow::Borrow;
 use std::cell;
+use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::iter::{self, FromIterator};
 use std::marker::PhantomData;
@@ -10,14 +11,12 @@ use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
 
-use super::DefaultHashBuilder;
-
 /// A handle that may be used to read from the eventually consistent map.
 ///
 /// Note that any changes made to the map will not be made visible until the writer calls
 /// `refresh()`. In other words, all operations performed on a `ReadHandle` will *only* see writes
 /// to the map that preceeded the last call to `refresh()`.
-pub struct ReadHandle<K, V, M = (), S = DefaultHashBuilder>
+pub struct ReadHandle<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash,
     S: BuildHasher,

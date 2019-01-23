@@ -190,14 +190,11 @@ extern crate hashbrown;
 #[cfg(feature = "smallvec")]
 extern crate smallvec;
 
-/// Re-export default hash builder
+/// Re-export default FxHash hash builder from `hashbrown`
 #[cfg(feature = "hashbrown")]
-pub type DefaultHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
+pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
 
-/// Re-export default hash builder
-#[cfg(not(feature = "hashbrown"))]
-pub type DefaultHashBuilder = std::collections::hash_map::RandomState;
-
+use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 
 mod inner;
@@ -240,11 +237,11 @@ where
     capacity: Option<usize>,
 }
 
-impl Default for Options<(), DefaultHashBuilder> {
+impl Default for Options<(), RandomState> {
     fn default() -> Self {
         Options {
             meta: (),
-            hasher: DefaultHashBuilder::default(),
+            hasher: RandomState::default(),
             capacity: None,
         }
     }
@@ -308,10 +305,12 @@ where
 }
 
 /// Create an empty eventually consistent map.
+///
+/// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
 pub fn new<K, V>() -> (
-    ReadHandle<K, V, (), DefaultHashBuilder>,
-    WriteHandle<K, V, (), DefaultHashBuilder>,
+    ReadHandle<K, V, (), RandomState>,
+    WriteHandle<K, V, (), RandomState>,
 )
 where
     K: Eq + Hash + Clone,
@@ -321,12 +320,14 @@ where
 }
 
 /// Create an empty eventually consistent map with meta information.
+///
+/// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
 pub fn with_meta<K, V, M>(
     meta: M,
 ) -> (
-    ReadHandle<K, V, M, DefaultHashBuilder>,
-    WriteHandle<K, V, M, DefaultHashBuilder>,
+    ReadHandle<K, V, M, RandomState>,
+    WriteHandle<K, V, M, RandomState>,
 )
 where
     K: Eq + Hash + Clone,
@@ -334,6 +335,26 @@ where
     M: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
+}
+
+/// Create an empty eventually consistent map with meta information and custom hasher.
+///
+/// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
+#[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
+pub fn with_hasher<K, V, M, S>(
+    meta: M,
+    hasher: S,
+) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
+where
+    K: Eq + Hash + Clone,
+    V: Eq + ShallowCopy,
+    M: 'static + Clone,
+    S: BuildHasher + Clone,
+{
+    Options::default()
+        .with_hasher(hasher)
+        .with_meta(meta)
+        .construct()
 }
 
 // test that ReadHandle isn't Sync
