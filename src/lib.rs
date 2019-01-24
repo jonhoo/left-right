@@ -184,6 +184,16 @@
 //!
 #![deny(missing_docs)]
 
+#[cfg(feature = "hashbrown")]
+extern crate hashbrown;
+
+#[cfg(feature = "smallvec")]
+extern crate smallvec;
+
+/// Re-export default FxHash hash builder from `hashbrown`
+#[cfg(feature = "hashbrown")]
+pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
+
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 
@@ -295,6 +305,8 @@ where
 }
 
 /// Create an empty eventually consistent map.
+///
+/// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
 pub fn new<K, V>() -> (
     ReadHandle<K, V, (), RandomState>,
@@ -308,6 +320,8 @@ where
 }
 
 /// Create an empty eventually consistent map with meta information.
+///
+/// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
 #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
 pub fn with_meta<K, V, M>(
     meta: M,
@@ -321,6 +335,26 @@ where
     M: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
+}
+
+/// Create an empty eventually consistent map with meta information and custom hasher.
+///
+/// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
+#[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
+pub fn with_hasher<K, V, M, S>(
+    meta: M,
+    hasher: S,
+) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
+where
+    K: Eq + Hash + Clone,
+    V: Eq + ShallowCopy,
+    M: 'static + Clone,
+    S: BuildHasher + Clone,
+{
+    Options::default()
+        .with_hasher(hasher)
+        .with_meta(meta)
+        .construct()
 }
 
 // test that ReadHandle isn't Sync

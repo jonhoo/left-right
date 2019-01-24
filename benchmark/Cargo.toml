@@ -9,6 +9,13 @@ chashmap = "2.1.0"
 clap = "2.20.3"
 zipf = "0.2.0"
 rand = "0.3"
+parking_lot = "0.7.1"
 
 [profile.release]
-debug = true
+lto = true
+opt-level = 3
+codegen-units = 1
+debug = false
+
+[features]
+nightly = ["evmap/nightly_hashbrown", "evmap/nightly_smallvec"]

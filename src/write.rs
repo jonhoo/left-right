@@ -1,5 +1,5 @@
 use super::{Operation, ShallowCopy};
-use inner::Inner;
+use inner::{Inner, Values};
 use read::ReadHandle;
 
 use std::collections::hash_map::RandomState;
@@ -7,6 +7,12 @@ use std::hash::{BuildHasher, Hash};
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{mem, thread};
+
+#[cfg(feature = "hashbrown")]
+use hashbrown::hash_map::Entry;
+
+#[cfg(not(feature = "hashbrown"))]
+use std::collections::hash_map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
@@ -117,7 +123,13 @@ where
         // destructors of any of the values that are in our map, as they'll all be called when the
         // last read handle goes out of scope.
         for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain() {
-            for v in vs.drain(..) {
+            #[cfg(not(feature = "smallvec"))]
+            let drain = vs.drain(..);
+
+            #[cfg(feature = "smallvec")]
+            let drain = vs.drain();
+
+            for v in drain {
                 mem::forget(v);
             }
         }
@@ -181,7 +193,9 @@ where
         // only block on pre-existing readers, and they are never waiting to push onto epochs
         // unless they have finished reading.
         let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
+
         let mut epochs = epochs.lock().unwrap();
+
         self.wait(&mut epochs);
 
         {
@@ -260,7 +274,8 @@ where
         let w_handle = Box::into_raw(w_handle);
 
         // swap in our w_handle, and get r_handle in return
-        let r_handle = self.r_handle
+        let r_handle = self
+            .r_handle
             .inner
             .swap(w_handle, atomic::Ordering::Release);
         let r_handle = unsafe { Box::from_raw(r_handle) };
@@ -341,14 +356,17 @@ where
         self.refresh();
 
         // next, grab the read handle and set it to NULL
-        let r_handle = self.r_handle
+        let r_handle = self
+            .r_handle
             .inner
             .swap(ptr::null_mut(), atomic::Ordering::Release);
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
+
         let mut epochs = epochs.lock().unwrap();
+
         self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
@@ -458,35 +476,59 @@ where
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
         match *op {
             Operation::Replace(ref key, ref mut value) => {
-                let vs = inner.data.entry(key.clone()).or_insert_with(Vec::new);
-                // don't run destructors yet -- still in use by other map
-                for v in vs.drain(..) {
-                    mem::forget(v);
+                let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
+
+                {
+                    #[cfg(not(feature = "smallvec"))]
+                    let drain = vs.drain(..);
+
+                    #[cfg(feature = "smallvec")]
+                    let drain = vs.drain();
+
+                    // don't run destructors yet -- still in use by other map
+                    for v in drain {
+                        mem::forget(v);
+                    }
                 }
+
                 vs.push(unsafe { value.shallow_copy() });
             }
             Operation::Clear(ref key) => {
-                // don't run destructors yet -- still in use by other map
-                for v in inner
-                    .data
-                    .entry(key.clone())
-                    .or_insert_with(Vec::new)
-                    .drain(..)
-                {
-                    mem::forget(v);
+                match inner.data.entry(key.clone()) {
+                    Entry::Occupied(mut occupied) => {
+                        #[cfg(not(feature = "smallvec"))]
+                        let drain = occupied.get_mut().drain(..);
+
+                        #[cfg(feature = "smallvec")]
+                        let drain = occupied.get_mut().drain();
+
+                        // don't run destructors yet -- still in use by other map
+                        for v in drain {
+                            mem::forget(v);
+                        }
+                    }
+                    Entry::Vacant(vacant) => {
+                        vacant.insert(Values::new());
+                    }
                 }
             }
             Operation::Add(ref key, ref mut value) => {
                 inner
                     .data
                     .entry(key.clone())
-                    .or_insert_with(Vec::new)
+                    .or_insert_with(Values::new)
                     .push(unsafe { value.shallow_copy() });
             }
             Operation::Empty(ref key) => {
                 if let Some(mut vs) = inner.data.remove(key) {
+                    #[cfg(not(feature = "smallvec"))]
+                    let drain = vs.drain(..);
+
+                    #[cfg(feature = "smallvec")]
+                    let drain = vs.drain();
+
                     // don't run destructors yet -- still in use by other map
-                    for v in vs.drain(..) {
+                    for v in drain {
                         mem::forget(v);
                     }
                 }
@@ -507,16 +549,20 @@ where
     fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
         match op {
             Operation::Replace(key, value) => {
-                let v = inner.data.entry(key).or_insert_with(Vec::new);
+                let v = inner.data.entry(key).or_insert_with(Values::new);
                 v.clear();
                 v.push(value);
             }
             Operation::Clear(key) => {
-                let v = inner.data.entry(key).or_insert_with(Vec::new);
+                let v = inner.data.entry(key).or_insert_with(Values::new);
                 v.clear();
             }
             Operation::Add(key, value) => {
-                inner.data.entry(key).or_insert_with(Vec::new).push(value);
+                inner
+                    .data
+                    .entry(key)
+                    .or_insert_with(Values::new)
+                    .push(value);
             }
             Operation::Empty(key) => {
                 inner.data.remove(&key);

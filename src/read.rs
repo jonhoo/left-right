@@ -59,9 +59,11 @@ where
 {
     // tell writer about our epoch tracker
     let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
+
     inner.epochs.lock().unwrap().push(Arc::clone(&epoch));
 
     let store = Box::into_raw(Box::new(inner));
+
     ReadHandle {
         epoch: epoch,
         my_epoch: atomic::AtomicUsize::new(0),
@@ -177,7 +179,8 @@ where
             } else {
                 inner.data.get(key).map(move |v| then(&**v))
             }
-        }).unwrap_or(None)
+        })
+        .unwrap_or(None)
     }
 
     /// Applies a function to the values corresponding to the key, and returns the result alongside
@@ -206,7 +209,8 @@ where
                 let res = (res, inner.meta.clone());
                 Some(res)
             }
-        }).unwrap_or(None)
+        })
+        .unwrap_or(None)
     }
 
     /// If the writer has destroyed this map, this method will return true.
@@ -252,6 +256,7 @@ where
     {
         self.with_handle(move |inner| {
             Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
-        }).unwrap_or(Collector::from_iter(iter::empty()))
+        })
+        .unwrap_or_else(|| Collector::from_iter(iter::empty()))
     }
 }

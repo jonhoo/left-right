@@ -4,6 +4,7 @@ extern crate clap;
 extern crate evmap;
 extern crate rand;
 extern crate zipf;
+extern crate parking_lot;
 
 use chashmap::CHashMap;
 use std::collections::HashMap;
@@ -87,7 +88,7 @@ fn main() {
     // first, benchmark Arc<RwLock<HashMap>>
     if matches.is_present("compare") {
         let map: HashMap<u64, u64> = HashMap::with_capacity(5_000_000);
-        let map = sync::Arc::new(sync::RwLock::new(map));
+        let map = sync::Arc::new(parking_lot::RwLock::new(map));
         let start = time::Instant::now();
         let end = start + dur;
         join.extend((0..readers).into_iter().map(|_| {
@@ -135,7 +136,7 @@ fn main() {
         let (r, w) = evmap::Options::default()
             .with_capacity(5_000_000)
             .construct();
-        let w = sync::Arc::new(sync::Mutex::new((w, 0, refresh)));
+        let w = sync::Arc::new(parking_lot::Mutex::new((w, 0, refresh)));
         let start = time::Instant::now();
         let end = start + dur;
         join.extend((0..readers).into_iter().map(|_| {
@@ -206,19 +207,19 @@ impl Backend for sync::Arc<CHashMap<u64, u64>> {
     }
 }
 
-impl Backend for sync::Arc<sync::RwLock<HashMap<u64, u64>>> {
+impl Backend for sync::Arc<parking_lot::RwLock<HashMap<u64, u64>>> {
     fn b_get(&self, key: u64) -> u64 {
-        self.read().unwrap().get(&key).map(|&v| v).unwrap_or(0)
+        self.read().get(&key).map(|&v| v).unwrap_or(0)
     }
 
     fn b_put(&mut self, key: u64, value: u64) {
-        self.write().unwrap().insert(key, value);
+        self.write().insert(key, value);
     }
 }
 
 enum EvHandle {
     Read(evmap::ReadHandle<u64, u64>),
-    Write(sync::Arc<sync::Mutex<(evmap::WriteHandle<u64, u64>, usize, usize)>>),
+    Write(sync::Arc<parking_lot::Mutex<(evmap::WriteHandle<u64, u64>, usize, usize)>>),
 }
 
 impl Backend for EvHandle {
@@ -232,7 +233,7 @@ impl Backend for EvHandle {
 
     fn b_put(&mut self, key: u64, value: u64) {
         if let EvHandle::Write(ref w) = *self {
-            let mut w = w.lock().unwrap();
+            let mut w = w.lock();
             w.0.update(key, value);
             w.1 += 1;
             if w.1 == w.2 {
