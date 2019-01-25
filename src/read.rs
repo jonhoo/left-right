@@ -125,12 +125,7 @@ where
         // then, atomically read pointer, and use the map being pointed to
         let r_handle = self.inner.load(atomic::Ordering::Acquire);
 
-        let mut res = None;
-        if !r_handle.is_null() {
-            let rs = unsafe { Box::from_raw(r_handle) };
-            res = Some(f(&*rs));
-            mem::forget(rs); // don't free the Box!
-        }
+        let res = unsafe { r_handle.as_ref().map(f) };
 
         // we've finished reading -- let the writer know
         self.epoch.store(

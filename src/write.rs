@@ -214,8 +214,14 @@ where
                 // this may seem unnecessarily complex, but it has the major advantage that it
                 // is relatively efficient to do lots of writes to the evmap at startup to
                 // populate it, and then refresh().
-                let mut r_handle =
-                    unsafe { Box::from_raw(self.r_handle.inner.load(atomic::Ordering::Relaxed)) };
+                let r_handle = unsafe {
+                    self.r_handle
+                        .inner
+                        .load(atomic::Ordering::Relaxed)
+                        .as_mut()
+                        .unwrap()
+                };
+
                 // XXX: it really is too bad that we can't just .clone() the data here and save
                 // ourselves a lot of re-hashing, re-bucketization, etc.
                 w_handle
@@ -226,7 +232,6 @@ where
                             vs.iter_mut().map(|v| unsafe { v.shallow_copy() }).collect(),
                         )
                     }));
-                mem::forget(r_handle);
             }
 
             // the w_handle map has not seen any of the writes in the oplog
