@@ -501,9 +501,9 @@ where
     /// The remaining value-set will only be visible to readers after the next call to `refresh()`
     pub fn retain<F>(&mut self, k: K, f: F) -> &mut Self
     where
-        F: Fn(&V) -> bool + 'static + Send,
+        F: Fn(&V) -> bool + 'static + Send + Sync,
     {
-        self.add_op(Operation::Retain(k, Predicate(Box::new(f))))
+        self.add_op(Operation::Retain(k, Predicate(Arc::new(f))))
     }
 
     /// Shrinks a value-set to it's minimum necessary size, freeing memory

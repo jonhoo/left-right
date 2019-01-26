@@ -197,12 +197,14 @@ pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
+use std::sync::Arc;
 
 mod inner;
 use inner::Inner;
 
 /// Unary predicate used to retain elements
-pub struct Predicate<V>(pub Box<Fn(&V) -> bool + Send>);
+#[derive(Clone)]
+pub struct Predicate<V>(pub(crate) Arc<Fn(&V) -> bool + Send + Sync>);
 
 impl<V> Predicate<V> {
     /// Evaluate the predicate for the given element
@@ -213,12 +215,13 @@ impl<V> Predicate<V> {
 }
 
 impl<V> PartialEq for Predicate<V> {
-    fn eq(&self, _: &Self) -> bool {
-        // the predicate is uniquely owned,
-        // so they will never be equivalent.
-        false
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
+
+impl<V> Eq for Predicate<V> {}
 
 impl<V> fmt::Debug for Predicate<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -227,7 +230,7 @@ impl<V> fmt::Debug for Predicate<V> {
 }
 
 /// A pending map operation.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Operation<K, V> {
     /// Replace the set of entries for this key with this value.
     Replace(K, V),
