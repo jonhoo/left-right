@@ -225,7 +225,9 @@ impl<V> Eq for Predicate<V> {}
 
 impl<V> fmt::Debug for Predicate<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Predicate({:p})", &*self.0 as *const _)
+        f.debug_tuple("Predicate")
+            .field(&format_args!("{:p}", &*self.0 as *const _))
+            .finish()
     }
 }
 
