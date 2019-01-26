@@ -1,4 +1,4 @@
-use super::{Operation, ShallowCopy};
+use super::{Operation, Predicate, ShallowCopy};
 use inner::{Inner, Values};
 use read::ReadHandle;
 
@@ -184,7 +184,7 @@ where
     /// This method needs to wait for all readers to move to the new handle so that it can replay
     /// the operational log onto the stale map copy the readers used to use. This can take some
     /// time, especially if readers are executing slow operations, or if there are many of them.
-    pub fn refresh(&mut self) {
+    pub fn refresh(&mut self) -> &mut Self {
         // we need to wait until all epochs have changed since the swaps *or* until a "finished"
         // flag has been observed to be on for two subsequent iterations (there still may be some
         // readers present since we did the previous refresh)
@@ -222,15 +222,26 @@ where
                         .unwrap()
                 };
 
+                let free_elements = w_handle.data.capacity() - w_handle.data.len();
+
+                if free_elements < r_handle.data.len() {
+                    // pre-allocate if possible
+                    w_handle.data.reserve(r_handle.data.len() - free_elements);
+                }
+
                 // XXX: it really is too bad that we can't just .clone() the data here and save
                 // ourselves a lot of re-hashing, re-bucketization, etc.
                 w_handle
                     .data
                     .extend(r_handle.data.iter_mut().map(|(k, vs)| {
-                        (
-                            k.clone(),
-                            vs.iter_mut().map(|v| unsafe { v.shallow_copy() }).collect(),
-                        )
+                        (k.clone(), {
+                            // pre-allocate if possible
+                            let mut copied = Values::with_capacity(vs.len());
+
+                            copied.extend(vs.iter_mut().map(|v| unsafe { v.shallow_copy() }));
+
+                            copied
+                        })
                     }));
             }
 
@@ -296,6 +307,8 @@ where
         self.w_handle = Some(r_handle);
         self.second = self.first;
         self.first = false;
+
+        self
     }
 
     /// Drop this map without preserving one side for reads.
@@ -330,10 +343,11 @@ where
     /// }).collect();
     ///
     /// // do some writes
-    /// w.insert(0, String::from("foo"));
-    /// w.insert(1, String::from("bar"));
-    /// w.insert(2, String::from("baz"));
-    /// w.insert(3, String::from("qux"));
+    /// w.insert(0, String::from("foo"))
+    ///  .insert(1, String::from("bar"))
+    ///  .insert(2, String::from("baz"))
+    ///  .insert(3, String::from("qux"));
+    ///
     /// // expose the writes
     /// w.refresh();
     /// assert_eq!(r.len(), 4);
@@ -417,10 +431,12 @@ where
     ///
     /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
     /// This method will only do so if there are pending operations.
-    pub fn flush(&mut self) {
+    pub fn flush(&mut self) -> &mut Self {
         if !self.pending().is_empty() {
             self.refresh();
         }
+
+        self
     }
 
     /// Set the metadata.
@@ -431,7 +447,7 @@ where
         meta
     }
 
-    fn add_op(&mut self, op: Operation<K, V>) {
+    fn add_op(&mut self, op: Operation<K, V>) -> &mut Self {
         if !self.first {
             self.oplog.push(op);
         } else {
@@ -440,44 +456,81 @@ where
             Self::apply_second(inner, op);
             // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
+
+        self
     }
 
     /// Add the given value to the value-set of the given key.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
-    pub fn insert(&mut self, k: K, v: V) {
-        self.add_op(Operation::Add(k, v));
+    pub fn insert(&mut self, k: K, v: V) -> &mut Self {
+        self.add_op(Operation::Add(k, v))
     }
 
     /// Replace the value-set of the given key with the given value.
     ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
-    pub fn update(&mut self, k: K, v: V) {
-        self.add_op(Operation::Replace(k, v));
+    pub fn update(&mut self, k: K, v: V) -> &mut Self {
+        self.add_op(Operation::Replace(k, v))
     }
 
     /// Clear the value-set of the given key, without removing it.
     ///
     /// This will allocate an empty value-set for the key if it does not already exist.
     /// The new value will only be visible to readers after the next call to `refresh()`.
-    pub fn clear(&mut self, k: K) {
-        self.add_op(Operation::Clear(k));
+    pub fn clear(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::Clear(k))
     }
 
     /// Remove the given value from the value-set of the given key.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
-    pub fn remove(&mut self, k: K, v: V) {
-        self.add_op(Operation::Remove(k, v));
+    pub fn remove(&mut self, k: K, v: V) -> &mut Self {
+        self.add_op(Operation::Remove(k, v))
     }
 
     /// Remove the value-set for the given key.
     ///
     /// The value-set will only disappear from readers after the next call to `refresh()`.
-    pub fn empty(&mut self, k: K) {
-        self.add_op(Operation::Empty(k));
+    pub fn empty(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::Empty(k))
     }
 
+    /// Retain elements for the given key using the provided predicate function.
+    ///
+    /// The remaining value-set will only be visible to readers after the next call to `refresh()`
+    pub fn retain<F>(&mut self, k: K, f: F) -> &mut Self
+    where
+        F: Fn(&V) -> bool + 'static + Send,
+    {
+        self.add_op(Operation::Retain(k, Predicate(Box::new(f))))
+    }
+
+    /// Shrinks a value-set to it's minimum necessary size, freeing memory
+    /// and potentially improving cache locality if the `smallvec` feature is used.
+    ///
+    /// If no key is given, <b>ALL</b> value-sets will shrink to fit.
+    ///
+    /// The optimized value-set will only be visible to readers after the next call to `refresh()`
+    pub fn fit(&mut self, k: Option<K>) -> &mut Self {
+        self.add_op(Operation::Fit(k))
+    }
+
+    /// Truncates the value-set for this key to the given length.
+    ///
+    /// The truncated value-set will only be visible to readers after the next call to `refresh()`
+    pub fn truncate(&mut self, k: K, len: usize) -> &mut Self {
+        self.add_op(Operation::Truncate(k, len))
+    }
+
+    /// Reverses the value-set for this key.
+    ///
+    /// The reversed value-set will only be visible to readers after the next call to `refresh()`
+    pub fn reverse(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::Reverse(k))
+    }
+
+    /// Apply ops in such a way that no values are dropped, only forgotten
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
         match *op {
             Operation::Replace(ref key, ref mut value) => {
@@ -548,9 +601,54 @@ where
                     }
                 }
             }
+            Operation::Retain(ref key, ref predicate) => {
+                if let Some(e) = inner.data.get_mut(key) {
+                    let mut del = 0;
+
+                    let len = e.len();
+
+                    for i in 0..len {
+                        if !predicate.eval(unsafe { e.get_unchecked(i) }) {
+                            del += 1;
+                        } else {
+                            e.swap(i - del, i);
+                        }
+                    }
+
+                    // manually truncate and forget values so they aren't dropped.
+                    while e.len() > (len - del) {
+                        mem::forget(e.pop());
+                    }
+                }
+            }
+            Operation::Fit(ref key) => match key {
+                Some(ref key) => {
+                    if let Some(e) = inner.data.get_mut(key) {
+                        e.shrink_to_fit();
+                    }
+                }
+                None => {
+                    for value_set in inner.data.values_mut() {
+                        value_set.shrink_to_fit();
+                    }
+                }
+            },
+            Operation::Truncate(ref key, len) => {
+                if let Some(e) = inner.data.get_mut(key) {
+                    while e.len() > len {
+                        mem::forget(e.pop());
+                    }
+                }
+            }
+            Operation::Reverse(ref key) => {
+                if let Some(e) = inner.data.get_mut(key) {
+                    e.reverse();
+                }
+            }
         }
     }
 
+    /// Apply operations while allowing dropping of values
     fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
         match op {
             Operation::Replace(key, value) => {
@@ -578,6 +676,33 @@ where
                     if let Some(i) = e.iter().position(|v| v == &value) {
                         e.swap_remove(i);
                     }
+                }
+            }
+            Operation::Retain(key, predicate) => {
+                if let Some(e) = inner.data.get_mut(&key) {
+                    e.retain(|v| predicate.eval(v));
+                }
+            }
+            Operation::Fit(key) => match key {
+                Some(ref key) => {
+                    if let Some(e) = inner.data.get_mut(&key) {
+                        e.shrink_to_fit();
+                    }
+                }
+                None => {
+                    for value_set in inner.data.values_mut() {
+                        value_set.shrink_to_fit();
+                    }
+                }
+            },
+            Operation::Truncate(key, len) => {
+                if let Some(e) = inner.data.get_mut(&key) {
+                    e.truncate(len);
+                }
+            }
+            Operation::Reverse(key) => {
+                if let Some(e) = inner.data.get_mut(&key) {
+                    e.reverse();
                 }
             }
         }

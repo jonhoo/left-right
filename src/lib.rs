@@ -195,13 +195,39 @@ extern crate smallvec;
 pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
 
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
 mod inner;
 use inner::Inner;
 
+/// Unary predicate used to retain elements
+pub struct Predicate<V>(pub Box<Fn(&V) -> bool + Send>);
+
+impl<V> Predicate<V> {
+    /// Evaluate the predicate for the given element
+    #[inline]
+    pub fn eval(&self, value: &V) -> bool {
+        (*self.0)(value)
+    }
+}
+
+impl<V> PartialEq for Predicate<V> {
+    fn eq(&self, _: &Self) -> bool {
+        // the predicate is uniquely owned,
+        // so they will never be equivalent.
+        false
+    }
+}
+
+impl<V> fmt::Debug for Predicate<V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Predicate({:p})", &*self.0 as *const _)
+    }
+}
+
 /// A pending map operation.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Operation<K, V> {
     /// Replace the set of entries for this key with this value.
     Replace(K, V),
@@ -213,6 +239,17 @@ pub enum Operation<K, V> {
     Empty(K),
     /// Remove all values in the value set for this key.
     Clear(K),
+    /// Retains all values matching the given predicate.
+    Retain(K, Predicate<V>),
+    /// Shrinks a value-set to it's minimum necessary size, freeing memory
+    /// and potentially improving cache locality if the `smallvec` feature is used.
+    ///
+    /// If no key is given, all value-sets will shrink to fit.
+    Fit(Option<K>),
+    /// Truncates the value-set for this key to the given length.
+    Truncate(K, usize),
+    /// Reverses the value-set for this key.
+    Reverse(K),
 }
 
 mod write;
