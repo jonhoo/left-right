@@ -387,3 +387,30 @@ fn foreach() {
         _ => unreachable!(),
     });
 }
+
+#[test]
+fn retain() {
+    // do same operations on a plain vector
+    // to verify retain implementation
+    let mut v = Vec::new();
+    let (r, mut w) = evmap::new();
+
+    for i in 0..50 {
+        w.insert(0, i);
+        v.push(i);
+    }
+
+    w.retain(0, |num| num % 2 == 0).refresh();
+    v.retain(|num| num % 2 == 0);
+
+    r.get_and(&0, |nums| {
+        assert_eq!(nums.len(), 25);
+        assert_eq!(nums.len(), v.len());
+
+        for (a, b) in nums.iter().zip(&v) {
+            assert_eq!(a, b);
+            assert_eq!(a % 2, 0);
+        }
+    })
+    .unwrap();
+}
