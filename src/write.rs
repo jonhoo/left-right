@@ -603,11 +603,13 @@ where
             Operation::Retain(ref key, ref predicate) => {
                 if let Some(e) = inner.data.get_mut(key) {
                     let mut del = 0;
-
                     let len = e.len();
 
-                    // "bubble up" the values we wish to remove,
-                    // so they can be truncated.
+                    // "bubble up" the values we wish to remove, so they can be truncated.
+                    //
+                    // See https://github.com/servo/rust-smallvec/blob/a775b5f74cce0d3c7218608fd9f6fd721bb0f461/lib.rs#L881-L897
+                    // for SmallVec's implementation of `retain`, the only difference being that we
+                    // cannot drop values here, so they are truncated with `set_len`
                     for i in 0..len {
                         if !predicate.eval(unsafe { e.get_unchecked(i) }) {
                             del += 1;
