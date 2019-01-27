@@ -498,11 +498,16 @@ where
     /// Shrinks a value-set to it's minimum necessary size, freeing memory
     /// and potentially improving cache locality if the `smallvec` feature is used.
     ///
-    /// If no key is given, <b>ALL</b> value-sets will shrink to fit.
-    ///
     /// The optimized value-set will only be visible to readers after the next call to `refresh()`
-    pub fn fit(&mut self, k: Option<K>) -> &mut Self {
-        self.add_op(Operation::Fit(k))
+    pub fn fit(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::Fit(Some(k)))
+    }
+
+    /// Like [`WriteHandle::fit`](#method.fit), but shrinks <b>all</b> value-sets in the map.
+    ///
+    /// The optimized value-sets will only be visible to readers after the next call to `refresh()`
+    pub fn fit_all(&mut self) -> &mut Self {
+        self.add_op(Operation::Fit(None))
     }
 
     /// Reserves capacity for some number of additional elements in a value-set,
