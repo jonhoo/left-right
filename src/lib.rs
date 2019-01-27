@@ -255,6 +255,12 @@ pub enum Operation<K, V> {
     Truncate(K, usize),
     /// Reverses the value-set for this key.
     Reverse(K),
+    /// Reserves capacity for some number of additional elements in a value-set,
+    /// or creates an empty value-set for this key with the given capacity if
+    /// it doesn't already exist.
+    ///
+    /// This can improve performance by pre-allocating space for large value-sets.
+    Reserve(K, usize),
 }
 
 mod write;

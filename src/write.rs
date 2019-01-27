@@ -530,6 +530,16 @@ where
         self.add_op(Operation::Reverse(k))
     }
 
+    /// Reserves capacity for some number of additional elements in a value-set,
+    /// or creates an empty value-set for this key with the given capacity if
+    /// it doesn't already exist.
+    ///
+    /// Readers are unaffected by this operation, but it can improve performance
+    /// by pre-allocating space for large value-sets.
+    pub fn reserve(&mut self, k: K, additional: usize) -> &mut Self {
+        self.add_op(Operation::Reserve(k, additional))
+    }
+
     /// Apply ops in such a way that no values are dropped, only forgotten
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
         match *op {
@@ -645,6 +655,13 @@ where
                     e.reverse();
                 }
             }
+            Operation::Reserve(ref key, additional) => {
+                inner
+                    .data
+                    .entry(key.clone())
+                    .and_modify(|e| e.reserve(additional))
+                    .or_insert_with(|| Values::with_capacity(additional));
+            }
         }
     }
 
@@ -704,6 +721,13 @@ where
                 if let Some(e) = inner.data.get_mut(&key) {
                     e.reverse();
                 }
+            }
+            Operation::Reserve(key, additional) => {
+                inner
+                    .data
+                    .entry(key)
+                    .and_modify(|e| e.reserve(additional))
+                    .or_insert_with(|| Values::with_capacity(additional));
             }
         }
     }
