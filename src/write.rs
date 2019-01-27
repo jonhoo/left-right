@@ -222,26 +222,15 @@ where
                         .unwrap()
                 };
 
-                let free_elements = w_handle.data.capacity() - w_handle.data.len();
-
-                if free_elements < r_handle.data.len() {
-                    // pre-allocate if possible
-                    w_handle.data.reserve(r_handle.data.len() - free_elements);
-                }
-
                 // XXX: it really is too bad that we can't just .clone() the data here and save
                 // ourselves a lot of re-hashing, re-bucketization, etc.
                 w_handle
                     .data
                     .extend(r_handle.data.iter_mut().map(|(k, vs)| {
-                        (k.clone(), {
-                            // pre-allocate if possible
-                            let mut copied = Values::with_capacity(vs.len());
-
-                            copied.extend(vs.iter_mut().map(|v| unsafe { v.shallow_copy() }));
-
-                            copied
-                        })
+                        (
+                            k.clone(),
+                            vs.iter_mut().map(|v| unsafe { v.shallow_copy() }).collect(),
+                        )
                     }));
             }
 
@@ -617,6 +606,8 @@ where
 
                     let len = e.len();
 
+                    // "bubble up" the values we wish to remove,
+                    // so they can be truncated.
                     for i in 0..len {
                         if !predicate.eval(unsafe { e.get_unchecked(i) }) {
                             del += 1;
@@ -625,9 +616,9 @@ where
                         }
                     }
 
-                    // manually truncate and forget values so they aren't dropped.
-                    while e.len() > (len - del) {
-                        mem::forget(e.pop());
+                    unsafe {
+                        // truncate vector without dropping values
+                        e.set_len(len - del);
                     }
                 }
             }
@@ -645,8 +636,9 @@ where
             },
             Operation::Truncate(ref key, len) => {
                 if let Some(e) = inner.data.get_mut(key) {
-                    while e.len() > len {
-                        mem::forget(e.pop());
+                    unsafe {
+                        // truncate vector without dropping values
+                        e.set_len(len);
                     }
                 }
             }
