@@ -505,20 +505,6 @@ where
         self.add_op(Operation::Fit(k))
     }
 
-    /// Truncates the value-set for this key to the given length.
-    ///
-    /// The truncated value-set will only be visible to readers after the next call to `refresh()`
-    pub fn truncate(&mut self, k: K, len: usize) -> &mut Self {
-        self.add_op(Operation::Truncate(k, len))
-    }
-
-    /// Reverses the value-set for this key.
-    ///
-    /// The reversed value-set will only be visible to readers after the next call to `refresh()`
-    pub fn reverse(&mut self, k: K) -> &mut Self {
-        self.add_op(Operation::Reverse(k))
-    }
-
     /// Reserves capacity for some number of additional elements in a value-set,
     /// or creates an empty value-set for this key with the given capacity if
     /// it doesn't already exist.
@@ -636,19 +622,6 @@ where
                     }
                 }
             },
-            Operation::Truncate(ref key, len) => {
-                if let Some(e) = inner.data.get_mut(key) {
-                    unsafe {
-                        // truncate vector without dropping values
-                        e.set_len(len);
-                    }
-                }
-            }
-            Operation::Reverse(ref key) => {
-                if let Some(e) = inner.data.get_mut(key) {
-                    e.reverse();
-                }
-            }
             Operation::Reserve(ref key, additional) => {
                 inner
                     .data
@@ -706,16 +679,6 @@ where
                     }
                 }
             },
-            Operation::Truncate(key, len) => {
-                if let Some(e) = inner.data.get_mut(&key) {
-                    e.truncate(len);
-                }
-            }
-            Operation::Reverse(key) => {
-                if let Some(e) = inner.data.get_mut(&key) {
-                    e.reverse();
-                }
-            }
             Operation::Reserve(key, additional) => {
                 inner
                     .data

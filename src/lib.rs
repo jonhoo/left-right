@@ -251,10 +251,6 @@ pub enum Operation<K, V> {
     ///
     /// If no key is given, all value-sets will shrink to fit.
     Fit(Option<K>),
-    /// Truncates the value-set for this key to the given length.
-    Truncate(K, usize),
-    /// Reverses the value-set for this key.
-    Reverse(K),
     /// Reserves capacity for some number of additional elements in a value-set,
     /// or creates an empty value-set for this key with the given capacity if
     /// it doesn't already exist.
