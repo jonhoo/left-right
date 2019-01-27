@@ -184,7 +184,7 @@ where
     /// This method needs to wait for all readers to move to the new handle so that it can replay
     /// the operational log onto the stale map copy the readers used to use. This can take some
     /// time, especially if readers are executing slow operations, or if there are many of them.
-    pub fn refresh(&mut self) {
+    pub fn refresh(&mut self) -> &mut Self {
         // we need to wait until all epochs have changed since the swaps *or* until a "finished"
         // flag has been observed to be on for two subsequent iterations (there still may be some
         // readers present since we did the previous refresh)
@@ -296,6 +296,8 @@ where
         self.w_handle = Some(r_handle);
         self.second = self.first;
         self.first = false;
+
+        self
     }
 
     /// Drop this map without preserving one side for reads.
@@ -330,10 +332,10 @@ where
     /// }).collect();
     ///
     /// // do some writes
-    /// w.insert(0, String::from("foo"));
-    /// w.insert(1, String::from("bar"));
-    /// w.insert(2, String::from("baz"));
-    /// w.insert(3, String::from("qux"));
+    /// w.insert(0, String::from("foo"))
+    ///  .insert(1, String::from("bar"))
+    ///  .insert(2, String::from("baz"))
+    ///  .insert(3, String::from("qux"));
     /// // expose the writes
     /// w.refresh();
     /// assert_eq!(r.len(), 4);
@@ -417,10 +419,12 @@ where
     ///
     /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
     /// This method will only do so if there are pending operations.
-    pub fn flush(&mut self) {
+    pub fn flush(&mut self) -> &mut Self {
         if !self.pending().is_empty() {
             self.refresh();
         }
+
+        self
     }
 
     /// Set the metadata.
@@ -431,7 +435,7 @@ where
         meta
     }
 
-    fn add_op(&mut self, op: Operation<K, V>) {
+    fn add_op(&mut self, op: Operation<K, V>) -> &mut Self {
         if !self.first {
             self.oplog.push(op);
         } else {
@@ -440,42 +444,44 @@ where
             Self::apply_second(inner, op);
             // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
+
+        self
     }
 
     /// Add the given value to the value-set of the given key.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
-    pub fn insert(&mut self, k: K, v: V) {
-        self.add_op(Operation::Add(k, v));
+    pub fn insert(&mut self, k: K, v: V) -> &mut Self {
+        self.add_op(Operation::Add(k, v))
     }
 
     /// Replace the value-set of the given key with the given value.
     ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
-    pub fn update(&mut self, k: K, v: V) {
-        self.add_op(Operation::Replace(k, v));
+    pub fn update(&mut self, k: K, v: V) -> &mut Self {
+        self.add_op(Operation::Replace(k, v))
     }
 
     /// Clear the value-set of the given key, without removing it.
     ///
     /// This will allocate an empty value-set for the key if it does not already exist.
     /// The new value will only be visible to readers after the next call to `refresh()`.
-    pub fn clear(&mut self, k: K) {
-        self.add_op(Operation::Clear(k));
+    pub fn clear(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::Clear(k))
     }
 
     /// Remove the given value from the value-set of the given key.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
-    pub fn remove(&mut self, k: K, v: V) {
-        self.add_op(Operation::Remove(k, v));
+    pub fn remove(&mut self, k: K, v: V) -> &mut Self {
+        self.add_op(Operation::Remove(k, v))
     }
 
     /// Remove the value-set for the given key.
     ///
     /// The value-set will only disappear from readers after the next call to `refresh()`.
-    pub fn empty(&mut self, k: K) {
-        self.add_op(Operation::Empty(k));
+    pub fn empty(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::Empty(k))
     }
 
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
