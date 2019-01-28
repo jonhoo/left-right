@@ -182,6 +182,19 @@
 //! approximately twice of that of a regular `HashMap`, and more if writes rarely refresh after
 //! writing.
 //!
+//! # Small Vector Optimization
+//!
+//! By default, the value-set for each key in the map uses the `smallvec` crate to keep a
+//! maximum of one element stored inline with the map, as opposed to separately allocated
+//! with a plain `Vec`. Operations such as `Fit` and `Replace` will automatically switch
+//! back to the inline storage if possible. This is ideal for maps that only ever use one
+//! element per key.
+//!
+//! If this is undesirable, simple set `default-features = false` in the `evmap` dependency entry,
+//! and `Vec` will always be used internally. Note that this will also opt out
+//! of the `hashbrown` dependency, which is usually preferred,
+//! so add that back with `features = ["hashbrown"]`
+//!
 #![deny(missing_docs)]
 
 #[cfg(feature = "hashbrown")]
