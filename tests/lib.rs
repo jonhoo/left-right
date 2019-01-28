@@ -400,17 +400,12 @@ fn retain() {
         v.push(i);
     }
 
-    w.retain(0, |num| num % 2 == 0).refresh();
-    v.retain(|num| num % 2 == 0);
+    fn is_even(num: &i32) -> bool {
+        num % 2 == 0
+    }
 
-    r.get_and(&0, |nums| {
-        assert_eq!(nums.len(), 25);
-        assert_eq!(nums.len(), v.len());
+    w.retain(0, is_even).refresh();
+    v.retain(is_even);
 
-        for (a, b) in nums.iter().zip(&v) {
-            assert_eq!(a, b);
-            assert_eq!(a % 2, 0);
-        }
-    })
-    .unwrap();
+    r.get_and(&0, |nums| assert_eq!(v, nums)).unwrap();
 }
