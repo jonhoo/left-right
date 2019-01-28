@@ -1,4 +1,4 @@
-use inner::Inner;
+use inner::{Inner, Values};
 
 use std::borrow::Borrow;
 use std::cell;
@@ -152,6 +152,23 @@ where
         self.with_handle(|inner| inner.meta.clone())
     }
 
+    /// Internal version of `get_and`
+    fn get_raw<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<T>
+    where
+        F: FnOnce(&Values<V>) -> T,
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.with_handle(move |inner| {
+            if !inner.is_ready() {
+                None
+            } else {
+                inner.data.get(key).map(then)
+            }
+        })
+        .unwrap_or(None)
+    }
+
     /// Applies a function to the values corresponding to the key, and returns the result.
     ///
     /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
@@ -162,20 +179,15 @@ where
     ///
     /// If no values exist for the given key, no refresh has happened, or the map has been
     /// destroyed, `then` will not be called, and `None` will be returned.
+    #[inline]
     pub fn get_and<Q: ?Sized, F, T>(&self, key: &Q, then: F) -> Option<T>
     where
         F: FnOnce(&[V]) -> T,
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.with_handle(move |inner| {
-            if !inner.is_ready() {
-                None
-            } else {
-                inner.data.get(key).map(move |v| then(&**v))
-            }
-        })
-        .unwrap_or(None)
+        // call `borrow` here to monomorphize `get_raw` fewer times
+        self.get_raw(key.borrow(), |values| then(&**values))
     }
 
     /// Applies a function to the values corresponding to the key, and returns the result alongside
@@ -253,5 +265,31 @@ where
             Collector::from_iter(inner.data.iter().map(|(k, vs)| f(k, &vs[..])))
         })
         .unwrap_or_else(|| Collector::from_iter(iter::empty()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::new;
+
+    #[test]
+    fn reserve_and_fit() {
+        let (r, mut w) = new();
+
+        // 64 is the second power of two higher than 17,
+        // so it should at least shrink the vector to less than
+        // or equal to the next highest power of 2 after 17
+        w.reserve(0, 64).refresh();
+
+        r.get_raw(&0, |vs| assert_eq!(vs.capacity(), 64)).unwrap();
+
+        // 1 + 2^4, so it's a tiny bit more than a power of two
+        for i in 0..17 {
+            w.insert(0, i);
+        }
+
+        w.fit_all().refresh();
+
+        r.get_raw(&0, |vs| assert!(vs.capacity() < 64)).unwrap();
     }
 }
