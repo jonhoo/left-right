@@ -193,10 +193,20 @@ with a plain `Vec`. Operations such as `Fit` and `Replace` will automatically sw
 back to the inline storage if possible. This is ideal for maps that only ever use one
 element per key.
 
-If this is undesirable, simple set `default-features = false` in the `evmap` dependency entry,
-and `Vec` will always be used internally. Note that this will also opt out
-of the `hashbrown` dependency, which is usually preferred,
-so add that back with `features = ["hashbrown"]`
+If this is undesirable, simple set:
+
+```toml
+default-features = false
+```
+
+in the `evmap` dependency entry, and `Vec` will always be used internally.
+
+Note that this will also opt out of the `hashbrown` dependency, which is usually preferred,
+so add that back with:
+
+```toml
+features = ["hashbrown"]
+```
 
 ## Performance
 
