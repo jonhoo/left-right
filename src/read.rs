@@ -272,24 +272,27 @@ where
 mod test {
     use crate::new;
 
+    // the idea of this test is to allocate 64 elements, and only use 17. The vector will
+    // probably try to fit either exactly the length, to the next highest power of 2 from
+    // the length, or something else entirely, E.g. 17, 32, etc.,
+    // but it should always end up being smaller than the original 64 elements reserved.
     #[test]
     fn reserve_and_fit() {
+        const MIN: usize = (1 << 4) + 1;
+        const MAX: usize = (1 << 6);
+
         let (r, mut w) = new();
 
-        // 64 is the second power of two higher than 17,
-        // so it should at least shrink the vector to less than
-        // or equal to the next highest power of 2 after 17
-        w.reserve(0, 64).refresh();
+        w.reserve(0, MAX).refresh();
 
-        r.get_raw(&0, |vs| assert_eq!(vs.capacity(), 64)).unwrap();
+        r.get_raw(&0, |vs| assert_eq!(vs.capacity(), MAX)).unwrap();
 
-        // 1 + 2^4, so it's a tiny bit more than a power of two
-        for i in 0..17 {
+        for i in 0..MIN {
             w.insert(0, i);
         }
 
         w.fit_all().refresh();
 
-        r.get_raw(&0, |vs| assert!(vs.capacity() < 64)).unwrap();
+        r.get_raw(&0, |vs| assert!(vs.capacity() < MAX)).unwrap();
     }
 }
