@@ -526,40 +526,27 @@ where
             Operation::Replace(ref key, ref mut value) => {
                 let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
 
-                {
-                    #[cfg(not(feature = "smallvec"))]
-                    let drain = vs.drain(..);
-
-                    #[cfg(feature = "smallvec")]
-                    let drain = vs.drain();
-
-                    // don't run destructors yet -- still in use by other map
-                    for v in drain {
-                        mem::forget(v);
-                    }
+                unsafe {
+                    // truncate vector without dropping values
+                    vs.set_len(0);
                 }
+
+                // implicit shrink_to_fit on replace op when using smallvec,
+                // as it will switch back to inline allocation for the subsequent push.
+                #[cfg(feature = "smallvec")]
+                vs.shrink_to_fit();
 
                 vs.push(unsafe { value.shallow_copy() });
             }
-            Operation::Clear(ref key) => {
-                match inner.data.entry(key.clone()) {
-                    Entry::Occupied(mut occupied) => {
-                        #[cfg(not(feature = "smallvec"))]
-                        let drain = occupied.get_mut().drain(..);
-
-                        #[cfg(feature = "smallvec")]
-                        let drain = occupied.get_mut().drain();
-
-                        // don't run destructors yet -- still in use by other map
-                        for v in drain {
-                            mem::forget(v);
-                        }
-                    }
-                    Entry::Vacant(vacant) => {
-                        vacant.insert(Values::new());
-                    }
+            Operation::Clear(ref key) => match inner.data.entry(key.clone()) {
+                Entry::Occupied(mut entry) => unsafe {
+                    // truncate vector without dropping values
+                    entry.get_mut().set_len(0);
+                },
+                Entry::Vacant(entry) => {
+                    entry.insert(Values::new());
                 }
-            }
+            },
             Operation::Add(ref key, ref mut value) => {
                 inner
                     .data
@@ -569,15 +556,9 @@ where
             }
             Operation::Empty(ref key) => {
                 if let Some(mut vs) = inner.data.remove(key) {
-                    #[cfg(not(feature = "smallvec"))]
-                    let drain = vs.drain(..);
-
-                    #[cfg(feature = "smallvec")]
-                    let drain = vs.drain();
-
-                    // don't run destructors yet -- still in use by other map
-                    for v in drain {
-                        mem::forget(v);
+                    unsafe {
+                        // truncate vector without dropping values
+                        vs.set_len(0);
                     }
                 }
             }
@@ -627,13 +608,14 @@ where
                     }
                 }
             },
-            Operation::Reserve(ref key, additional) => {
-                inner
-                    .data
-                    .entry(key.clone())
-                    .and_modify(|e| e.reserve(additional))
-                    .or_insert_with(|| Values::with_capacity(additional));
-            }
+            Operation::Reserve(ref key, additional) => match inner.data.entry(key.clone()) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().reserve(additional);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(Values::with_capacity(additional));
+                }
+            },
         }
     }
 
@@ -643,6 +625,10 @@ where
             Operation::Replace(key, value) => {
                 let v = inner.data.entry(key).or_insert_with(Values::new);
                 v.clear();
+
+                #[cfg(feature = "smallvec")]
+                v.shrink_to_fit();
+
                 v.push(value);
             }
             Operation::Clear(key) => {
@@ -684,13 +670,14 @@ where
                     }
                 }
             },
-            Operation::Reserve(key, additional) => {
-                inner
-                    .data
-                    .entry(key)
-                    .and_modify(|e| e.reserve(additional))
-                    .or_insert_with(|| Values::with_capacity(additional));
-            }
+            Operation::Reserve(key, additional) => match inner.data.entry(key) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().reserve(additional);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(Values::with_capacity(additional));
+                }
+            },
         }
     }
 }
