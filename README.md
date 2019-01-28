@@ -188,10 +188,10 @@ writing.
 ## Small Vector Optimization
 
 By default, the value-set for each key in the map uses the `smallvec` crate to keep a
-maximum of one element stored inline with the map, as opposed to separately allocated
+maximum of one element stored inline with the map, as opposed to separately heap-allocated
 with a plain `Vec`. Operations such as `Fit` and `Replace` will automatically switch
-back to the inline storage if possible. This is ideal for maps that only ever use one
-element per key.
+back to the inline storage if possible. This is ideal for maps that mostly use one
+element per key, as it can improvate memory locality with less indirection.
 
 If this is undesirable, simple set:
 

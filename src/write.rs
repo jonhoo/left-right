@@ -458,6 +458,13 @@ where
 
     /// Replace the value-set of the given key with the given value.
     ///
+    /// With the `smallvec` feature enabled, replacing the value will automatically
+    /// deallocate any heap storage and place the new value back into
+    /// the `SmallVec` inline storage. This can improve cache locality for common
+    /// cases where the value-set is only ever a single element.
+    ///
+    /// See [the doc section on this](./index.html#small-vector-optimization) for more information.
+    ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn update(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::Replace(k, v))
@@ -465,7 +472,10 @@ where
 
     /// Clear the value-set of the given key, without removing it.
     ///
-    /// This will allocate an empty value-set for the key if it does not already exist.
+    /// If a value-set already exists, this will clear it but leave the
+    /// allocated memory intact for reuse, or if no associated value-set exists
+    /// an empty value-set will be created for the given key.
+    ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn clear(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Clear(k))
@@ -496,7 +506,8 @@ where
     }
 
     /// Shrinks a value-set to it's minimum necessary size, freeing memory
-    /// and potentially improving cache locality if the `smallvec` feature is used.
+    /// and potentially improving cache locality by switching to inline storage
+    /// if the `smallvec` feature is used.
     ///
     /// The optimized value-set will only be visible to readers after the next call to `refresh()`
     pub fn fit(&mut self, k: K) -> &mut Self {
