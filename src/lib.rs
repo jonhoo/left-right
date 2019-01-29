@@ -182,6 +182,29 @@
 //! approximately twice of that of a regular `HashMap`, and more if writes rarely refresh after
 //! writing.
 //!
+//! # Small Vector Optimization
+//!
+//! By default, the value-set for each key in the map uses the `smallvec` crate to keep a
+//! maximum of one element stored inline with the map, as opposed to separately heap-allocated
+//! with a plain `Vec`. Operations such as `Fit` and `Replace` will automatically switch
+//! back to the inline storage if possible. This is ideal for maps that mostly use one
+//! element per key, as it can improvate memory locality with less indirection.
+//!
+//! If this is undesirable, simple set:
+//!
+//! ```toml
+//! default-features = false
+//! ```
+//!
+//! in the `evmap` dependency entry, and `Vec` will always be used internally.
+//!
+//! Note that this will also opt out of the `hashbrown` dependency, which is usually preferred,
+//! so add that back with:
+//!
+//! ```toml
+//! features = ["hashbrown"]
+//! ```
+//!
 #![deny(missing_docs)]
 
 #[cfg(feature = "hashbrown")]
@@ -195,10 +218,41 @@ extern crate smallvec;
 pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
 
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::{BuildHasher, Hash};
+use std::sync::Arc;
 
 mod inner;
 use inner::Inner;
+
+/// Unary predicate used to retain elements
+#[derive(Clone)]
+pub struct Predicate<V>(pub(crate) Arc<Fn(&V) -> bool + Send + Sync>);
+
+impl<V> Predicate<V> {
+    /// Evaluate the predicate for the given element
+    #[inline]
+    pub fn eval(&self, value: &V) -> bool {
+        (*self.0)(value)
+    }
+}
+
+impl<V> PartialEq for Predicate<V> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<V> Eq for Predicate<V> {}
+
+impl<V> fmt::Debug for Predicate<V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("Predicate")
+            .field(&format_args!("{:p}", &*self.0 as *const _))
+            .finish()
+    }
+}
 
 /// A pending map operation.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -213,6 +267,19 @@ pub enum Operation<K, V> {
     Empty(K),
     /// Remove all values in the value set for this key.
     Clear(K),
+    /// Retains all values matching the given predicate.
+    Retain(K, Predicate<V>),
+    /// Shrinks a value-set to it's minimum necessary size, freeing memory
+    /// and potentially improving cache locality if the `smallvec` feature is used.
+    ///
+    /// If no key is given, all value-sets will shrink to fit.
+    Fit(Option<K>),
+    /// Reserves capacity for some number of additional elements in a value-set,
+    /// or creates an empty value-set for this key with the given capacity if
+    /// it doesn't already exist.
+    ///
+    /// This can improve performance by pre-allocating space for large value-sets.
+    Reserve(K, usize),
 }
 
 mod write;

@@ -1,4 +1,4 @@
-use super::{Operation, ShallowCopy};
+use super::{Operation, Predicate, ShallowCopy};
 use inner::{Inner, Values};
 use read::ReadHandle;
 
@@ -336,6 +336,7 @@ where
     ///  .insert(1, String::from("bar"))
     ///  .insert(2, String::from("baz"))
     ///  .insert(3, String::from("qux"));
+    ///
     /// // expose the writes
     /// w.refresh();
     /// assert_eq!(r.len(), 4);
@@ -457,6 +458,13 @@ where
 
     /// Replace the value-set of the given key with the given value.
     ///
+    /// With the `smallvec` feature enabled, replacing the value will automatically
+    /// deallocate any heap storage and place the new value back into
+    /// the `SmallVec` inline storage. This can improve cache locality for common
+    /// cases where the value-set is only ever a single element.
+    ///
+    /// See [the doc section on this](./index.html#small-vector-optimization) for more information.
+    ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn update(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::Replace(k, v))
@@ -464,7 +472,10 @@ where
 
     /// Clear the value-set of the given key, without removing it.
     ///
-    /// This will allocate an empty value-set for the key if it does not already exist.
+    /// If a value-set already exists, this will clear it but leave the
+    /// allocated memory intact for reuse, or if no associated value-set exists
+    /// an empty value-set will be created for the given key.
+    ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn clear(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Clear(k))
@@ -484,45 +495,69 @@ where
         self.add_op(Operation::Empty(k))
     }
 
+    /// Retain elements for the given key using the provided predicate function.
+    ///
+    /// The remaining value-set will only be visible to readers after the next call to `refresh()`
+    pub fn retain<F>(&mut self, k: K, f: F) -> &mut Self
+    where
+        F: Fn(&V) -> bool + 'static + Send + Sync,
+    {
+        self.add_op(Operation::Retain(k, Predicate(Arc::new(f))))
+    }
+
+    /// Shrinks a value-set to it's minimum necessary size, freeing memory
+    /// and potentially improving cache locality by switching to inline storage
+    /// if the `smallvec` feature is used.
+    ///
+    /// The optimized value-set will only be visible to readers after the next call to `refresh()`
+    pub fn fit(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::Fit(Some(k)))
+    }
+
+    /// Like [`WriteHandle::fit`](#method.fit), but shrinks <b>all</b> value-sets in the map.
+    ///
+    /// The optimized value-sets will only be visible to readers after the next call to `refresh()`
+    pub fn fit_all(&mut self) -> &mut Self {
+        self.add_op(Operation::Fit(None))
+    }
+
+    /// Reserves capacity for some number of additional elements in a value-set,
+    /// or creates an empty value-set for this key with the given capacity if
+    /// it doesn't already exist.
+    ///
+    /// Readers are unaffected by this operation, but it can improve performance
+    /// by pre-allocating space for large value-sets.
+    pub fn reserve(&mut self, k: K, additional: usize) -> &mut Self {
+        self.add_op(Operation::Reserve(k, additional))
+    }
+
+    /// Apply ops in such a way that no values are dropped, only forgotten
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
         match *op {
             Operation::Replace(ref key, ref mut value) => {
                 let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
 
-                {
-                    #[cfg(not(feature = "smallvec"))]
-                    let drain = vs.drain(..);
-
-                    #[cfg(feature = "smallvec")]
-                    let drain = vs.drain();
-
-                    // don't run destructors yet -- still in use by other map
-                    for v in drain {
-                        mem::forget(v);
-                    }
+                unsafe {
+                    // truncate vector without dropping values
+                    vs.set_len(0);
                 }
+
+                // implicit shrink_to_fit on replace op when using smallvec,
+                // as it will switch back to inline allocation for the subsequent push.
+                #[cfg(feature = "smallvec")]
+                vs.shrink_to_fit();
 
                 vs.push(unsafe { value.shallow_copy() });
             }
-            Operation::Clear(ref key) => {
-                match inner.data.entry(key.clone()) {
-                    Entry::Occupied(mut occupied) => {
-                        #[cfg(not(feature = "smallvec"))]
-                        let drain = occupied.get_mut().drain(..);
-
-                        #[cfg(feature = "smallvec")]
-                        let drain = occupied.get_mut().drain();
-
-                        // don't run destructors yet -- still in use by other map
-                        for v in drain {
-                            mem::forget(v);
-                        }
-                    }
-                    Entry::Vacant(vacant) => {
-                        vacant.insert(Values::new());
-                    }
+            Operation::Clear(ref key) => match inner.data.entry(key.clone()) {
+                Entry::Occupied(mut entry) => unsafe {
+                    // truncate vector without dropping values
+                    entry.get_mut().set_len(0);
+                },
+                Entry::Vacant(entry) => {
+                    entry.insert(Values::new());
                 }
-            }
+            },
             Operation::Add(ref key, ref mut value) => {
                 inner
                     .data
@@ -532,15 +567,9 @@ where
             }
             Operation::Empty(ref key) => {
                 if let Some(mut vs) = inner.data.remove(key) {
-                    #[cfg(not(feature = "smallvec"))]
-                    let drain = vs.drain(..);
-
-                    #[cfg(feature = "smallvec")]
-                    let drain = vs.drain();
-
-                    // don't run destructors yet -- still in use by other map
-                    for v in drain {
-                        mem::forget(v);
+                    unsafe {
+                        // truncate vector without dropping values
+                        vs.set_len(0);
                     }
                 }
             }
@@ -554,14 +583,63 @@ where
                     }
                 }
             }
+            Operation::Retain(ref key, ref predicate) => {
+                if let Some(e) = inner.data.get_mut(key) {
+                    let mut del = 0;
+                    let len = e.len();
+
+                    // "bubble up" the values we wish to remove, so they can be truncated.
+                    //
+                    // See https://github.com/servo/rust-smallvec/blob/a775b5f74cce0d3c7218608fd9f6fd721bb0f461/lib.rs#L881-L897
+                    // for SmallVec's implementation of `retain`, the only difference being that we
+                    // cannot drop values here, so they are truncated with `set_len`
+                    for i in 0..len {
+                        if !predicate.eval(unsafe { e.get_unchecked(i) }) {
+                            del += 1;
+                        } else {
+                            e.swap(i - del, i);
+                        }
+                    }
+
+                    unsafe {
+                        // truncate vector without dropping values
+                        e.set_len(len - del);
+                    }
+                }
+            }
+            Operation::Fit(ref key) => match key {
+                Some(ref key) => {
+                    if let Some(e) = inner.data.get_mut(key) {
+                        e.shrink_to_fit();
+                    }
+                }
+                None => {
+                    for value_set in inner.data.values_mut() {
+                        value_set.shrink_to_fit();
+                    }
+                }
+            },
+            Operation::Reserve(ref key, additional) => match inner.data.entry(key.clone()) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().reserve(additional);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(Values::with_capacity(additional));
+                }
+            },
         }
     }
 
+    /// Apply operations while allowing dropping of values
     fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
         match op {
             Operation::Replace(key, value) => {
                 let v = inner.data.entry(key).or_insert_with(Values::new);
                 v.clear();
+
+                #[cfg(feature = "smallvec")]
+                v.shrink_to_fit();
+
                 v.push(value);
             }
             Operation::Clear(key) => {
@@ -586,6 +664,31 @@ where
                     }
                 }
             }
+            Operation::Retain(key, predicate) => {
+                if let Some(e) = inner.data.get_mut(&key) {
+                    e.retain(|v| predicate.eval(v));
+                }
+            }
+            Operation::Fit(key) => match key {
+                Some(ref key) => {
+                    if let Some(e) = inner.data.get_mut(&key) {
+                        e.shrink_to_fit();
+                    }
+                }
+                None => {
+                    for value_set in inner.data.values_mut() {
+                        value_set.shrink_to_fit();
+                    }
+                }
+            },
+            Operation::Reserve(key, additional) => match inner.data.entry(key) {
+                Entry::Occupied(mut entry) => {
+                    entry.get_mut().reserve(additional);
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(Values::with_capacity(additional));
+                }
+            },
         }
     }
 }

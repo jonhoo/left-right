@@ -27,4 +27,4 @@ smallvec = { version = "0.6.7", optional = true }
 [features]
 default = ["hashbrown", "smallvec"]
 nightly_hashbrown = ["hashbrown/nightly"]
-nightly_smallvec = ["smallvec/union"]
+nightly_smallvec = ["smallvec/union", "smallvec/may_dangle", "smallvec/specialization"]
