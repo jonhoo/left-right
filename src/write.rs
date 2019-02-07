@@ -396,8 +396,8 @@ where
     ///
     /// Note that until the *first* call to `refresh`, the sequence of operations is always empty.
     ///
-    /// ```ignore
-    /// # use evmap::Operation;
+    /// ```
+    /// # use evmap::{Operation, op::ValueOperation};
     /// let x = ('x', 42);
     ///
     /// let (r, mut w) = evmap::new();
@@ -406,11 +406,27 @@ where
     /// w.refresh();
     ///
     /// assert_eq!(w.pending().count(), 0);
+    ///
     /// w.insert(x.0, x);
-    /// assert_eq!(w.pending().next(), Some(&Operation::Add(x.0, x)));
+    /// assert_eq!(
+    ///     w.pending().next(),
+    ///     Some(&Operation::Value {
+    ///         key: x.0,
+    ///         op: ValueOperation::Add(x)
+    ///     })
+    /// );
+    ///
     /// w.refresh();
+    ///
     /// w.remove(x.0, x);
-    /// assert_eq!(w.pending().next(), Some(&Operation::Remove(x.0, x)));
+    /// assert_eq!(
+    ///     w.pending().next(),
+    ///     Some(&Operation::Value {
+    ///         key: x.0,
+    ///         op: ValueOperation::Remove(x)
+    ///     })
+    /// );
+    ///
     /// w.refresh();
     /// assert_eq!(w.pending().count(), 0);
     /// ```
