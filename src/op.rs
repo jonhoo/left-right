@@ -164,9 +164,9 @@ pub(crate) struct MarkedOperation<K, V> {
     pub flag: Cell<u32>,
 }
 
-const NONE_FLAG: u32 = 0b0000; // 0, value has not been used at all
-const FIRST_FLAG: u32 = 0b001; // 1 << 0, value has been used without consuming
-const SECOND_FLAG: u32 = 0b10; // 1 << 1, value has been consumed
+const NONE_FLAG: u32 = 0; // value has not been used at all
+const FIRST_FLAG: u32 = 1; // value has been used without consuming
+const SECOND_FLAG: u32 = 2; // value has been consumed
 
 impl<K, V> Drop for MarkedOperation<K, V> {
     fn drop(&mut self) {
@@ -180,10 +180,7 @@ impl<K, V> Drop for MarkedOperation<K, V> {
     }
 }
 
-impl<K, V> MarkedOperation<K, V>
-where
-    K: PartialEq,
-{
+impl<K, V> MarkedOperation<K, V> {
     #[inline]
     pub fn new(op: Operation<K, V>) -> Self {
         MarkedOperation {
