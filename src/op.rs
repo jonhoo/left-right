@@ -161,12 +161,12 @@ pub enum Operation<K, V> {
 /// inner operation, while the second consumes it and renders it unreadable again.
 pub(crate) struct MarkedOperation<K, V> {
     pub op: mem::ManuallyDrop<UnsafeCell<Operation<K, V>>>,
-    pub flag: Cell<u32>,
+    pub flag: Cell<u8>,
 }
 
-const NONE_FLAG: u32 = 0; // value has not been used at all
-const FIRST_FLAG: u32 = 1; // value has been used without consuming
-const SECOND_FLAG: u32 = 2; // value has been consumed
+const NONE_FLAG: u8 = 0; // value has not been used at all
+const FIRST_FLAG: u8 = 1; // value has been used without consuming
+const SECOND_FLAG: u8 = 2; // value has been consumed
 
 impl<K, V> Drop for MarkedOperation<K, V> {
     fn drop(&mut self) {
