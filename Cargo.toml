@@ -25,5 +25,4 @@ hashbrown = { version = "0.1.8" }
 smallvec = { version = "0.6.7" }
 
 [features]
-nightly_hashbrown = ["hashbrown/nightly"]
-nightly_smallvec = ["smallvec/union", "smallvec/may_dangle", "smallvec/specialization"]
+nightly = ["hashbrown/nightly", "smallvec/union", "smallvec/may_dangle", "smallvec/specialization"]

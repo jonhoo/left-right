@@ -1,7 +1,8 @@
+//! Operations on maps and value-sets
+
 use std::borrow::Cow;
 use std::cell::{Cell, UnsafeCell};
 use std::hash::{BuildHasher, Hash};
-use std::ops::Deref;
 use std::sync::Arc;
 use std::{fmt, mem, ptr};
 
@@ -46,11 +47,12 @@ impl<V> fmt::Debug for Predicate<V> {
     }
 }
 
+/// Closure that will modify an individual value-set
 pub struct Modifier<V>(pub(crate) Arc<for<'a> Fn(&mut Modify<'a, V>) + Send + Sync>);
 
 impl<V> Modifier<V> {
     #[inline]
-    pub fn modify(&self, value: &mut Modify<V>) {
+    fn modify(&self, value: &mut Modify<V>) {
         (*self.0)(value)
     }
 }
@@ -79,7 +81,7 @@ impl<V> fmt::Debug for Modifier<V> {
     }
 }
 
-/// A pending map operation.
+/// A pending operation on a single value-set in the map
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ValueOperation<V> {
     /// Replace the set of entries for this key with this value.
@@ -114,9 +116,11 @@ pub enum ValueOperation<V> {
     /// This can improve performance by pre-allocating space for large value-sets.
     Reserve(usize),
 
+    /// Arbitrary modification
     Modify(Modifier<V>),
 }
 
+/// A pending global map operation.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum MapOperation<V> {
     /// Applies `Fit` to all value-sets
@@ -125,14 +129,26 @@ pub enum MapOperation<V> {
     /// Removes empty value-sets from the map
     Prune,
 
-    /// Test
+    /// Arbitrary modification for every value-set in the map
     ForEach(Modifier<V>),
 }
 
+/// A pending map operation.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Operation<K, V> {
-    Value { key: K, op: ValueOperation<V> },
-    Map { op: MapOperation<V> },
+    /// A pending operation on a single value-set in the map
+    Value {
+        /// Key of the value-set in the map
+        key: K,
+        /// Operation to apply to that value-set
+        op: ValueOperation<V>,
+    },
+
+    /// A pending global map operation.
+    Map {
+        /// Operation to apply to the entire map
+        op: MapOperation<V>,
+    },
 }
 
 /// The concept for this is that the "first" version can only borrow the data,
@@ -199,6 +215,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn as_mut(&self) -> Option<&mut Operation<K, V>> {
         match self.flag.get() {
             NONE_FLAG => Some(unsafe { &mut *self.op.get() }),
@@ -251,7 +268,7 @@ where
             }
             MapOperation::ForEach(ref modifier) => {
                 for vs in inner.data.values_mut() {
-                    let mut modify = Modify::new(vs);
+                    let mut modify = Modify::new(vs, true);
 
                     modifier.modify(&mut modify);
 
@@ -277,7 +294,7 @@ where
             }
             MapOperation::ForEach(modifier) => {
                 for vs in inner.data.values_mut() {
-                    let mut modify = Modify::new(vs);
+                    let mut modify = Modify::new(vs, false);
 
                     modifier.modify(&mut modify);
 
@@ -288,34 +305,38 @@ where
     }
 }
 
+/// Allows for quick and efficient application of operations on a single value-set
 pub struct Modify<'a, V> {
     ops: SmallVec<[ValueOperation<V>; 1]>,
     values: &'a mut Values<V>,
-}
-
-impl<'a, V> Deref for Modify<'a, V> {
-    type Target = [V];
-
-    fn deref(&self) -> &Self::Target {
-        &self.values
-    }
+    first: bool,
 }
 
 impl<'a, V> Modify<'a, V>
 where
     V: PartialEq + ShallowCopy,
 {
-    fn new(values: &'a mut Values<V>) -> Self {
+    fn new(values: &'a mut Values<V>, first: bool) -> Self {
         Modify {
             ops: SmallVec::new(),
             values,
+            first,
         }
+    }
+
+    /// Returns a slice to the most up-to-date version of the value set
+    ///
+    /// <b>WARNING</b>: This data may be aliased, and should never be cloned.
+    #[inline]
+    pub unsafe fn get(&self) -> &[V] {
+        &self.values
     }
 
     fn apply_first(&mut self) {
         let Modify {
             ref mut ops,
             values,
+            ..
         } = self;
 
         for op in ops {
@@ -368,10 +389,10 @@ where
         }
     }
 
-    fn apply_second(self) {
-        let Modify { ops, values } = self;
+    fn apply_second(&mut self) {
+        let Modify { ops, values, .. } = self;
 
-        for op in ops {
+        for op in ops.drain() {
             match op {
                 ValueOperation::Replace(value) => {
                     values.clear();
@@ -400,37 +421,58 @@ where
         }
     }
 
+    /// Apply all pending operations to this value-set
+    pub fn refresh(&mut self) -> &mut Self {
+        if self.first {
+            self.apply_first();
+        } else {
+            self.apply_second();
+        }
+
+        self
+    }
+
     #[inline]
     fn add_op(&mut self, op: ValueOperation<V>) -> &mut Self {
         self.ops.push(op);
         self
     }
 
+    /// Replace the value-set of the given key with the given value.
     #[inline]
-    pub fn replace(&mut self, value: V) -> &mut Self {
+    pub fn update(&mut self, value: V) -> &mut Self {
         self.add_op(ValueOperation::Replace(value))
     }
 
+    /// Clear the value-set of the given key, without removing it.
     #[inline]
     pub fn clear(&mut self) -> &mut Self {
         self.add_op(ValueOperation::Clear)
     }
 
+    /// Add the given value to the value-set of the given key.
     #[inline]
-    pub fn add(&mut self, value: V) -> &mut Self {
+    pub fn insert(&mut self, value: V) -> &mut Self {
         self.add_op(ValueOperation::Add(value))
     }
 
+    /// Remove the given value from the value-set of the given key, by swapping it with the last
+    /// value and popping it off the value-set. This does not preserve element order in the value-set.
+    ///
+    /// To preserve order when removing, consider using `remove_stable`.
     #[inline]
     pub fn remove(&mut self, value: V) -> &mut Self {
         self.add_op(ValueOperation::Remove(value))
     }
 
+    /// Remove the given value from the value-set of the given key, preserving the order
+    /// of elements in the value-set.
     #[inline]
     pub fn remove_stable(&mut self, value: V) -> &mut Self {
         self.add_op(ValueOperation::RemoveStable(value))
     }
 
+    /// Retain elements for the given key using the provided predicate function.
     #[inline]
     pub fn retain<F>(&mut self, f: F) -> &mut Self
     where
@@ -439,11 +481,14 @@ where
         self.add_op(ValueOperation::Retain(Predicate(Arc::new(f))))
     }
 
+    /// Shrinks a value-set to it's minimum necessary size, freeing memory
+    /// and potentially improving cache locality.
     #[inline]
     pub fn fit(&mut self) -> &mut Self {
         self.add_op(ValueOperation::Fit)
     }
 
+    /// Reserves capacity for some number of additional elements in a value-set
     #[inline]
     pub fn reserve(&mut self, additional: usize) -> &mut Self {
         self.add_op(ValueOperation::Reserve(additional))
@@ -547,7 +592,7 @@ where
                         v.push(unsafe { value.shallow_copy() });
                     }
                     ValueOperation::Modify(modifier) => {
-                        let mut modify = Modify::new(v);
+                        let mut modify = Modify::new(v, true);
 
                         modifier.modify(&mut modify);
 
@@ -626,7 +671,7 @@ where
                         v.push(value);
                     }
                     ValueOperation::Modify(modifier) => {
-                        let mut modify = Modify::new(v);
+                        let mut modify = Modify::new(v, false);
 
                         modifier.modify(&mut modify);
 

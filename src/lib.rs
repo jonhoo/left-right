@@ -183,8 +183,7 @@
 //! writing.
 //!
 
-//#![deny(missing_docs)]
-#![allow(dead_code)]
+#![deny(missing_docs)]
 
 extern crate hashbrown;
 extern crate smallvec;
