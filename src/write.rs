@@ -1,18 +1,14 @@
-use super::{Operation, Predicate, ShallowCopy};
-use inner::{Inner, Values};
+use super::ShallowCopy;
+use inner::Inner;
+use op::{MapOperation, MarkedOperation, Operation, Predicate, ValueOperation};
 use read::ReadHandle;
 
+use std::borrow::Cow;
 use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hash};
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
-use std::{mem, thread};
-
-#[cfg(feature = "hashbrown")]
-use hashbrown::hash_map::Entry;
-
-#[cfg(not(feature = "hashbrown"))]
-use std::collections::hash_map::Entry;
+use std::{mem, ptr, thread};
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
@@ -52,7 +48,7 @@ where
     M: 'static + Clone,
 {
     w_handle: Option<Box<Inner<K, V, M, S>>>,
-    oplog: Vec<Operation<K, V>>,
+    oplog: Vec<MarkedOperation<K, V>>,
     swap_index: usize,
     r_handle: ReadHandle<K, V, M, S>,
     last_epochs: Vec<usize>,
@@ -123,14 +119,9 @@ where
         // destructors of any of the values that are in our map, as they'll all be called when the
         // last read handle goes out of scope.
         for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain() {
-            #[cfg(not(feature = "smallvec"))]
-            let drain = vs.drain(..);
-
-            #[cfg(feature = "smallvec")]
-            let drain = vs.drain();
-
-            for v in drain {
-                mem::forget(v);
+            unsafe {
+                // truncate value-set without dropping values
+                vs.set_len(0);
             }
         }
     }
@@ -249,16 +240,27 @@ where
                 // other map). on apply_second, we call the destructor for anything that's been
                 // removed (since those removals have already happened on the other map, and
                 // without calling their destructor).
-                for op in self.oplog.drain(0..self.swap_index) {
-                    Self::apply_second(w_handle, op);
-                }
+                Self::apply_second(w_handle, &self.oplog[..self.swap_index]);
+
+                debug_assert_eq!(
+                    self.oplog
+                        .iter()
+                        .take(self.swap_index)
+                        .filter(|op| !op.consumed())
+                        .count(),
+                    0
+                );
+
+                self.oplog.drain(..self.swap_index);
             }
-            // the rest have to be cloned because they'll also be needed by the r_handle map
-            for op in self.oplog.iter_mut() {
-                Self::apply_first(w_handle, op);
-            }
+
+            // the rest have to be shallow-cloned because
+            // they'll also be needed by the r_handle map
+            Self::apply_first(w_handle, &self.oplog);
+
             // the w_handle map is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
+
             // ensure meta-information is up to date
             w_handle.meta = self.meta.clone();
             w_handle.mark_ready();
@@ -394,7 +396,7 @@ where
     ///
     /// Note that until the *first* call to `refresh`, the sequence of operations is always empty.
     ///
-    /// ```
+    /// ```ignore
     /// # use evmap::Operation;
     /// let x = ('x', 42);
     ///
@@ -403,17 +405,17 @@ where
     /// // before the first refresh, no oplog is kept
     /// w.refresh();
     ///
-    /// assert_eq!(w.pending(), &[]);
+    /// assert_eq!(w.pending().count(), 0);
     /// w.insert(x.0, x);
-    /// assert_eq!(w.pending(), &[Operation::Add(x.0, x)]);
+    /// assert_eq!(w.pending().next(), Some(&Operation::Add(x.0, x)));
     /// w.refresh();
     /// w.remove(x.0, x);
-    /// assert_eq!(w.pending(), &[Operation::Remove(x.0, x)]);
+    /// assert_eq!(w.pending().next(), Some(&Operation::Remove(x.0, x)));
     /// w.refresh();
-    /// assert_eq!(w.pending(), &[]);
+    /// assert_eq!(w.pending().count(), 0);
     /// ```
-    pub fn pending(&self) -> &[Operation<K, V>] {
-        &self.oplog[self.swap_index..]
+    pub fn pending(&self) -> impl Iterator<Item = &Operation<K, V>> {
+        self.oplog.iter().filter_map(|marked_op| marked_op.as_ref())
     }
 
     /// Refresh as necessary to ensure that all operations are visible to readers.
@@ -421,7 +423,7 @@ where
     /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
     /// This method will only do so if there are pending operations.
     pub fn flush(&mut self) -> &mut Self {
-        if !self.pending().is_empty() {
+        if !self.oplog.is_empty() {
             self.refresh();
         }
 
@@ -438,36 +440,50 @@ where
 
     fn add_op(&mut self, op: Operation<K, V>) -> &mut Self {
         if !self.first {
-            self.oplog.push(op);
+            self.oplog.push(MarkedOperation::new(op));
         } else {
             // we know there are no outstanding w_handle readers, so we can modify it directly!
             let inner = self.w_handle.as_mut().unwrap();
-            Self::apply_second(inner, op);
+
+            match op {
+                Operation::Map { op } => op.apply_second(inner),
+                Operation::Value { key, op } => {
+                    let raw_entry = inner.data.raw_entry_mut().from_key(&key);
+
+                    op.apply_second(Cow::Owned(key), raw_entry);
+                }
+            }
+
             // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
 
         self
     }
 
+    #[inline(always)]
+    fn add_value_op(&mut self, key: K, op: ValueOperation<V>) -> &mut Self {
+        self.add_op(Operation::Value { key, op })
+    }
+
     /// Add the given value to the value-set of the given key.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
     pub fn insert(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Add(k, v))
+        self.add_value_op(k, ValueOperation::Add(v))
     }
 
     /// Replace the value-set of the given key with the given value.
     ///
-    /// With the `smallvec` feature enabled, replacing the value will automatically
-    /// deallocate any heap storage and place the new value back into
-    /// the `SmallVec` inline storage. This can improve cache locality for common
-    /// cases where the value-set is only ever a single element.
+    /// Replacing the value will automatically deallocate any heap storage
+    /// and place the new value back into the `SmallVec` inline storage.
+    /// This can improve cache locality for common cases where the
+    /// value-set is only ever a single element.
     ///
     /// See [the doc section on this](./index.html#small-vector-optimization) for more information.
     ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn update(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Replace(k, v))
+        self.add_value_op(k, ValueOperation::Replace(v))
     }
 
     /// Clear the value-set of the given key, without removing it.
@@ -478,21 +494,33 @@ where
     ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn clear(&mut self, k: K) -> &mut Self {
-        self.add_op(Operation::Clear(k))
+        self.add_value_op(k, ValueOperation::Clear)
     }
 
-    /// Remove the given value from the value-set of the given key.
+    /// Remove the given value from the value-set of the given key, by swapping it with the last
+    /// value and popping it off the value-set. This does not preserve element order in the value-set.
+    ///
+    /// To preserve order when removing, consider using `remove_stable`.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
-    pub fn remove(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Remove(k, v))
+    pub fn remove(&mut self, k: K, value: V) -> &mut Self {
+        self.add_value_op(k, ValueOperation::Remove(value))
+    }
+
+    /// Remove the given value from the value-set of the given key, preserving the order
+    /// of elements in the value-set.
+    ///
+    /// The updated value-set will only be visible to readers after the next call to `refresh()`.
+    #[inline]
+    pub fn remove_stable(&mut self, k: K, value: V) -> &mut Self {
+        self.add_value_op(k, ValueOperation::RemoveStable(value))
     }
 
     /// Remove the value-set for the given key.
     ///
     /// The value-set will only disappear from readers after the next call to `refresh()`.
     pub fn empty(&mut self, k: K) -> &mut Self {
-        self.add_op(Operation::Empty(k))
+        self.add_value_op(k, ValueOperation::Empty)
     }
 
     /// Retain elements for the given key using the provided predicate function.
@@ -502,23 +530,24 @@ where
     where
         F: Fn(&V) -> bool + 'static + Send + Sync,
     {
-        self.add_op(Operation::Retain(k, Predicate(Arc::new(f))))
+        self.add_value_op(k, ValueOperation::Retain(Predicate(Arc::new(f))))
     }
 
     /// Shrinks a value-set to it's minimum necessary size, freeing memory
-    /// and potentially improving cache locality by switching to inline storage
-    /// if the `smallvec` feature is used.
+    /// and potentially improving cache locality.
     ///
     /// The optimized value-set will only be visible to readers after the next call to `refresh()`
     pub fn fit(&mut self, k: K) -> &mut Self {
-        self.add_op(Operation::Fit(Some(k)))
+        self.add_value_op(k, ValueOperation::Fit)
     }
 
     /// Like [`WriteHandle::fit`](#method.fit), but shrinks <b>all</b> value-sets in the map.
     ///
     /// The optimized value-sets will only be visible to readers after the next call to `refresh()`
     pub fn fit_all(&mut self) -> &mut Self {
-        self.add_op(Operation::Fit(None))
+        self.add_op(Operation::Map {
+            op: MapOperation::FitAll,
+        })
     }
 
     /// Reserves capacity for some number of additional elements in a value-set,
@@ -528,167 +557,122 @@ where
     /// Readers are unaffected by this operation, but it can improve performance
     /// by pre-allocating space for large value-sets.
     pub fn reserve(&mut self, k: K, additional: usize) -> &mut Self {
-        self.add_op(Operation::Reserve(k, additional))
+        self.add_value_op(k, ValueOperation::Reserve(additional))
     }
 
     /// Apply ops in such a way that no values are dropped, only forgotten
-    fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
-        match *op {
-            Operation::Replace(ref key, ref mut value) => {
-                let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
+    fn apply_first(inner: &mut Inner<K, V, M, S>, ops: &[MarkedOperation<K, V>]) {
+        for (i, op) in ops.iter().enumerate() {
+            match op.take_first() {
+                None => {}
+                Some(Operation::Map { ref mut op }) => op.apply_first(inner),
+                Some(Operation::Value {
+                    ref key,
+                    ref mut op,
+                }) => {
+                    // cache the key hash
+                    let hash = {
+                        let mut hasher = inner.data.hasher().build_hasher();
 
-                unsafe {
-                    // truncate vector without dropping values
-                    vs.set_len(0);
-                }
+                        key.hash(&mut hasher);
 
-                // implicit shrink_to_fit on replace op when using smallvec,
-                // as it will switch back to inline allocation for the subsequent push.
-                #[cfg(feature = "smallvec")]
-                vs.shrink_to_fit();
+                        hasher.finish()
+                    };
 
-                vs.push(unsafe { value.shallow_copy() });
-            }
-            Operation::Clear(ref key) => match inner.data.entry(key.clone()) {
-                Entry::Occupied(mut entry) => unsafe {
-                    // truncate vector without dropping values
-                    entry.get_mut().set_len(0);
-                },
-                Entry::Vacant(entry) => {
-                    entry.insert(Values::new());
-                }
-            },
-            Operation::Add(ref key, ref mut value) => {
-                inner
-                    .data
-                    .entry(key.clone())
-                    .or_insert_with(Values::new)
-                    .push(unsafe { value.shallow_copy() });
-            }
-            Operation::Empty(ref key) => {
-                if let Some(mut vs) = inner.data.remove(key) {
-                    unsafe {
-                        // truncate vector without dropping values
-                        vs.set_len(0);
+                    // apply the current operation
+                    {
+                        let raw_entry = inner.data.raw_entry_mut();
+
+                        op.apply_first(
+                            Cow::Borrowed(key),
+                            raw_entry.from_key_hashed_nocheck(hash, key),
+                        );
                     }
-                }
-            }
-            Operation::Remove(ref key, ref value) => {
-                if let Some(e) = inner.data.get_mut(key) {
-                    // find the first entry that matches all fields
-                    if let Some(i) = e.iter().position(|v| v == value) {
-                        let v = e.swap_remove(i);
-                        // don't run destructor yet -- still in use by other map
-                        mem::forget(v);
-                    }
-                }
-            }
-            Operation::Retain(ref key, ref predicate) => {
-                if let Some(e) = inner.data.get_mut(key) {
-                    let mut del = 0;
-                    let len = e.len();
 
-                    // "bubble up" the values we wish to remove, so they can be truncated.
-                    //
-                    // See https://github.com/servo/rust-smallvec/blob/a775b5f74cce0d3c7218608fd9f6fd721bb0f461/lib.rs#L881-L897
-                    // for SmallVec's implementation of `retain`, the only difference being that we
-                    // cannot drop values here, so they are truncated with `set_len`
-                    for i in 0..len {
-                        if !predicate.eval(unsafe { e.get_unchecked(i) }) {
-                            del += 1;
-                        } else {
-                            e.swap(i - del, i);
+                    'lookahead: for next_marked_op in &ops[i + 1..] {
+                        match next_marked_op.as_mut() {
+                            Some(Operation::Map { .. }) => break 'lookahead,
+                            Some(Operation::Value {
+                                key: ref next_key,
+                                op: ref mut next_op,
+                            }) if next_key == key => {
+                                next_marked_op.mark_first();
+
+                                let raw_entry = inner.data.raw_entry_mut();
+
+                                next_op.apply_first(
+                                    Cow::Borrowed(key),
+                                    raw_entry.from_key_hashed_nocheck(hash, key),
+                                );
+                            }
+                            _ => {}
                         }
                     }
-
-                    unsafe {
-                        // truncate vector without dropping values
-                        e.set_len(len - del);
-                    }
                 }
             }
-            Operation::Fit(ref key) => match key {
-                Some(ref key) => {
-                    if let Some(e) = inner.data.get_mut(key) {
-                        e.shrink_to_fit();
-                    }
-                }
-                None => {
-                    for value_set in inner.data.values_mut() {
-                        value_set.shrink_to_fit();
-                    }
-                }
-            },
-            Operation::Reserve(ref key, additional) => match inner.data.entry(key.clone()) {
-                Entry::Occupied(mut entry) => {
-                    entry.get_mut().reserve(additional);
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert(Values::with_capacity(additional));
-                }
-            },
         }
     }
 
     /// Apply operations while allowing dropping of values
-    fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
-        match op {
-            Operation::Replace(key, value) => {
-                let v = inner.data.entry(key).or_insert_with(Values::new);
-                v.clear();
+    fn apply_second(inner: &mut Inner<K, V, M, S>, ops: &[MarkedOperation<K, V>]) {
+        for (i, op) in ops.iter().enumerate() {
+            match op.take_second() {
+                None => {}
 
-                #[cfg(feature = "smallvec")]
-                v.shrink_to_fit();
+                // Apply whole-map operations now
+                Some(Operation::Map { op }) => op.apply_second(inner),
 
-                v.push(value);
-            }
-            Operation::Clear(key) => {
-                let v = inner.data.entry(key).or_insert_with(Values::new);
-                v.clear();
-            }
-            Operation::Add(key, value) => {
-                inner
-                    .data
-                    .entry(key)
-                    .or_insert_with(Values::new)
-                    .push(value);
-            }
-            Operation::Empty(key) => {
-                inner.data.remove(&key);
-            }
-            Operation::Remove(key, value) => {
-                if let Some(e) = inner.data.get_mut(&key) {
-                    // find the first entry that matches all fields
-                    if let Some(i) = e.iter().position(|v| v == &value) {
-                        e.swap_remove(i);
+                // If the op was a value operation
+                Some(Operation::Value { key, op }) => {
+                    // cache the key hash
+                    let hash = {
+                        let mut hasher = inner.data.hasher().build_hasher();
+
+                        key.hash(&mut hasher);
+
+                        hasher.finish()
+                    };
+
+                    // apply the current operation
+                    {
+                        let raw_entry = inner.data.raw_entry_mut();
+
+                        op.apply_second(
+                            Cow::Borrowed(&key),
+                            raw_entry.from_key_hashed_nocheck(hash, &key),
+                        );
+                    }
+
+                    // from here, look ahead for value operations
+                    // with the same key.
+                    //
+                    // This done in such a way as to avoid repeated matching,
+                    // by using unsafe pointers and references
+                    'lookahead: for next_marked_op in &ops[i + 1..] {
+                        match next_marked_op.as_mut() {
+                            Some(Operation::Map { .. }) => break 'lookahead,
+                            Some(Operation::Value {
+                                key: ref next_key,
+                                op: ref mut next_op,
+                            }) if next_key == &key => {
+                                // mark this op as being consumed
+                                next_marked_op.mark_second();
+
+                                // read the value from the reference we have
+                                let op = unsafe { ptr::read(next_op) };
+
+                                let raw_entry = inner.data.raw_entry_mut();
+
+                                op.apply_second(
+                                    Cow::Borrowed(&key),
+                                    raw_entry.from_key_hashed_nocheck(hash, &key),
+                                );
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
-            Operation::Retain(key, predicate) => {
-                if let Some(e) = inner.data.get_mut(&key) {
-                    e.retain(|v| predicate.eval(v));
-                }
-            }
-            Operation::Fit(key) => match key {
-                Some(ref key) => {
-                    if let Some(e) = inner.data.get_mut(&key) {
-                        e.shrink_to_fit();
-                    }
-                }
-                None => {
-                    for value_set in inner.data.values_mut() {
-                        value_set.shrink_to_fit();
-                    }
-                }
-            },
-            Operation::Reserve(key, additional) => match inner.data.entry(key) {
-                Entry::Occupied(mut entry) => {
-                    entry.get_mut().reserve(additional);
-                }
-                Entry::Vacant(entry) => {
-                    entry.insert(Values::with_capacity(additional));
-                }
-            },
         }
     }
 }

@@ -1,16 +1,8 @@
 use std::hash::{BuildHasher, Hash};
 use std::sync::{atomic, Arc, Mutex};
 
-#[cfg(not(feature = "hashbrown"))]
-use std::collections::HashMap;
-
-#[cfg(feature = "hashbrown")]
 use hashbrown::HashMap;
 
-#[cfg(not(feature = "smallvec"))]
-pub(crate) type Values<T> = Vec<T>;
-
-#[cfg(feature = "smallvec")]
 pub(crate) type Values<T> = smallvec::SmallVec<[T; 1]>;
 
 pub(crate) struct Inner<K, V, M, S>

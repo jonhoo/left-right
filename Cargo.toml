@@ -21,10 +21,9 @@ travis-ci = { repository = "jonhoo/rust-evmap" }
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-hashbrown = { version = "0.1.8", optional = true }
-smallvec = { version = "0.6.7", optional = true }
+hashbrown = { version = "0.1.8" }
+smallvec = { version = "0.6.7" }
 
 [features]
-default = ["hashbrown", "smallvec"]
 nightly_hashbrown = ["hashbrown/nightly"]
 nightly_smallvec = ["smallvec/union", "smallvec/may_dangle", "smallvec/specialization"]
