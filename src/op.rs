@@ -170,8 +170,8 @@ const SECOND_FLAG: u8 = 2; // value has been consumed
 
 impl<K, V> Drop for MarkedOperation<K, V> {
     fn drop(&mut self) {
-        // If the operation hasn't been consumed, drop it
         match self.flag.get() {
+            // If the operation hasn't been consumed, drop it
             NONE_FLAG | FIRST_FLAG => unsafe {
                 mem::ManuallyDrop::drop(&mut self.op);
             },
@@ -189,11 +189,15 @@ impl<K, V> MarkedOperation<K, V> {
         }
     }
 
+    /// Mark the inner value as having been read/written to in the `apply_first` scope,
+    /// and therefore should not be read/written to again.
     #[inline(always)]
     pub fn mark_first(&self) {
         self.flag.set(FIRST_FLAG);
     }
 
+    /// Mark the inner value as consumed. It can no longer be read/written to,
+    /// and will not be dropped here.
     #[inline(always)]
     pub fn mark_second(&self) {
         self.flag.set(SECOND_FLAG);
@@ -207,6 +211,7 @@ impl<K, V> MarkedOperation<K, V> {
     #[inline(always)]
     pub fn as_ref(&self) -> Option<&Operation<K, V>> {
         match self.flag.get() {
+            // If nothing has touched the inner value, it's safe to read
             NONE_FLAG => Some(unsafe { &*self.op.get() }),
             _ => None,
         }
@@ -215,6 +220,7 @@ impl<K, V> MarkedOperation<K, V> {
     #[inline(always)]
     pub fn as_mut(&self) -> Option<&mut Operation<K, V>> {
         match self.flag.get() {
+            // If nothing has touched the inner value, it's safe to write
             NONE_FLAG => Some(unsafe { &mut *self.op.get() }),
             _ => None,
         }
@@ -223,8 +229,10 @@ impl<K, V> MarkedOperation<K, V> {
     #[inline(always)]
     pub fn take_first(&self) -> Option<&mut Operation<K, V>> {
         match self.flag.get() {
+            // If nothing has touched the inner value, it's safe to read/write
             NONE_FLAG => {
-                self.flag.set(FIRST_FLAG);
+                // Mark it as having been read/written to in `apply_first`
+                self.mark_first();
 
                 Some(unsafe { &mut *self.op.get() })
             }
@@ -235,10 +243,20 @@ impl<K, V> MarkedOperation<K, V> {
     #[inline(always)]
     pub fn take_second(&self) -> Option<Operation<K, V>> {
         match self.flag.get() {
+            // If the inner value has been consumed, it's NOT safe to read/write to,
+            // so `None` is returned
             SECOND_FLAG => None,
-            _ => {
-                self.flag.set(SECOND_FLAG);
 
+            // Otherwise, where it is guaranteed to not be used within the
+            // same scope as "first" operations, we can consume the value and
+            // mark it as being moved out.
+            _ => {
+                // Mark it as having been consumed
+                self.mark_second();
+
+                // "Moves" the value out of the inner storage.
+                //
+                // This is safe so long as the old value is never accessed again.
                 Some(unsafe { ptr::read(self.op.get()) })
             }
         }
