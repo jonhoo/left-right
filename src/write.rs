@@ -667,15 +667,24 @@ where
                     'lookahead: for next_marked_op in &ops[i + 1..] {
                         match next_marked_op.as_mut() {
                             Some(Operation::Map { .. }) => break 'lookahead,
+
+                            // If the value operation is for the same key, consume it,
+                            // marking it as innaccessible and dropping the key in-place.
                             Some(Operation::Value {
-                                key: ref next_key,
+                                key: ref mut next_key,
                                 op: ref mut next_op,
                             }) if next_key == &key => {
-                                // mark this op as being consumed
+                                // mark this op as being consumed. After this,
+                                // access to it will no longer be allowed.
                                 next_marked_op.mark_second();
 
-                                // read the value from the reference we have
-                                let op = unsafe { ptr::read(next_op) };
+                                let op = unsafe {
+                                    // Cleanup the key now
+                                    ptr::drop_in_place(next_key);
+
+                                    // read the value operation from the reference we have
+                                    ptr::read(next_op)
+                                };
 
                                 let raw_entry = inner.data.raw_entry_mut();
 
