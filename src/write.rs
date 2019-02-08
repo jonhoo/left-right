@@ -1,6 +1,6 @@
 use super::ShallowCopy;
 use inner::Inner;
-use op::{MapOperation, MarkedOperation, Operation, Predicate, ValueOperation};
+use op::{MapOperation, MarkedOperation, Modifier, Modify, Operation, Predicate, ValueOperation};
 use read::ReadHandle;
 
 use std::borrow::Cow;
@@ -527,7 +527,6 @@ where
     /// of elements in the value-set.
     ///
     /// The updated value-set will only be visible to readers after the next call to `refresh()`.
-    #[inline]
     pub fn remove_stable(&mut self, k: K, value: V) -> &mut Self {
         self.add_value_op(k, ValueOperation::RemoveStable(value))
     }
@@ -574,6 +573,46 @@ where
     /// by pre-allocating space for large value-sets.
     pub fn reserve(&mut self, k: K, additional: usize) -> &mut Self {
         self.add_value_op(k, ValueOperation::Reserve(additional))
+    }
+
+    /// Allows arbitrary operations to be performed on a single value-set
+    /// with almost zero overhead. This will create an empty value-set if one
+    /// does not already exist.
+    ///
+    /// Readers will not be aware of modifications made until the next call to `refresh()`
+    ///
+    /// However, modifiers are allowed to read the most up-to-date version of the value-sets
+    /// they operate on, allowing for more dynamic logic.
+    pub fn modify<F>(&mut self, k: K, f: F) -> &mut Self
+    where
+        F: for<'a> Fn(&mut Modify<'a, V>) + 'static + Send + Sync,
+    {
+        self.add_value_op(k, ValueOperation::Modify(Modifier(Arc::new(f))))
+    }
+
+    /// Allows arbitrary operations to be performed on ALL value-sets
+    /// in the map, with almost zero overhead.
+    ///
+    /// Readers will not be aware of modifications made until the next call to `refresh()`
+    ///
+    /// However, modifiers are allowed the read the most up-to-date version of the value-sets
+    /// they operate on, allowing for more dynamic logic.
+    pub fn for_each<F>(&mut self, f: F) -> &mut Self
+    where
+        F: for<'a> Fn(&mut Modify<'a, V>) + 'static + Send + Sync,
+    {
+        self.add_op(Operation::Map {
+            op: MapOperation::ForEach(Modifier(Arc::new(f))),
+        })
+    }
+
+    /// Removes all empty value-sets from the map.
+    ///
+    /// The value-sets will only disappear from readers after the next call to `refresh()`.
+    pub fn prune(&mut self) -> &mut Self {
+        self.add_op(Operation::Map {
+            op: MapOperation::Prune,
+        })
     }
 
     /// Apply ops in such a way that no values are dropped, only forgotten
