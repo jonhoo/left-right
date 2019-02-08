@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::{fmt, mem, ptr};
 
 use hashbrown::hash_map::RawEntryMut;
-use smallvec::SmallVec;
+
+#[cfg(feature = "smallvec")]
+use smallvec;
 
 use super::ShallowCopy;
 use inner::{Inner, Values};
@@ -322,7 +324,12 @@ where
 
 /// Allows for quick and efficient application of operations on a single value-set
 pub struct Modify<'a, V> {
-    ops: SmallVec<[ValueOperation<V>; 1]>,
+    #[cfg(feature = "smallvec")]
+    ops: smallvec::SmallVec<[ValueOperation<V>; 1]>,
+
+    #[cfg(not(feature = "smallvec"))]
+    ops: Vec<ValueOperation<V>>,
+
     values: &'a mut Values<V>,
     first: bool,
 }
@@ -333,7 +340,7 @@ where
 {
     fn new(values: &'a mut Values<V>, first: bool) -> Self {
         Modify {
-            ops: SmallVec::new(),
+            ops: Default::default(),
             values,
             first,
         }
@@ -397,9 +404,16 @@ where
                 }
                 ValueOperation::Fit => values.shrink_to_fit(),
                 ValueOperation::Reserve(additional) => values.reserve(additional),
+                ValueOperation::Modify(ref modifier) => {
+                    let mut modify = Modify::new(values, true);
+
+                    modifier.modify(&mut modify);
+
+                    modify.apply_first();
+                }
 
                 // Not even allowed to be added
-                ValueOperation::Modify(_) | ValueOperation::Empty => unimplemented!(),
+                ValueOperation::Empty => unimplemented!(),
             }
         }
     }
@@ -407,7 +421,13 @@ where
     fn apply_second(&mut self) {
         let Modify { ops, values, .. } = self;
 
-        for op in ops.drain() {
+        #[cfg(feature = "smallvec")]
+        let ops = ops.drain();
+
+        #[cfg(not(feature = "smallvec"))]
+        let ops = ops.drain(..);
+
+        for op in ops {
             match op {
                 ValueOperation::Replace(value) => {
                     values.clear();
@@ -429,14 +449,24 @@ where
                 ValueOperation::Retain(predicate) => values.retain(|v| predicate.eval(v)),
                 ValueOperation::Fit => values.shrink_to_fit(),
                 ValueOperation::Reserve(additional) => values.reserve(additional),
+                ValueOperation::Modify(modifier) => {
+                    let mut modify = Modify::new(values, false);
+
+                    modifier.modify(&mut modify);
+
+                    modify.apply_second();
+                }
 
                 // Not even allowed to be added
-                ValueOperation::Modify(_) | ValueOperation::Empty => unimplemented!(),
+                ValueOperation::Empty => unimplemented!(),
             }
         }
     }
 
     /// Apply all pending operations to this value-set
+    ///
+    /// This will update the value-set in-place, allowing the modifier to
+    /// read it immediately with the changes applied.
     pub fn refresh(&mut self) -> &mut Self {
         if self.first {
             self.apply_first();
@@ -488,7 +518,6 @@ where
     }
 
     /// Retain elements for the given key using the provided predicate function.
-    #[inline]
     pub fn retain<F>(&mut self, f: F) -> &mut Self
     where
         F: Fn(&V) -> bool + 'static + Send + Sync,
@@ -507,6 +536,14 @@ where
     #[inline]
     pub fn reserve(&mut self, additional: usize) -> &mut Self {
         self.add_op(ValueOperation::Reserve(additional))
+    }
+
+    /// Perform additional arbitrary operations on this value-set
+    pub fn modify<F>(&mut self, f: F) -> &mut Self
+    where
+        F: for<'b> Fn(&mut Modify<'b, V>) + 'static + Send + Sync,
+    {
+        self.add_op(ValueOperation::Modify(Modifier(Arc::new(f))))
     }
 }
 

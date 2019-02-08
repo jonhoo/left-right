@@ -186,6 +186,8 @@
 #![deny(missing_docs)]
 
 extern crate hashbrown;
+
+#[cfg(feature = "smallvec")]
 extern crate smallvec;
 
 /// Re-export default FxHash hash builder from `hashbrown`

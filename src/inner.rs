@@ -3,7 +3,11 @@ use std::sync::{atomic, Arc, Mutex};
 
 use hashbrown::HashMap;
 
+#[cfg(feature = "smallvec")]
 pub(crate) type Values<T> = smallvec::SmallVec<[T; 1]>;
+
+#[cfg(not(feature = "smallvec"))]
+pub(crate) type Values<T> = Vec<T>;
 
 pub(crate) struct Inner<K, V, M, S>
 where
