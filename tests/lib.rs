@@ -38,6 +38,19 @@ fn it_works() {
 }
 
 #[test]
+fn clone_types() {
+    let x = evmap::shallow_copy::CloneValue::from(b"xyz");
+
+    let (r, mut w) = evmap::new();
+    w.insert(&*x, x);
+    w.refresh();
+
+    assert_eq!(r.get_and(&*x, |rs| rs.len()), Some(1));
+    assert_eq!(r.meta_get_and(&*x, |rs| rs.len()), Some((Some(1), ())));
+    assert_eq!(r.get_and(&*x, |rs| rs.iter().any(|v| *v == x)), Some(true));
+}
+
+#[test]
 fn busybusybusy_fast() {
     busybusybusy_inner(false);
 }

@@ -288,7 +288,7 @@ pub use write::WriteHandle;
 mod read;
 pub use read::ReadHandle;
 
-mod shallow_copy;
+pub mod shallow_copy;
 pub use shallow_copy::ShallowCopy;
 
 /// Options for how to initialize the map.
