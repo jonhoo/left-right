@@ -74,7 +74,7 @@ where
 ///
 /// This is effectively a way to bypass the `ShallowCopy` optimization.
 /// Note that you do not need this wrapper for most `Copy` primitives.
-#[derive(Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CopyValue<T>(T);
 
 impl<T: Copy> From<T> for CopyValue<T> {
