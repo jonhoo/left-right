@@ -3,7 +3,8 @@
 use std::ops::{Deref, DerefMut};
 
 /// Types that implement this trait can be cheaply copied by (potentially) aliasing the data they
-/// contain.
+/// contain. Only the _last_ shallow copy will be dropped -- all others will be silently leaked
+/// (with `mem::forget`).
 pub trait ShallowCopy {
     /// Perform an aliasing copy of this value.
     ///
@@ -68,37 +69,37 @@ where
     }
 }
 
-/// If you are willing to have your values be cloned between the two views of the `evmap`, wrap
-/// them in this type.
+/// If you are willing to have your values be copied between the two views of the `evmap`,
+/// wrap them in this type.
 ///
 /// This is effectively a way to bypass the `ShallowCopy` optimization.
 /// Note that you do not need this wrapper for most `Copy` primitives.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
-pub struct CloneValue<T>(T);
+#[derive(Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CopyValue<T>(T);
 
-impl<T: Clone> From<T> for CloneValue<T> {
+impl<T: Copy> From<T> for CopyValue<T> {
     fn from(t: T) -> Self {
-        CloneValue(t)
+        CopyValue(t)
     }
 }
 
-impl<T> ShallowCopy for CloneValue<T>
+impl<T> ShallowCopy for CopyValue<T>
 where
-    T: Clone,
+    T: Copy,
 {
     unsafe fn shallow_copy(&mut self) -> Self {
-        CloneValue(self.0.clone())
+        CopyValue(self.0)
     }
 }
 
-impl<T> Deref for CloneValue<T> {
+impl<T> Deref for CopyValue<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<T> DerefMut for CloneValue<T> {
+impl<T> DerefMut for CopyValue<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

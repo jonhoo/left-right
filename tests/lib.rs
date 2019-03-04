@@ -51,7 +51,7 @@ fn it_works() {
 
 #[test]
 fn clone_types() {
-    let x = evmap::shallow_copy::CloneValue::from(b"xyz");
+    let x = evmap::shallow_copy::CopyValue::from(b"xyz");
 
     let (r, mut w) = evmap::new();
     w.insert(&*x, x);
