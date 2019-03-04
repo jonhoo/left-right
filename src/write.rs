@@ -495,6 +495,15 @@ where
         self.add_op(Operation::Empty(k))
     }
 
+    /// Purge all value-sets from the map.
+    ///
+    /// The map will only appear empty to readers after the next call to `refresh()`.
+    ///
+    /// Note that this will iterate once over all the keys internally.
+    pub fn purge(&mut self) -> &mut Self {
+        self.add_op(Operation::Purge)
+    }
+
     /// Retain elements for the given key using the provided predicate function.
     ///
     /// The remaining value-set will only be visible to readers after the next call to `refresh()`
@@ -572,6 +581,16 @@ where
                         vs.set_len(0);
                     }
                 }
+            }
+            Operation::Purge => {
+                // first, make sure we won't drop any of the values
+                for vs in inner.data.values_mut() {
+                    unsafe {
+                        vs.set_len(0);
+                    }
+                }
+                // then, empty the map
+                inner.data.clear();
             }
             Operation::Remove(ref key, ref value) => {
                 if let Some(e) = inner.data.get_mut(key) {
@@ -655,6 +674,9 @@ where
             }
             Operation::Empty(key) => {
                 inner.data.remove(&key);
+            }
+            Operation::Purge => {
+                inner.data.clear();
             }
             Operation::Remove(key, value) => {
                 if let Some(e) = inner.data.get_mut(&key) {

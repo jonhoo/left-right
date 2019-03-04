@@ -35,6 +35,18 @@ fn it_works() {
     // non-existing records return None
     assert_eq!(r.get_and(&'y', |rs| rs.len()), None);
     assert_eq!(r.meta_get_and(&'y', |rs| rs.len()), Some((None, ())));
+
+    // if we purge, the readers still see the values
+    w.purge();
+    assert_eq!(
+        r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
+        Some(true)
+    );
+
+    // but once we refresh, things will be empty
+    w.refresh();
+    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
+    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((None, ())));
 }
 
 #[test]

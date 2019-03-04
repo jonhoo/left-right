@@ -255,7 +255,12 @@ impl<V> fmt::Debug for Predicate<V> {
 }
 
 /// A pending map operation.
+///
+/// Note that this enum should be considered
+/// [non-exhaustive](https://github.com/rust-lang/rust/issues/44109).
 #[derive(Clone, PartialEq, Eq, Debug)]
+// TODO: #[non_exhaustive]
+// https://github.com/rust-lang/rust/issues/44109
 pub enum Operation<K, V> {
     /// Replace the set of entries for this key with this value.
     Replace(K, V),
@@ -267,6 +272,10 @@ pub enum Operation<K, V> {
     Empty(K),
     /// Remove all values in the value set for this key.
     Clear(K),
+    /// Remove all values for all keys.
+    ///
+    /// Note that this will iterate once over all the keys internally.
+    Purge,
     /// Retains all values matching the given predicate.
     Retain(K, Predicate<V>),
     /// Shrinks a value-set to it's minimum necessary size, freeing memory
