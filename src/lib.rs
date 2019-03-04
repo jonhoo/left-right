@@ -349,7 +349,7 @@ where
     }
 
     /// Create the map, and construct the read and write handles used to access it.
-    #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
+    #[allow(clippy::type_complexity)]
     pub fn construct<K, V>(self) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
     where
         K: Eq + Hash + Clone,
@@ -374,7 +374,7 @@ where
 /// Create an empty eventually consistent map.
 ///
 /// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
-#[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
+#[allow(clippy::type_complexity)]
 pub fn new<K, V>() -> (
     ReadHandle<K, V, (), RandomState>,
     WriteHandle<K, V, (), RandomState>,
@@ -389,7 +389,7 @@ where
 /// Create an empty eventually consistent map with meta information.
 ///
 /// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
-#[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
+#[allow(clippy::type_complexity)]
 pub fn with_meta<K, V, M>(
     meta: M,
 ) -> (
@@ -407,7 +407,7 @@ where
 /// Create an empty eventually consistent map with meta information and custom hasher.
 ///
 /// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
-#[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
+#[allow(clippy::type_complexity)]
 pub fn with_hasher<K, V, M, S>(
     meta: M,
     hasher: S,
