@@ -1,11 +1,6 @@
+use rahashmap::HashMap;
 use std::hash::{BuildHasher, Hash};
 use std::sync::{atomic, Arc, Mutex};
-
-#[cfg(not(feature = "hashbrown"))]
-use std::collections::HashMap;
-
-#[cfg(feature = "hashbrown")]
-use hashbrown::HashMap;
 
 #[cfg(not(feature = "smallvec"))]
 pub(crate) type Values<T> = Vec<T>;

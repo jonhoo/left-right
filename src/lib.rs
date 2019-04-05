@@ -207,15 +207,10 @@
 //!
 #![deny(missing_docs)]
 
-#[cfg(feature = "hashbrown")]
-extern crate hashbrown;
+extern crate rahashmap;
 
 #[cfg(feature = "smallvec")]
 extern crate smallvec;
-
-/// Re-export default FxHash hash builder from `hashbrown`
-#[cfg(feature = "hashbrown")]
-pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -270,6 +265,8 @@ pub enum Operation<K, V> {
     Remove(K, V),
     /// Remove the value set for this key.
     Empty(K),
+    /// Drop a key at a random index
+    EmptyRandom(usize),
     /// Remove all values in the value set for this key.
     Clear(K),
     /// Remove all values for all keys.
