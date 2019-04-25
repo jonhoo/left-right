@@ -51,6 +51,7 @@ where
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
+    epochs: crate::Epochs,
     w_handle: Option<Box<Inner<K, V, M, S>>>,
     oplog: Vec<Operation<K, V>>,
     swap_index: usize,
@@ -65,6 +66,7 @@ where
 
 pub(crate) fn new<K, V, M, S>(
     w_handle: Inner<K, V, M, S>,
+    epochs: crate::Epochs,
     r_handle: ReadHandle<K, V, M, S>,
 ) -> WriteHandle<K, V, M, S>
 where
@@ -75,6 +77,7 @@ where
 {
     let m = w_handle.meta.clone();
     WriteHandle {
+        epochs,
         w_handle: Some(Box::new(w_handle)),
         oplog: Vec::new(),
         swap_index: 0,
@@ -192,8 +195,7 @@ where
         // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
         // only block on pre-existing readers, and they are never waiting to push onto epochs
         // unless they have finished reading.
-        let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
-
+        let epochs = Arc::clone(&self.epochs);
         let mut epochs = epochs.lock().unwrap();
 
         self.wait(&mut epochs);
@@ -371,10 +373,8 @@ where
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
         // now, wait for all readers to depart
-        let epochs = Arc::clone(&self.w_handle.as_ref().unwrap().epochs);
-
+        let epochs = Arc::clone(&self.epochs);
         let mut epochs = epochs.lock().unwrap();
-
         self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap

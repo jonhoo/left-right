@@ -220,10 +220,12 @@ pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
-use std::sync::Arc;
+use std::sync::{atomic, Arc, Mutex};
 
 mod inner;
 use inner::Inner;
+
+pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 
 /// Unary predicate used to retain elements
 #[derive(Clone)]
@@ -295,7 +297,7 @@ mod write;
 pub use write::WriteHandle;
 
 mod read;
-pub use read::ReadHandle;
+pub use read::{ReadHandle, ReadHandleFactory};
 
 pub mod shallow_copy;
 pub use shallow_copy::ShallowCopy;
@@ -366,6 +368,7 @@ where
         V: Eq + ShallowCopy,
         M: 'static + Clone,
     {
+        let epochs = Default::default();
         let inner = if let Some(cap) = self.capacity {
             Inner::with_capacity_and_hasher(self.meta, cap, self.hasher)
         } else {
@@ -374,8 +377,8 @@ where
 
         let mut w_handle = inner.clone();
         w_handle.mark_ready();
-        let r = read::new(inner);
-        let w = write::new(w_handle, r.clone());
+        let r = read::new(inner, Arc::clone(&epochs));
+        let w = write::new(w_handle, epochs, r.clone());
         (r, w)
     }
 }
