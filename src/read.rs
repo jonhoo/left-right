@@ -22,6 +22,7 @@ where
     S: BuildHasher,
 {
     pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
+    pub(crate) epochs: crate::Epochs,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
     my_epoch: sync::atomic::AtomicUsize,
 
@@ -34,41 +35,99 @@ where
     _not_sync_no_feature: PhantomData<cell::Cell<()>>,
 }
 
-impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
+/// A type that is both `Sync` and `Send` and lets you produce new [`ReadHandle`] instances.
+///
+/// This serves as a handy way to distribute read handles across many threads without requiring
+/// additional external locking to synchronize access to the non-`Sync` `ReadHandle` type. Note
+/// that this _internally_ takes a lock whenever you call [`ReadHandleFactory::handle`], so
+/// you should not expect producing new handles rapidly to scale well.
+pub struct ReadHandleFactory<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash,
     S: BuildHasher,
-    M: Clone,
+{
+    inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
+    epochs: crate::Epochs,
+}
+
+impl<K, V, M, S> Clone for ReadHandleFactory<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
 {
     fn clone(&self) -> Self {
-        let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
-        self.register_epoch(&epoch);
-        ReadHandle {
-            epoch: epoch,
-            my_epoch: atomic::AtomicUsize::new(0),
+        Self {
             inner: sync::Arc::clone(&self.inner),
-            _not_sync_no_feature: PhantomData,
+            epochs: sync::Arc::clone(&self.epochs),
         }
     }
 }
 
-pub(crate) fn new<K, V, M, S>(inner: Inner<K, V, M, S>) -> ReadHandle<K, V, M, S>
+impl<K, V, M, S> ReadHandleFactory<K, V, M, S>
 where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    // tell writer about our epoch tracker
-    let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
+    /// Produce a new [`ReadHandle`] to the same map as this factory was originally produced from.
+    pub fn handle(&self) -> ReadHandle<K, V, M, S> {
+        ReadHandle::new(
+            sync::Arc::clone(&self.inner),
+            sync::Arc::clone(&self.epochs),
+        )
+    }
+}
 
-    inner.epochs.lock().unwrap().push(Arc::clone(&epoch));
+impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
+    fn clone(&self) -> Self {
+        ReadHandle::new(
+            sync::Arc::clone(&self.inner),
+            sync::Arc::clone(&self.epochs),
+        )
+    }
+}
 
+pub(crate) fn new<K, V, M, S>(
+    inner: Inner<K, V, M, S>,
+    epochs: crate::Epochs,
+) -> ReadHandle<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
     let store = Box::into_raw(Box::new(inner));
+    ReadHandle::new(sync::Arc::new(AtomicPtr::new(store)), epochs)
+}
 
-    ReadHandle {
-        epoch: epoch,
-        my_epoch: atomic::AtomicUsize::new(0),
-        inner: sync::Arc::new(AtomicPtr::new(store)),
-        _not_sync_no_feature: PhantomData,
+impl<K, V, M, S> ReadHandle<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
+    fn new(inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>, epochs: crate::Epochs) -> Self {
+        // tell writer about our epoch tracker
+        let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
+        epochs.lock().unwrap().push(Arc::clone(&epoch));
+
+        Self {
+            epochs,
+            epoch,
+            my_epoch: atomic::AtomicUsize::new(0),
+            inner,
+            _not_sync_no_feature: PhantomData,
+        }
+    }
+
+    /// Create a new `Sync` type that can produce additional `ReadHandle`s for use in other
+    /// threads.
+    pub fn factory(&self) -> ReadHandleFactory<K, V, M, S> {
+        ReadHandleFactory {
+            inner: sync::Arc::clone(&self.inner),
+            epochs: sync::Arc::clone(&self.epochs),
+        }
     }
 }
 
@@ -78,12 +137,6 @@ where
     S: BuildHasher,
     M: Clone,
 {
-    fn register_epoch(&self, epoch: &Arc<atomic::AtomicUsize>) {
-        if let Some(epochs) = self.with_handle(|inner| Arc::clone(&inner.epochs)) {
-            epochs.lock().unwrap().push(Arc::clone(epoch));
-        }
-    }
-
     fn with_handle<F, T>(&self, f: F) -> Option<T>
     where
         F: FnOnce(&Inner<K, V, M, S>) -> T,

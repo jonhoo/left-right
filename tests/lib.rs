@@ -50,6 +50,21 @@ fn it_works() {
 }
 
 #[test]
+fn read_after_drop() {
+    let x = ('x', 42);
+
+    let (r, mut w) = evmap::new();
+    w.insert(x.0, x);
+    w.refresh();
+    assert_eq!(r.get_and(&x.0, |rs| rs.len()), Some(1));
+
+    // once we drop the writer, the readers should see empty maps
+    drop(w);
+    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
+    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), None);
+}
+
+#[test]
 fn clone_types() {
     let x = evmap::shallow_copy::CopyValue::from(b"xyz");
 
