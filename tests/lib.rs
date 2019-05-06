@@ -50,55 +50,6 @@ fn it_works() {
 }
 
 #[test]
-fn floats() {
-    let x = ('x', 42.0);
-
-    let (r, mut w) = evmap::new();
-
-    // the map is uninitialized, so all lookups should return None
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
-
-    w.refresh();
-
-    // after the first refresh, it is empty, but ready
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
-    // since we're not using `meta`, we get ()
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((None, ())));
-
-    w.insert(x.0, x);
-
-    // it is empty even after an add (we haven't refresh yet)
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((None, ())));
-
-    w.refresh();
-
-    // but after the swap, the record is there!
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), Some(1));
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((Some(1), ())));
-    assert_eq!(
-        r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
-        Some(true)
-    );
-
-    // non-existing records return None
-    assert_eq!(r.get_and(&'y', |rs| rs.len()), None);
-    assert_eq!(r.meta_get_and(&'y', |rs| rs.len()), Some((None, ())));
-
-    // if we purge, the readers still see the values
-    w.purge();
-    assert_eq!(
-        r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
-        Some(true)
-    );
-
-    // but once we refresh, things will be empty
-    w.refresh();
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((None, ())));
-}
-
-#[test]
 fn read_after_drop() {
     let x = ('x', 42);
 
