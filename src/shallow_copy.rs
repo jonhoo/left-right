@@ -5,6 +5,20 @@ use std::ops::{Deref, DerefMut};
 /// Types that implement this trait can be cheaply copied by (potentially) aliasing the data they
 /// contain. Only the _last_ shallow copy will be dropped -- all others will be silently leaked
 /// (with `mem::forget`).
+///
+/// To implement this trait for your own `Copy` type, write:
+///
+/// ```rust
+/// impl ShallowCopy for T {
+///     unsafe fn shallow_copy(&mut self) -> Self {
+///         *self
+///     }
+/// }
+/// ```
+///
+/// If you have a non-`Copy` type, the value returned by `shallow_copy` should point to the same
+/// data as the `&mut self`, and it should be safe to `mem::forget` either of the copies as long as
+/// the other is dropped normally afterwards.
 pub trait ShallowCopy {
     /// Perform an aliasing copy of this value.
     ///
