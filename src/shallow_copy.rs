@@ -9,6 +9,10 @@ use std::ops::{Deref, DerefMut};
 /// To implement this trait for your own `Copy` type, write:
 ///
 /// ```rust
+/// # use evmap::ShallowCopy;
+/// #[derive(Copy, Clone)]
+/// struct T;
+///
 /// impl ShallowCopy for T {
 ///     unsafe fn shallow_copy(&mut self) -> Self {
 ///         *self
