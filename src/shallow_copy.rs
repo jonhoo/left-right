@@ -84,12 +84,7 @@ impl<T> ShallowCopy for Vec<T> {
 #[cfg(feature = "bytes")]
 impl ShallowCopy for bytes::Bytes {
     unsafe fn shallow_copy(&mut self) -> Self {
-        // Since `Bytes` itself is reference-counted, does
-        // a simple `clone()` satisfy the requirements here of an aliasing copy?
         self.clone()
-        // Alternatives:
-        // bytes::Bytes::clone(self)
-        // Bytes::from(self.as_ref())
     }
 }
 
