@@ -23,6 +23,7 @@ maintenance = { status = "passively-maintained" }
 [dependencies]
 hashbrown = { version = "0.3", optional = true }
 smallvec = { version = "0.6.7", optional = true }
+bytes = { version = "0.4.12", optional = true }
 
 [features]
 default = ["hashbrown", "smallvec"]

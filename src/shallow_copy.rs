@@ -1,5 +1,8 @@
 //! Types that can be cheaply aliased.
 
+#[cfg(feature = "bytes")]
+extern crate bytes;
+
 use std::ops::{Deref, DerefMut};
 
 /// Types that implement this trait can be cheaply copied by (potentially) aliasing the data they
@@ -77,6 +80,25 @@ impl<T> ShallowCopy for Vec<T> {
         Vec::from_raw_parts(ptr, len, cap)
     }
 }
+
+#[cfg(feature = "bytes")]
+impl ShallowCopy for bytes::Bytes {
+    unsafe fn shallow_copy(&mut self) -> Self {
+        // Since `Bytes` itself is reference-counted, does
+        // a simple `clone()` satisfy the requirements here of an aliasing copy?
+        self.clone()
+        // Alternatives:
+        // bytes::Bytes::clone(self)
+        // Bytes::from(self.as_ref())
+    }
+}
+
+// This conflicts with the impl below for &'a T
+// impl<'a, T> ShallowCopy for &'a [T] {
+//     unsafe fn shallow_copy(&mut self) -> Self {
+//         std::slice::from_raw_parts(self.as_ptr(), self.len())
+//     }
+// }
 
 impl<'a, T> ShallowCopy for &'a T
 where
@@ -157,101 +179,101 @@ tuple_impls! {
     }
     Tuple2 {
         (0) -> A
-        (1) -> B
+            (1) -> B
     }
     Tuple3 {
         (0) -> A
-        (1) -> B
-        (2) -> C
+            (1) -> B
+            (2) -> C
     }
     Tuple4 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
+            (1) -> B
+            (2) -> C
+            (3) -> D
     }
     Tuple5 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
     }
     Tuple6 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
-        (5) -> F
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
+            (5) -> F
     }
     Tuple7 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
-        (5) -> F
-        (6) -> G
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
+            (5) -> F
+            (6) -> G
     }
     Tuple8 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
-        (5) -> F
-        (6) -> G
-        (7) -> H
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
+            (5) -> F
+            (6) -> G
+            (7) -> H
     }
     Tuple9 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
-        (5) -> F
-        (6) -> G
-        (7) -> H
-        (8) -> I
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
+            (5) -> F
+            (6) -> G
+            (7) -> H
+            (8) -> I
     }
     Tuple10 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
-        (5) -> F
-        (6) -> G
-        (7) -> H
-        (8) -> I
-        (9) -> J
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
+            (5) -> F
+            (6) -> G
+            (7) -> H
+            (8) -> I
+            (9) -> J
     }
     Tuple11 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
-        (5) -> F
-        (6) -> G
-        (7) -> H
-        (8) -> I
-        (9) -> J
-        (10) -> K
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
+            (5) -> F
+            (6) -> G
+            (7) -> H
+            (8) -> I
+            (9) -> J
+            (10) -> K
     }
     Tuple12 {
         (0) -> A
-        (1) -> B
-        (2) -> C
-        (3) -> D
-        (4) -> E
-        (5) -> F
-        (6) -> G
-        (7) -> H
-        (8) -> I
-        (9) -> J
-        (10) -> K
-        (11) -> L
+            (1) -> B
+            (2) -> C
+            (3) -> D
+            (4) -> E
+            (5) -> F
+            (6) -> G
+            (7) -> H
+            (8) -> I
+            (9) -> J
+            (10) -> K
+            (11) -> L
     }
 }
