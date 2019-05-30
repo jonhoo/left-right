@@ -1,8 +1,5 @@
 //! Types that can be cheaply aliased.
 
-#[cfg(feature = "bytes")]
-extern crate bytes;
-
 use std::ops::{Deref, DerefMut};
 
 /// Types that implement this trait can be cheaply copied by (potentially) aliasing the data they
@@ -84,16 +81,11 @@ impl<T> ShallowCopy for Vec<T> {
 #[cfg(feature = "bytes")]
 impl ShallowCopy for bytes::Bytes {
     unsafe fn shallow_copy(&mut self) -> Self {
-        self.clone()
+        let len = self.len();
+        let buf: &'static [u8] = std::slice::from_raw_parts(self.as_ref().as_ptr(), len);
+        bytes::Bytes::from_static(buf)
     }
 }
-
-// This conflicts with the impl below for &'a T
-// impl<'a, T> ShallowCopy for &'a [T] {
-//     unsafe fn shallow_copy(&mut self) -> Self {
-//         std::slice::from_raw_parts(self.as_ptr(), self.len())
-//     }
-// }
 
 impl<'a, T> ShallowCopy for &'a T
 where
