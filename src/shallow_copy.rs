@@ -82,7 +82,7 @@ impl<T> ShallowCopy for Vec<T> {
 impl ShallowCopy for bytes::Bytes {
     unsafe fn shallow_copy(&mut self) -> Self {
         let len = self.len();
-        let buf: &'static [u8] = std::slice::from_raw_parts(self.as_ref().as_ptr(), len);
+        let buf: &'static [u8] = std::slice::from_raw_parts(self.as_ptr(), len);
         bytes::Bytes::from_static(buf)
     }
 }
