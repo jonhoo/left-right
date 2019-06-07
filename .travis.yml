@@ -25,6 +25,9 @@ jobs:
     - rust: stable
       os: windows
     - rust: stable
+      script: cargo t --no-default-features
+      name: "w/o features"
+    - rust: stable
       script: cargo t --features bytes
       name: "w/bytes"
     - stage: lint # we lint on beta to future-proof
