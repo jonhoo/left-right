@@ -53,6 +53,7 @@ jobs:
         - rustup component add clippy-preview
         - touch ./src/lib.rs && cargo clippy -- -D warnings
     - os: linux
+      name: "tarpaulin"
       stage: coverage
       sudo: required
       dist: trusty
