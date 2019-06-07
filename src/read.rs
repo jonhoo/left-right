@@ -1,4 +1,4 @@
-use inner::{Inner, Values};
+use crate::inner::{Inner, Values};
 
 use std::borrow::Borrow;
 use std::cell;

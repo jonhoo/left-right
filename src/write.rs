@@ -1,6 +1,6 @@
 use super::{Operation, Predicate, ShallowCopy};
-use inner::{Inner, Values};
-use read::ReadHandle;
+use crate::inner::{Inner, Values};
+use crate::read::ReadHandle;
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};

@@ -207,12 +207,6 @@
 //!
 #![deny(missing_docs)]
 
-#[cfg(feature = "hashbrown")]
-extern crate hashbrown;
-
-#[cfg(feature = "smallvec")]
-extern crate smallvec;
-
 /// Re-export default FxHash hash builder from `hashbrown`
 #[cfg(feature = "hashbrown")]
 pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
@@ -223,7 +217,7 @@ use std::hash::{BuildHasher, Hash};
 use std::sync::{atomic, Arc, Mutex};
 
 mod inner;
-use inner::Inner;
+use crate::inner::Inner;
 
 pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 
@@ -294,13 +288,13 @@ pub enum Operation<K, V> {
 }
 
 mod write;
-pub use write::WriteHandle;
+pub use crate::write::WriteHandle;
 
 mod read;
-pub use read::{ReadHandle, ReadHandleFactory};
+pub use crate::read::{ReadHandle, ReadHandleFactory};
 
 pub mod shallow_copy;
-pub use shallow_copy::ShallowCopy;
+pub use crate::shallow_copy::ShallowCopy;
 
 /// Options for how to initialize the map.
 ///
