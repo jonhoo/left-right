@@ -1,6 +1,6 @@
 [package]
 name = "evmap"
-version = "5.1.0"
+version = "5.1.1"
 edition = "2018"
 
 description = "A lock-free, eventually consistent, concurrent multi-value map."
@@ -22,7 +22,7 @@ travis-ci = { repository = "jonhoo/rust-evmap" }
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-hashbrown = { version = "0.3", optional = true }
+hashbrown = { version = "0.4", optional = true }
 smallvec = { version = "0.6.7", optional = true }
 bytes = { version = "0.4.12", optional = true }
 
