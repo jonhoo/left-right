@@ -78,6 +78,15 @@ impl<T> ShallowCopy for Vec<T> {
     }
 }
 
+#[cfg(feature = "bytes")]
+impl ShallowCopy for bytes::Bytes {
+    unsafe fn shallow_copy(&mut self) -> Self {
+        let len = self.len();
+        let buf: &'static [u8] = std::slice::from_raw_parts(self.as_ptr(), len);
+        bytes::Bytes::from_static(buf)
+    }
+}
+
 impl<'a, T> ShallowCopy for &'a T
 where
     T: ?Sized,
