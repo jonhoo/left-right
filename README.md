@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/evmap.svg)](https://crates.io/crates/evmap)
 [![Documentation](https://docs.rs/evmap/badge.svg)](https://docs.rs/evmap/)
-[![Build Status](https://travis-ci.org/jonhoo/rust-evmap.svg?branch=master)](https://travis-ci.org/jonhoo/rust-evmap)
+[![Build Status](https://travis-ci.com/jonhoo/rust-evmap.svg?branch=master)](https://travis-ci.com/jonhoo/rust-evmap)
 [![Codecov](https://codecov.io/github/jonhoo/rust-evmap/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/rust-evmap)
 
 A lock-free, eventually consistent, concurrent multi-value map.
