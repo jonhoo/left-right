@@ -223,7 +223,7 @@ pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 
 /// Unary predicate used to retain elements
 #[derive(Clone)]
-pub struct Predicate<V>(pub(crate) Arc<Fn(&V) -> bool + Send + Sync>);
+pub struct Predicate<V>(pub(crate) Arc<dyn Fn(&V) -> bool + Send + Sync>);
 
 impl<V> Predicate<V> {
     /// Evaluate the predicate for the given element
