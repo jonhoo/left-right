@@ -82,7 +82,7 @@ where
         w_handle: Some(Box::new(w_handle)),
         oplog: Vec::new(),
         swap_index: 0,
-        r_handle: r_handle,
+        r_handle,
         last_epochs: Vec::new(),
         meta: m,
         first: true,

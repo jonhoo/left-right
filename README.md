@@ -130,6 +130,9 @@ book_reviews_w.insert("The Adventures of Sherlock Holmes", "Eye lyked it alot.")
 // expose the writes
 book_reviews_w.refresh();
 
+// you can read through the write handle
+assert_eq!(book_reviews_w.len(), 4);
+
 // the original read handle still works too
 assert_eq!(book_reviews_r.len(), 4);
 
@@ -208,6 +211,7 @@ so add that back with:
 ```toml
 features = ["hashbrown"]
 ```
+
 
 ## Performance
 

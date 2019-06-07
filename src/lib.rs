@@ -326,7 +326,7 @@ where
     /// Set the initial meta value for the map.
     pub fn with_meta<M2>(self, meta: M2) -> Options<M2, S> {
         Options {
-            meta: meta,
+            meta,
             hasher: self.hasher,
             capacity: self.capacity,
         }
