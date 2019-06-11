@@ -221,14 +221,17 @@ use crate::inner::Inner;
 
 pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 
-/// Unary predicate used to retain elements
-pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V) -> bool + Send + Sync>);
+/// Unary predicate used to retain elements.
+///
+/// The arguments to the predicate function are the current value in the value-set, and `true` if
+/// this is the first value in the value-set on the second map, or `false` otherwise.
+pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send + Sync>);
 
 impl<V> Predicate<V> {
     /// Evaluate the predicate for the given element
     #[inline]
-    pub fn eval(&mut self, value: &V) -> bool {
-        (*self.0)(value)
+    pub fn eval(&mut self, value: &V, reset: bool) -> bool {
+        (*self.0)(value, reset)
     }
 }
 
