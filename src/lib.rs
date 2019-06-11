@@ -222,13 +222,12 @@ use crate::inner::Inner;
 pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 
 /// Unary predicate used to retain elements
-#[derive(Clone)]
-pub struct Predicate<V>(pub(crate) Arc<dyn Fn(&V) -> bool + Send + Sync>);
+pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V) -> bool + Send + Sync>);
 
 impl<V> Predicate<V> {
     /// Evaluate the predicate for the given element
     #[inline]
-    pub fn eval(&self, value: &V) -> bool {
+    pub fn eval(&mut self, value: &V) -> bool {
         (*self.0)(value)
     }
 }
@@ -236,7 +235,7 @@ impl<V> Predicate<V> {
 impl<V> PartialEq for Predicate<V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        &*self.0 as *const _ == &*other.0 as *const _
     }
 }
 
@@ -254,7 +253,7 @@ impl<V> fmt::Debug for Predicate<V> {
 ///
 /// Note that this enum should be considered
 /// [non-exhaustive](https://github.com/rust-lang/rust/issues/44109).
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 // TODO: #[non_exhaustive]
 // https://github.com/rust-lang/rust/issues/44109
 pub enum Operation<K, V> {

@@ -430,9 +430,9 @@ where
     /// The remaining value-set will only be visible to readers after the next call to `refresh()`
     pub fn retain<F>(&mut self, k: K, f: F) -> &mut Self
     where
-        F: Fn(&V) -> bool + 'static + Send + Sync,
+        F: FnMut(&V) -> bool + 'static + Send + Sync,
     {
-        self.add_op(Operation::Retain(k, Predicate(Arc::new(f))))
+        self.add_op(Operation::Retain(k, Predicate(Box::new(f))))
     }
 
     /// Shrinks a value-set to it's minimum necessary size, freeing memory
@@ -523,7 +523,7 @@ where
                     }
                 }
             }
-            Operation::Retain(ref key, ref predicate) => {
+            Operation::Retain(ref key, ref mut predicate) => {
                 if let Some(e) = inner.data.get_mut(key) {
                     let mut del = 0;
                     let len = e.len();
@@ -607,7 +607,7 @@ where
                     }
                 }
             }
-            Operation::Retain(key, predicate) => {
+            Operation::Retain(key, mut predicate) => {
                 if let Some(e) = inner.data.get_mut(&key) {
                     e.retain(|v| predicate.eval(v));
                 }
