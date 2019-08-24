@@ -1,7 +1,7 @@
 stages:
  - template: azure/stages.yml@templates
-   #   parameters:
-   #     codecov_token: $(CODECOV_TOKEN_SECRET)
+   parameters:
+     codecov_token: $(CODECOV_TOKEN_SECRET)
 
 resources:
   repositories:
