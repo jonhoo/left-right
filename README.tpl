@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/evmap.svg)](https://crates.io/crates/evmap)
 [![Documentation](https://docs.rs/evmap/badge.svg)](https://docs.rs/evmap/)
-[![Build Status](https://travis-ci.com/jonhoo/rust-evmap.svg?branch=master)](https://travis-ci.com/jonhoo/rust-evmap)
+[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/evmap?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=8&branchName=master)
 [![Codecov](https://codecov.io/github/jonhoo/rust-evmap/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/rust-evmap)
 
 {{readme}}

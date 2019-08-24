@@ -18,7 +18,8 @@ categories = ["concurrency", "data-structures"]
 license = "MIT/Apache-2.0"
 
 [badges]
-travis-ci = { repository = "jonhoo/rust-evmap" }
+azure-devops = { project = "jonhoo/jonhoo", pipeline = "evmap", build = "8" }
+codecov = { repository = "jonhoo/rust-evmap", branch = "master", service = "github" }
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
