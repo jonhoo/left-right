@@ -1,0 +1,13 @@
+stages:
+ - template: azure/stages.yml@templates
+   parameters:
+     codecov_token: $(CODECOV_TOKEN_SECRET)
+     check_all_features: false
+     nightly_feature: 'nightly_smallvec'
+
+resources:
+  repositories:
+    - repository: templates
+      type: github
+      name: crate-ci/azure-pipelines
+      endpoint: jonhoo

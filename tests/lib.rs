@@ -457,12 +457,12 @@ fn retain() {
         v.push(i);
     }
 
-    fn is_even(num: &i32) -> bool {
+    fn is_even(num: &i32, _: bool) -> bool {
         num % 2 == 0
     }
 
-    w.retain(0, is_even).refresh();
-    v.retain(is_even);
+    unsafe { w.retain(0, is_even) }.refresh();
+    v.retain(|i| is_even(i, false));
 
     r.get_and(&0, |nums| assert_eq!(v, nums)).unwrap();
 }

@@ -1,6 +1,7 @@
 [package]
 name = "evmap"
-version = "5.0.0"
+version = "6.0.1"
+edition = "2018"
 
 description = "A lock-free, eventually consistent, concurrent multi-value map."
 readme = "README.md"
@@ -17,12 +18,14 @@ categories = ["concurrency", "data-structures"]
 license = "MIT/Apache-2.0"
 
 [badges]
-travis-ci = { repository = "jonhoo/rust-evmap" }
+azure-devops = { project = "jonhoo/jonhoo", pipeline = "evmap", build = "8" }
+codecov = { repository = "jonhoo/rust-evmap", branch = "master", service = "github" }
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-rahashmap = "0.2"
+rahashmap = { git = "https://github.com/jonhoo/rahashmap", branch = "fix-for-61780" }
 smallvec = { version = "0.6.7", optional = true }
+bytes = { version = "0.4.12", optional = true }
 
 [features]
 default = ["smallvec"]

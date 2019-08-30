@@ -5,6 +5,24 @@ use std::ops::{Deref, DerefMut};
 /// Types that implement this trait can be cheaply copied by (potentially) aliasing the data they
 /// contain. Only the _last_ shallow copy will be dropped -- all others will be silently leaked
 /// (with `mem::forget`).
+///
+/// To implement this trait for your own `Copy` type, write:
+///
+/// ```rust
+/// # use evmap::ShallowCopy;
+/// #[derive(Copy, Clone)]
+/// struct T;
+///
+/// impl ShallowCopy for T {
+///     unsafe fn shallow_copy(&mut self) -> Self {
+///         *self
+///     }
+/// }
+/// ```
+///
+/// If you have a non-`Copy` type, the value returned by `shallow_copy` should point to the same
+/// data as the `&mut self`, and it should be safe to `mem::forget` either of the copies as long as
+/// the other is dropped normally afterwards.
 pub trait ShallowCopy {
     /// Perform an aliasing copy of this value.
     ///
@@ -57,6 +75,15 @@ impl<T> ShallowCopy for Vec<T> {
         let len = self.len();
         let cap = self.capacity();
         Vec::from_raw_parts(ptr, len, cap)
+    }
+}
+
+#[cfg(feature = "bytes")]
+impl ShallowCopy for bytes::Bytes {
+    unsafe fn shallow_copy(&mut self) -> Self {
+        let len = self.len();
+        let buf: &'static [u8] = std::slice::from_raw_parts(self.as_ptr(), len);
+        bytes::Bytes::from_static(buf)
     }
 }
 
@@ -115,7 +142,7 @@ macro_rules! impl_shallow_copy_for_copy_primitives {
     )*)
 }
 
-impl_shallow_copy_for_copy_primitives!(() bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64);
+impl_shallow_copy_for_copy_primitives!(() bool char usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 f32 f64);
 
 macro_rules! tuple_impls {
     ($(

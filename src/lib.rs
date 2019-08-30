@@ -197,20 +197,9 @@
 //! ```
 //!
 //! in the `evmap` dependency entry, and `Vec` will always be used internally.
-//!
-//! Note that this will also opt out of the `hashbrown` dependency, which is usually preferred,
-//! so add that back with:
-//!
-//! ```toml
-//! features = ["hashbrown"]
-//! ```
-//!
 #![deny(missing_docs)]
 
 extern crate rahashmap;
-
-#[cfg(feature = "smallvec")]
-extern crate smallvec;
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -218,26 +207,28 @@ use std::hash::{BuildHasher, Hash};
 use std::sync::{atomic, Arc, Mutex};
 
 mod inner;
-use inner::Inner;
+use crate::inner::Inner;
 
 pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 
-/// Unary predicate used to retain elements
-#[derive(Clone)]
-pub struct Predicate<V>(pub(crate) Arc<Fn(&V) -> bool + Send + Sync>);
+/// Unary predicate used to retain elements.
+///
+/// The arguments to the predicate function are the current value in the value-set, and `true` if
+/// this is the first value in the value-set on the second map, or `false` otherwise.
+pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send + Sync>);
 
 impl<V> Predicate<V> {
     /// Evaluate the predicate for the given element
     #[inline]
-    pub fn eval(&self, value: &V) -> bool {
-        (*self.0)(value)
+    pub fn eval(&mut self, value: &V, reset: bool) -> bool {
+        (*self.0)(value, reset)
     }
 }
 
 impl<V> PartialEq for Predicate<V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        &*self.0 as *const _ == &*other.0 as *const _
     }
 }
 
@@ -255,7 +246,7 @@ impl<V> fmt::Debug for Predicate<V> {
 ///
 /// Note that this enum should be considered
 /// [non-exhaustive](https://github.com/rust-lang/rust/issues/44109).
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 // TODO: #[non_exhaustive]
 // https://github.com/rust-lang/rust/issues/44109
 pub enum Operation<K, V> {
@@ -291,13 +282,13 @@ pub enum Operation<K, V> {
 }
 
 mod write;
-pub use write::WriteHandle;
+pub use crate::write::WriteHandle;
 
 mod read;
-pub use read::{ReadHandle, ReadHandleFactory};
+pub use crate::read::{ReadHandle, ReadHandleFactory};
 
 pub mod shallow_copy;
-pub use shallow_copy::ShallowCopy;
+pub use crate::shallow_copy::ShallowCopy;
 
 /// Options for how to initialize the map.
 ///
@@ -329,7 +320,7 @@ where
     /// Set the initial meta value for the map.
     pub fn with_meta<M2>(self, meta: M2) -> Options<M2, S> {
         Options {
-            meta: meta,
+            meta,
             hasher: self.hasher,
             capacity: self.capacity,
         }

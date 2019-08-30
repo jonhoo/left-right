@@ -2,7 +2,8 @@
 
 [![Crates.io](https://img.shields.io/crates/v/evmap.svg)](https://crates.io/crates/evmap)
 [![Documentation](https://docs.rs/evmap/badge.svg)](https://docs.rs/evmap/)
-[![Build Status](https://travis-ci.org/jonhoo/rust-evmap.svg?branch=master)](https://travis-ci.org/jonhoo/rust-evmap)
+[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/evmap?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=8&branchName=master)
+[![Codecov](https://codecov.io/github/jonhoo/rust-evmap/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/rust-evmap)
 
 A lock-free, eventually consistent, concurrent multi-value map.
 
@@ -129,6 +130,9 @@ book_reviews_w.insert("The Adventures of Sherlock Holmes", "Eye lyked it alot.")
 // expose the writes
 book_reviews_w.refresh();
 
+// you can read through the write handle
+assert_eq!(book_reviews_w.len(), 4);
+
 // the original read handle still works too
 assert_eq!(book_reviews_r.len(), 4);
 
@@ -200,13 +204,6 @@ default-features = false
 ```
 
 in the `evmap` dependency entry, and `Vec` will always be used internally.
-
-Note that this will also opt out of the `hashbrown` dependency, which is usually preferred,
-so add that back with:
-
-```toml
-features = ["hashbrown"]
-```
 
 ## Performance
 

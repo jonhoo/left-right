@@ -1,6 +1,6 @@
 use super::{Operation, Predicate, ShallowCopy};
-use inner::{Inner, Values};
-use read::ReadHandle;
+use crate::inner::{Inner, Values};
+use crate::read::ReadHandle;
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
@@ -78,7 +78,7 @@ where
         w_handle: Some(Box::new(w_handle)),
         oplog: Vec::new(),
         swap_index: 0,
-        r_handle: r_handle,
+        r_handle,
         last_epochs: Vec::new(),
         meta: m,
         first: true,
@@ -424,11 +424,29 @@ where
     /// Retain elements for the given key using the provided predicate function.
     ///
     /// The remaining value-set will only be visible to readers after the next call to `refresh()`
-    pub fn retain<F>(&mut self, k: K, f: F) -> &mut Self
+    ///
+    /// Note that the given closure is called _twice_ for each element, once when called, and once
+    /// on swap. It _must_ retain the same elements each time, otherwise a value may exist in one
+    /// map, but not the other, leaving the two maps permanently out-of-sync. This is _really_ bad,
+    /// as values are aliased between the maps, and are assumed safe to free when they leave the
+    /// map during a `refresh`. Returning `true` when `retain` is first called for a value, and
+    /// `false` the second time would free the value, but leave an aliased pointer to it in the
+    /// other side of the map.
+    ///
+    /// The arguments to the predicate function are the current value in the value-set, and `true`
+    /// if this is the first value in the value-set on the second map, or `false` otherwise. Use
+    /// the second argument to know when to reset any closure-local state to ensure deterministic
+    /// operation.
+    ///
+    /// So, stated plainly, the given closure _must_ return the same order of true/false for each
+    /// of the two iterations over the value-set. That is, the sequence of returned booleans before
+    /// the second argument is true must be exactly equal to the sequence of returned booleans
+    /// at and beyond when the second argument is true.
+    pub unsafe fn retain<F>(&mut self, k: K, f: F) -> &mut Self
     where
-        F: Fn(&V) -> bool + 'static + Send + Sync,
+        F: FnMut(&V, bool) -> bool + 'static + Send + Sync,
     {
-        self.add_op(Operation::Retain(k, Predicate(Arc::new(f))))
+        self.add_op(Operation::Retain(k, Predicate(Box::new(f))))
     }
 
     /// Shrinks a value-set to it's minimum necessary size, freeing memory
@@ -545,7 +563,7 @@ where
                     }
                 }
             }
-            Operation::Retain(ref key, ref predicate) => {
+            Operation::Retain(ref key, ref mut predicate) => {
                 if let Some(e) = inner.data.get_mut(key) {
                     let mut del = 0;
                     let len = e.len();
@@ -556,7 +574,7 @@ where
                     // for SmallVec's implementation of `retain`, the only difference being that we
                     // cannot drop values here, so they are truncated with `set_len`
                     for i in 0..len {
-                        if !predicate.eval(unsafe { e.get_unchecked(i) }) {
+                        if !predicate.eval(unsafe { e.get_unchecked(i) }, false) {
                             del += 1;
                         } else {
                             e.swap(i - del, i);
@@ -632,9 +650,14 @@ where
                     }
                 }
             }
-            Operation::Retain(key, predicate) => {
+            Operation::Retain(key, mut predicate) => {
                 if let Some(e) = inner.data.get_mut(&key) {
-                    e.retain(|v| predicate.eval(v));
+                    let mut first = true;
+                    e.retain(move |v| {
+                        let retain = predicate.eval(v, first);
+                        first = false;
+                        retain
+                    });
                 }
             }
             Operation::Fit(key) => match key {
