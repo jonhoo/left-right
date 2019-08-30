@@ -23,7 +23,7 @@ codecov = { repository = "jonhoo/rust-evmap", branch = "master", service = "gith
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-rahashmap = { git = "https://github.com/jonhoo/rahashmap", branch = "fix-for-61780" }
+indexmap = "1.1.0"
 smallvec = { version = "0.6.7", optional = true }
 bytes = { version = "0.4.12", optional = true }
 

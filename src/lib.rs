@@ -199,8 +199,6 @@
 //! in the `evmap` dependency entry, and `Vec` will always be used internally.
 #![deny(missing_docs)]
 
-extern crate rahashmap;
-
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};

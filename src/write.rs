@@ -8,7 +8,7 @@ use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{mem, thread};
 
-use rahashmap::Entry;
+use indexmap::map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
@@ -125,7 +125,7 @@ where
         // since the two maps are exactly equal, we need to make sure that we *don't* call the
         // destructors of any of the values that are in our map, as they'll all be called when the
         // last read handle goes out of scope.
-        for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain() {
+        for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain(..) {
             #[cfg(not(feature = "smallvec"))]
             let drain = vs.drain(..);
 
@@ -479,6 +479,8 @@ where
     ///
     /// This is effectively random removal.
     /// The value-set will only disappear from readers after the next call to `refresh()`.
+    ///
+    /// Note that this does a _swap-remove_, so use it carefully.
     pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &[V])> {
         self.add_op(Operation::EmptyRandom(index));
         // the actual emptying won't happen until refresh(), which needs &mut self
@@ -490,7 +492,7 @@ where
         // r_handle side, but not to the w_handle (will be applied on the next swap). We must make
         // sure that we read the most up to date map here.
         let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
-        unsafe { (*inner).data.at_index(index) }.map(|(k, vs)| (k, &vs[..]))
+        unsafe { (*inner).data.get_index(index) }.map(|(k, vs)| (k, &vs[..]))
     }
 
     /// Apply ops in such a way that no values are dropped, only forgotten
@@ -546,7 +548,7 @@ where
                 inner.data.clear();
             }
             Operation::EmptyRandom(index) => {
-                if let Some((_k, mut vs)) = inner.data.remove_at_index(index) {
+                if let Some((_k, mut vs)) = inner.data.swap_remove_index(index) {
                     // don't run destructors yet -- still in use by other map
                     unsafe {
                         vs.set_len(0);
@@ -640,7 +642,7 @@ where
                 inner.data.clear();
             }
             Operation::EmptyRandom(index) => {
-                inner.data.remove_at_index(index);
+                inner.data.swap_remove_index(index);
             }
             Operation::Remove(key, value) => {
                 if let Some(e) = inner.data.get_mut(&key) {
@@ -662,7 +664,7 @@ where
             }
             Operation::Fit(key) => match key {
                 Some(ref key) => {
-                    if let Some(e) = inner.data.get_mut(&key) {
+                    if let Some(e) = inner.data.get_mut(key) {
                         e.shrink_to_fit();
                     }
                 }
