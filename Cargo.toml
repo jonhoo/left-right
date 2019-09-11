@@ -1,6 +1,6 @@
 [package]
 name = "evmap"
-version = "6.0.1"
+version = "7.0.0"
 edition = "2018"
 
 description = "A lock-free, eventually consistent, concurrent multi-value map."
@@ -23,11 +23,8 @@ codecov = { repository = "jonhoo/rust-evmap", branch = "master", service = "gith
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-hashbrown = { version = "0.5", optional = true }
 smallvec = { version = "0.6.7", optional = true }
 bytes = { version = "0.4.12", optional = true }
 
 [features]
-default = ["hashbrown", "smallvec"]
-nightly_hashbrown = ["hashbrown/nightly"]
-nightly_smallvec = ["smallvec/union", "smallvec/may_dangle", "smallvec/specialization"]
+default = ["smallvec"]

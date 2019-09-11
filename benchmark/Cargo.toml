@@ -16,6 +16,3 @@ lto = true
 opt-level = 3
 codegen-units = 1
 debug = false
-
-[features]
-nightly = ["evmap/nightly_hashbrown", "evmap/nightly_smallvec"]

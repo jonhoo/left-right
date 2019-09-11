@@ -197,19 +197,7 @@
 //! ```
 //!
 //! in the `evmap` dependency entry, and `Vec` will always be used internally.
-//!
-//! Note that this will also opt out of the `hashbrown` dependency, which is usually preferred,
-//! so add that back with:
-//!
-//! ```toml
-//! features = ["hashbrown"]
-//! ```
-//!
 #![deny(missing_docs)]
-
-/// Re-export default FxHash hash builder from `hashbrown`
-#[cfg(feature = "hashbrown")]
-pub type FxHashBuilder = hashbrown::hash_map::DefaultHashBuilder;
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
