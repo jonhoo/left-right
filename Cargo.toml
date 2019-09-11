@@ -28,4 +28,3 @@ bytes = { version = "0.4.12", optional = true }
 
 [features]
 default = ["smallvec"]
-nightly_smallvec = ["smallvec/union", "smallvec/may_dangle", "smallvec/specialization"]
