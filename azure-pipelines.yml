@@ -3,7 +3,7 @@ stages:
    parameters:
      codecov_token: $(CODECOV_TOKEN_SECRET)
      check_all_features: false
-     nightly_feature: 'nightly_hashbrown,nightly_smallvec'
+     nightly_feature: 'nightly_smallvec'
 
 resources:
   repositories:

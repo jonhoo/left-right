@@ -205,14 +205,6 @@ default-features = false
 
 in the `evmap` dependency entry, and `Vec` will always be used internally.
 
-Note that this will also opt out of the `hashbrown` dependency, which is usually preferred,
-so add that back with:
-
-```toml
-features = ["hashbrown"]
-```
-
-
 ## Performance
 
 I've run some benchmarks of evmap against a standard Rust `HashMap` protected

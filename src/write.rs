@@ -8,10 +8,6 @@ use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{mem, thread};
 
-#[cfg(feature = "hashbrown")]
-use hashbrown::hash_map::Entry;
-
-#[cfg(not(feature = "hashbrown"))]
 use std::collections::hash_map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.

@@ -23,11 +23,9 @@ codecov = { repository = "jonhoo/rust-evmap", branch = "master", service = "gith
 maintenance = { status = "passively-maintained" }
 
 [dependencies]
-hashbrown = { version = "0.5", optional = true }
 smallvec = { version = "0.6.7", optional = true }
 bytes = { version = "0.4.12", optional = true }
 
 [features]
-default = ["hashbrown", "smallvec"]
-nightly_hashbrown = ["hashbrown/nightly"]
+default = ["smallvec"]
 nightly_smallvec = ["smallvec/union", "smallvec/may_dangle", "smallvec/specialization"]
