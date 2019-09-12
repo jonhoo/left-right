@@ -8,7 +8,10 @@ use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{mem, thread};
 
+#[cfg(feature = "eviction")]
 use indexmap::map::Entry;
+#[cfg(not(feature = "eviction"))]
+use std::collections::hash_map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
@@ -120,12 +123,19 @@ where
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         atomic::fence(atomic::Ordering::SeqCst);
 
+        let w_handle = &mut self.w_handle.as_mut().unwrap().data;
+
+        #[cfg(not(feature = "eviction"))]
+        let drain = w_handle.drain();
+        #[cfg(feature = "eviction")]
+        let drain = w_handle.drain(..);
+
         // all readers have now observed the NULL, so we own both handles.
         // all records are duplicated between w_handle and r_handle.
         // since the two maps are exactly equal, we need to make sure that we *don't* call the
         // destructors of any of the values that are in our map, as they'll all be called when the
         // last read handle goes out of scope.
-        for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain(..) {
+        for (_, mut vs) in drain {
             #[cfg(not(feature = "smallvec"))]
             let drain = vs.drain(..);
 
@@ -475,6 +485,7 @@ where
         self.add_op(Operation::Reserve(k, additional))
     }
 
+    #[cfg(feature = "eviction")]
     /// Remove the value-set for a key at a specified index.
     ///
     /// This is effectively random removal.
@@ -530,7 +541,11 @@ where
                     .push(unsafe { value.shallow_copy() });
             }
             Operation::Empty(ref key) => {
-                if let Some(mut vs) = inner.data.remove(key) {
+                #[cfg(not(feature = "eviction"))]
+                let rm = inner.data.remove(key);
+                #[cfg(feature = "eviction")]
+                let rm = inner.data.swap_remove(key);
+                if let Some(mut vs) = rm {
                     unsafe {
                         // truncate vector without dropping values
                         vs.set_len(0);
@@ -547,6 +562,7 @@ where
                 // then, empty the map
                 inner.data.clear();
             }
+            #[cfg(feature = "eviction")]
             Operation::EmptyRandom(index) => {
                 if let Some((_k, mut vs)) = inner.data.swap_remove_index(index) {
                     // don't run destructors yet -- still in use by other map
@@ -609,6 +625,7 @@ where
                     entry.insert(Values::with_capacity(additional));
                 }
             },
+            Operation::__Nonexhaustive => unreachable!(),
         }
     }
 
@@ -636,11 +653,15 @@ where
                     .push(value);
             }
             Operation::Empty(key) => {
+                #[cfg(not(feature = "eviction"))]
                 inner.data.remove(&key);
+                #[cfg(feature = "eviction")]
+                inner.data.swap_remove(&key);
             }
             Operation::Purge => {
                 inner.data.clear();
             }
+            #[cfg(feature = "eviction")]
             Operation::EmptyRandom(index) => {
                 inner.data.swap_remove_index(index);
             }
@@ -682,6 +703,7 @@ where
                     entry.insert(Values::with_capacity(additional));
                 }
             },
+            Operation::__Nonexhaustive => unreachable!(),
         }
     }
 }

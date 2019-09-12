@@ -256,6 +256,7 @@ pub enum Operation<K, V> {
     Remove(K, V),
     /// Remove the value set for this key.
     Empty(K),
+    #[cfg(feature = "eviction")]
     /// Drop a key at a random index
     EmptyRandom(usize),
     /// Remove all values in the value set for this key.
@@ -277,6 +278,11 @@ pub enum Operation<K, V> {
     ///
     /// This can improve performance by pre-allocating space for large value-sets.
     Reserve(K, usize),
+    // Since we have a feature that adds an enum variant, features are only additive (as they need
+    // to be) if users never try to exhaustively match on this enum. Once rust-lang/rust#44109
+    // lands, we'll have a more standard way to do this, but for now we rely on this trick:
+    #[doc(hidden)]
+    __Nonexhaustive,
 }
 
 mod write;
