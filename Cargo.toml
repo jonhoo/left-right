@@ -29,4 +29,4 @@ bytes = { version = "0.4.12", optional = true }
 
 [features]
 default = ["smallvec"]
-eviction = ["indexmap"]
+indexed = ["indexmap"]

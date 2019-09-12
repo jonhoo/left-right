@@ -291,7 +291,7 @@ fn empty() {
 }
 
 #[test]
-#[cfg(feature = "eviction")]
+#[cfg(feature = "indexed")]
 fn empty_random() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a");

@@ -1,8 +1,8 @@
 use std::hash::{BuildHasher, Hash};
 
-#[cfg(feature = "eviction")]
+#[cfg(feature = "indexed")]
 use indexmap::IndexMap as MapImpl;
-#[cfg(not(feature = "eviction"))]
+#[cfg(not(feature = "indexed"))]
 use std::collections::HashMap as MapImpl;
 
 #[cfg(not(feature = "smallvec"))]

@@ -8,9 +8,9 @@ use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{mem, thread};
 
-#[cfg(feature = "eviction")]
+#[cfg(feature = "indexed")]
 use indexmap::map::Entry;
-#[cfg(not(feature = "eviction"))]
+#[cfg(not(feature = "indexed"))]
 use std::collections::hash_map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.
@@ -125,9 +125,9 @@ where
 
         let w_handle = &mut self.w_handle.as_mut().unwrap().data;
 
-        #[cfg(not(feature = "eviction"))]
+        #[cfg(not(feature = "indexed"))]
         let drain = w_handle.drain();
-        #[cfg(feature = "eviction")]
+        #[cfg(feature = "indexed")]
         let drain = w_handle.drain(..);
 
         // all readers have now observed the NULL, so we own both handles.
@@ -485,7 +485,7 @@ where
         self.add_op(Operation::Reserve(k, additional))
     }
 
-    #[cfg(feature = "eviction")]
+    #[cfg(feature = "indexed")]
     /// Remove the value-set for a key at a specified index.
     ///
     /// This is effectively random removal.
@@ -541,9 +541,9 @@ where
                     .push(unsafe { value.shallow_copy() });
             }
             Operation::Empty(ref key) => {
-                #[cfg(not(feature = "eviction"))]
+                #[cfg(not(feature = "indexed"))]
                 let rm = inner.data.remove(key);
-                #[cfg(feature = "eviction")]
+                #[cfg(feature = "indexed")]
                 let rm = inner.data.swap_remove(key);
                 if let Some(mut vs) = rm {
                     unsafe {
@@ -562,7 +562,7 @@ where
                 // then, empty the map
                 inner.data.clear();
             }
-            #[cfg(feature = "eviction")]
+            #[cfg(feature = "indexed")]
             Operation::EmptyRandom(index) => {
                 if let Some((_k, mut vs)) = inner.data.swap_remove_index(index) {
                     // don't run destructors yet -- still in use by other map
@@ -653,15 +653,15 @@ where
                     .push(value);
             }
             Operation::Empty(key) => {
-                #[cfg(not(feature = "eviction"))]
+                #[cfg(not(feature = "indexed"))]
                 inner.data.remove(&key);
-                #[cfg(feature = "eviction")]
+                #[cfg(feature = "indexed")]
                 inner.data.swap_remove(&key);
             }
             Operation::Purge => {
                 inner.data.clear();
             }
-            #[cfg(feature = "eviction")]
+            #[cfg(feature = "indexed")]
             Operation::EmptyRandom(index) => {
                 inner.data.swap_remove_index(index);
             }
