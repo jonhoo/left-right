@@ -8,6 +8,9 @@ use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{mem, thread};
 
+#[cfg(feature = "indexed")]
+use indexmap::map::Entry;
+#[cfg(not(feature = "indexed"))]
 use std::collections::hash_map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.
@@ -120,12 +123,19 @@ where
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         atomic::fence(atomic::Ordering::SeqCst);
 
+        let w_handle = &mut self.w_handle.as_mut().unwrap().data;
+
+        #[cfg(not(feature = "indexed"))]
+        let drain = w_handle.drain();
+        #[cfg(feature = "indexed")]
+        let drain = w_handle.drain(..);
+
         // all readers have now observed the NULL, so we own both handles.
         // all records are duplicated between w_handle and r_handle.
         // since the two maps are exactly equal, we need to make sure that we *don't* call the
         // destructors of any of the values that are in our map, as they'll all be called when the
         // last read handle goes out of scope.
-        for (_, mut vs) in self.w_handle.as_mut().unwrap().data.drain() {
+        for (_, mut vs) in drain {
             #[cfg(not(feature = "smallvec"))]
             let drain = vs.drain(..);
 
@@ -475,6 +485,27 @@ where
         self.add_op(Operation::Reserve(k, additional))
     }
 
+    #[cfg(feature = "indexed")]
+    /// Remove the value-set for a key at a specified index.
+    ///
+    /// This is effectively random removal.
+    /// The value-set will only disappear from readers after the next call to `refresh()`.
+    ///
+    /// Note that this does a _swap-remove_, so use it carefully.
+    pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &[V])> {
+        self.add_op(Operation::EmptyRandom(index));
+        // the actual emptying won't happen until refresh(), which needs &mut self
+        // so it's okay for us to return the references here
+
+        // NOTE to future zealots intent on removing the unsafe code: it's **NOT** okay to use
+        // self.w_handle here, since that does not have all pending operations applied to it yet.
+        // Specifically, there may be an *eviction* pending that already has been applied to the
+        // r_handle side, but not to the w_handle (will be applied on the next swap). We must make
+        // sure that we read the most up to date map here.
+        let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
+        unsafe { (*inner).data.get_index(index) }.map(|(k, vs)| (k, &vs[..]))
+    }
+
     /// Apply ops in such a way that no values are dropped, only forgotten
     fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
         match *op {
@@ -510,7 +541,11 @@ where
                     .push(unsafe { value.shallow_copy() });
             }
             Operation::Empty(ref key) => {
-                if let Some(mut vs) = inner.data.remove(key) {
+                #[cfg(not(feature = "indexed"))]
+                let rm = inner.data.remove(key);
+                #[cfg(feature = "indexed")]
+                let rm = inner.data.swap_remove(key);
+                if let Some(mut vs) = rm {
                     unsafe {
                         // truncate vector without dropping values
                         vs.set_len(0);
@@ -526,6 +561,15 @@ where
                 }
                 // then, empty the map
                 inner.data.clear();
+            }
+            #[cfg(feature = "indexed")]
+            Operation::EmptyRandom(index) => {
+                if let Some((_k, mut vs)) = inner.data.swap_remove_index(index) {
+                    // don't run destructors yet -- still in use by other map
+                    unsafe {
+                        vs.set_len(0);
+                    }
+                }
             }
             Operation::Remove(ref key, ref value) => {
                 if let Some(e) = inner.data.get_mut(key) {
@@ -581,6 +625,7 @@ where
                     entry.insert(Values::with_capacity(additional));
                 }
             },
+            Operation::__Nonexhaustive => unreachable!(),
         }
     }
 
@@ -608,10 +653,17 @@ where
                     .push(value);
             }
             Operation::Empty(key) => {
+                #[cfg(not(feature = "indexed"))]
                 inner.data.remove(&key);
+                #[cfg(feature = "indexed")]
+                inner.data.swap_remove(&key);
             }
             Operation::Purge => {
                 inner.data.clear();
+            }
+            #[cfg(feature = "indexed")]
+            Operation::EmptyRandom(index) => {
+                inner.data.swap_remove_index(index);
             }
             Operation::Remove(key, value) => {
                 if let Some(e) = inner.data.get_mut(&key) {
@@ -633,7 +685,7 @@ where
             }
             Operation::Fit(key) => match key {
                 Some(ref key) => {
-                    if let Some(e) = inner.data.get_mut(&key) {
+                    if let Some(e) = inner.data.get_mut(key) {
                         e.shrink_to_fit();
                     }
                 }
@@ -651,6 +703,7 @@ where
                     entry.insert(Values::with_capacity(additional));
                 }
             },
+            Operation::__Nonexhaustive => unreachable!(),
         }
     }
 }

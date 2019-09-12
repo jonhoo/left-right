@@ -291,6 +291,24 @@ fn empty() {
 }
 
 #[test]
+#[cfg(feature = "indexed")]
+fn empty_random() {
+    let (r, mut w) = evmap::new();
+    w.insert(1, "a");
+    w.insert(1, "b");
+    w.insert(2, "c");
+    w.empty_at_index(0);
+    w.refresh();
+
+    // should only have one value set left
+    assert_eq!(r.len(), 1);
+    // one of them must have gone away
+    assert!(
+        (!r.contains_key(&1) && r.contains_key(&2)) || (r.contains_key(&1) && !r.contains_key(&2))
+    );
+}
+
+#[test]
 fn empty_post_refresh() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a");

@@ -1,6 +1,9 @@
 use std::hash::{BuildHasher, Hash};
 
-use std::collections::HashMap;
+#[cfg(feature = "indexed")]
+use indexmap::IndexMap as MapImpl;
+#[cfg(not(feature = "indexed"))]
+use std::collections::HashMap as MapImpl;
 
 #[cfg(not(feature = "smallvec"))]
 pub(crate) type Values<T> = Vec<T>;
@@ -13,7 +16,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub(crate) data: HashMap<K, Values<V>, S>,
+    pub(crate) data: MapImpl<K, Values<V>, S>,
     pub(crate) meta: M,
     ready: bool,
 }
@@ -27,7 +30,7 @@ where
     fn clone(&self) -> Self {
         assert!(self.data.is_empty());
         Inner {
-            data: HashMap::with_capacity_and_hasher(
+            data: MapImpl::with_capacity_and_hasher(
                 self.data.capacity(),
                 self.data.hasher().clone(),
             ),
@@ -44,7 +47,7 @@ where
 {
     pub fn with_hasher(m: M, hash_builder: S) -> Self {
         Inner {
-            data: HashMap::with_hasher(hash_builder),
+            data: MapImpl::with_hasher(hash_builder),
             meta: m,
             ready: false,
         }
@@ -52,7 +55,7 @@ where
 
     pub fn with_capacity_and_hasher(m: M, capacity: usize, hash_builder: S) -> Self {
         Inner {
-            data: HashMap::with_capacity_and_hasher(capacity, hash_builder),
+            data: MapImpl::with_capacity_and_hasher(capacity, hash_builder),
             meta: m,
             ready: false,
         }
