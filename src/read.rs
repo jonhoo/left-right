@@ -178,15 +178,20 @@ where
         // then, atomically read pointer, and use the map being pointed to
         let r_handle = self.inner.load(atomic::Ordering::Acquire);
 
-        let res = unsafe { r_handle.as_ref().map(f) };
+        // add a guard to ensure we restore read parity even if we panic
+        struct RestoreParity<'a>(&'a sync::Arc<sync::atomic::AtomicUsize>, usize);
+        impl<'a> Drop for RestoreParity<'a> {
+            fn drop(&mut self) {
+                self.0.store(
+                    (self.1 + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),
+                    atomic::Ordering::Release,
+                );
+            }
+        }
+        let _guard = RestoreParity(&self.epoch, epoch);
 
-        // we've finished reading -- let the writer know
-        self.epoch.store(
-            (epoch + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),
-            atomic::Ordering::Release,
-        );
-
-        res
+        // and finally, call the provided handler function
+        unsafe { r_handle.as_ref().map(f) }
     }
 
     /// Returns the number of non-empty keys present in the map.

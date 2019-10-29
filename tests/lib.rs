@@ -50,6 +50,22 @@ fn it_works() {
 }
 
 #[test]
+fn paniced_reader_doesnt_block_writer() {
+    let (r, mut w) = evmap::new();
+    w.insert(1, "a");
+    w.refresh();
+
+    // reader panics
+    let r = std::panic::catch_unwind(move || r.get_and(&1, |_| panic!()));
+    assert!(r.is_err());
+
+    // writer should still be able to continue
+    w.insert(1, "b");
+    w.refresh();
+    w.refresh();
+}
+
+#[test]
 fn read_after_drop() {
     let x = ('x', 42);
 
