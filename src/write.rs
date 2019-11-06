@@ -136,13 +136,7 @@ where
         // destructors of any of the values that are in our map, as they'll all be called when the
         // last read handle goes out of scope.
         for (_, mut vs) in drain {
-            #[cfg(not(feature = "smallvec"))]
-            let drain = vs.drain(..);
-
-            #[cfg(feature = "smallvec")]
-            let drain = vs.drain();
-
-            for v in drain {
+            for v in vs.drain(..) {
                 mem::forget(v);
             }
         }
