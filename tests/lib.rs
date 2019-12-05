@@ -1,5 +1,14 @@
 extern crate evmap;
 
+macro_rules! assert_match {
+    ($x:expr, $p:pat) => {
+        if let $p = $x {
+        } else {
+            panic!(concat!(stringify!($x), " did not match ", stringify!($p)));
+        }
+    };
+}
+
 #[test]
 fn it_works() {
     let x = ('x', 42);
@@ -7,46 +16,57 @@ fn it_works() {
     let (r, mut w) = evmap::new();
 
     // the map is uninitialized, so all lookups should return None
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
+    assert_match!(r.get(&x.0), None);
 
     w.refresh();
 
     // after the first refresh, it is empty, but ready
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
+    assert_match!(r.get(&x.0), None);
     // since we're not using `meta`, we get ()
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((None, ())));
+    assert_match!(r.meta_get(&x.0), Some((None, ())));
 
     w.insert(x.0, x);
 
     // it is empty even after an add (we haven't refresh yet)
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((None, ())));
+    assert_match!(r.get(&x.0), None);
+    assert_match!(r.meta_get(&x.0), Some((None, ())));
 
     w.refresh();
 
     // but after the swap, the record is there!
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), Some(1));
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((Some(1), ())));
-    assert_eq!(
-        r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
+    assert_match!(r.get(&x.0).map(|rs| rs.len()), Some(1));
+    assert_match!(
+        r.meta_get(&x.0).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        Some((Some(1), ()))
+    );
+    assert_match!(
+        r.get(&x.0)
+            .map(|rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
         Some(true)
     );
 
     // non-existing records return None
-    assert_eq!(r.get_and(&'y', |rs| rs.len()), None);
-    assert_eq!(r.meta_get_and(&'y', |rs| rs.len()), Some((None, ())));
+    assert_match!(r.get(&'y').map(|rs| rs.len()), None);
+    assert_match!(
+        r.meta_get(&'y').map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        Some((None, ()))
+    );
 
     // if we purge, the readers still see the values
     w.purge();
-    assert_eq!(
-        r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
+    assert_match!(
+        r.get(&x.0)
+            .map(|rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
         Some(true)
     );
 
     // but once we refresh, things will be empty
     w.refresh();
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), Some((None, ())));
+    assert_match!(r.get(&x.0).map(|rs| rs.len()), None);
+    assert_match!(
+        r.meta_get(&x.0).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        Some((None, ()))
+    );
 }
 
 #[test]
@@ -58,7 +78,7 @@ fn paniced_reader_doesnt_block_writer() {
     w.refresh();
 
     // reader panics
-    let r = std::panic::catch_unwind(move || r.get_and(&1, |_| panic!()));
+    let r = std::panic::catch_unwind(move || r.get(&1).map(|_| panic!()));
     assert!(r.is_err());
 
     // writer should still be able to continue
@@ -74,12 +94,15 @@ fn read_after_drop() {
     let (r, mut w) = evmap::new();
     w.insert(x.0, x);
     w.refresh();
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), Some(1));
+    assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
 
     // once we drop the writer, the readers should see empty maps
     drop(w);
-    assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
-    assert_eq!(r.meta_get_and(&x.0, |rs| rs.len()), None);
+    assert_eq!(r.get(&x.0).map(|rs| rs.len()), None);
+    assert_eq!(
+        r.meta_get(&x.0).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        None
+    );
 }
 
 #[test]
@@ -90,9 +113,12 @@ fn clone_types() {
     w.insert(&*x, x);
     w.refresh();
 
-    assert_eq!(r.get_and(&*x, |rs| rs.len()), Some(1));
-    assert_eq!(r.meta_get_and(&*x, |rs| rs.len()), Some((Some(1), ())));
-    assert_eq!(r.get_and(&*x, |rs| rs.iter().any(|v| *v == x)), Some(true));
+    assert_eq!(r.get(&*x).map(|rs| rs.len()), Some(1));
+    assert_eq!(
+        r.meta_get(&*x).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        Some((Some(1), ()))
+    );
+    assert_eq!(r.get(&*x).map(|rs| rs.iter().any(|v| *v == x)), Some(true));
 }
 
 #[test]
@@ -126,11 +152,11 @@ fn busybusybusy_inner(slow: bool) {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        match r.get_and(&i, |rs| {
+                        match r.get(&i).map(|rs| {
                             if slow {
                                 thread::sleep(time::Duration::from_millis(2));
                             }
-                            Vec::from(rs)
+                            Vec::from(&*rs)
                         }) {
                             Some(rs) => {
                                 assert_eq!(rs.len(), 1);
@@ -173,7 +199,7 @@ fn busybusybusy_heap() {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        match r.get_and(&i, |rs| Vec::from(rs)) {
+                        match r.get(&i).map(|rs| Vec::from(&*rs)) {
                             Some(rs) => {
                                 assert_eq!(rs.len(), 1);
                                 assert_eq!(rs[0].len(), i);
@@ -206,28 +232,28 @@ fn minimal_query() {
     w.refresh();
     w.insert(1, "b");
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"a")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
 }
 
 #[test]
 fn clear_vs_empty() {
     let (r, mut w) = evmap::new::<_, ()>();
     w.refresh();
-    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     w.clear(1);
     w.refresh();
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
     w.empty(1);
     w.refresh();
-    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     // and again to test both apply_first and apply_second
     w.clear(1);
     w.refresh();
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
     w.empty(1);
     w.refresh();
-    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
 }
 
 #[test]
@@ -237,8 +263,8 @@ fn non_copy_values() {
     w.refresh();
     w.insert(1, "b".to_string());
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == "a")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "a")).unwrap());
 }
 
 #[test]
@@ -249,9 +275,9 @@ fn non_minimal_query() {
     w.refresh();
     w.insert(1, "c");
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(2));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"a")).unwrap());
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"b")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(2));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -262,8 +288,8 @@ fn absorb_negative_immediate() {
     w.remove(1, "a");
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"b")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -275,8 +301,8 @@ fn absorb_negative_later() {
     w.remove(1, "a");
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"b")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -285,17 +311,17 @@ fn absorb_multi() {
     w.extend(vec![(1, "a"), (1, "b")]);
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(2));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"a")).unwrap());
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"b")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(2));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 
     w.remove(1, "a");
     w.insert(1, "c");
     w.remove(1, "c");
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"b")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -307,9 +333,9 @@ fn empty() {
     w.empty(1);
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
-    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&2, |rs| rs.iter().any(|r| r == &"c")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
+    assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
@@ -340,9 +366,9 @@ fn empty_post_refresh() {
     w.empty(1);
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
-    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&2, |rs| rs.iter().any(|r| r == &"c")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
+    assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
@@ -354,20 +380,20 @@ fn clear() {
     w.clear(1);
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
-    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(1));
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
+    assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
 
     w.clear(2);
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(0));
-    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(0));
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
+    assert_eq!(r.get(&2).map(|rs| rs.len()), Some(0));
 
     w.empty(1);
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), None);
-    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(0));
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
+    assert_eq!(r.get(&2).map(|rs| rs.len()), Some(0));
 }
 
 #[test]
@@ -379,10 +405,10 @@ fn replace() {
     w.update(1, "x");
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"x")).unwrap());
-    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&2, |rs| rs.iter().any(|r| r == &"c")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"x")).unwrap());
+    assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
@@ -395,22 +421,34 @@ fn replace_post_refresh() {
     w.update(1, "x");
     w.refresh();
 
-    assert_eq!(r.get_and(&1, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&1, |rs| rs.iter().any(|r| r == &"x")).unwrap());
-    assert_eq!(r.get_and(&2, |rs| rs.len()), Some(1));
-    assert!(r.get_and(&2, |rs| rs.iter().any(|r| r == &"c")).unwrap());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"x")).unwrap());
+    assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
 fn with_meta() {
     let (r, mut w) = evmap::with_meta::<usize, usize, _>(42);
-    assert_eq!(r.meta_get_and(&1, |rs| rs.len()), None);
+    assert_eq!(
+        r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        None
+    );
     w.refresh();
-    assert_eq!(r.meta_get_and(&1, |rs| rs.len()), Some((None, 42)));
+    assert_eq!(
+        r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        Some((None, 42))
+    );
     w.set_meta(43);
-    assert_eq!(r.meta_get_and(&1, |rs| rs.len()), Some((None, 42)));
+    assert_eq!(
+        r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        Some((None, 42))
+    );
     w.refresh();
-    assert_eq!(r.meta_get_and(&1, |rs| rs.len()), Some((None, 43)));
+    assert_eq!(
+        r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
+        Some((None, 43))
+    );
 }
 
 #[test]
@@ -442,7 +480,7 @@ fn clone_churn() {
 
     thread::spawn(move || loop {
         let r = r.clone();
-        if let Some(_) = r.get_and(&1, |rs| rs.len()) {
+        if let Some(_) = r.get(&1).map(|rs| rs.len()) {
             thread::yield_now();
         }
     });
@@ -462,11 +500,14 @@ fn foreach() {
     w.refresh();
     w.insert(1, "x");
 
-    r.for_each(|&k, vs| match k {
-        1 => assert_eq!(vs, &*vec!["a", "b"]),
-        2 => assert_eq!(vs, &*vec!["c"]),
-        _ => unreachable!(),
-    });
+    let r = r.read();
+    for (k, vs) in &r {
+        match k {
+            1 => assert_eq!(vs, &*vec!["a", "b"]),
+            2 => assert_eq!(vs, &*vec!["c"]),
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[test]
@@ -488,5 +529,5 @@ fn retain() {
     unsafe { w.retain(0, is_even) }.refresh();
     v.retain(|i| is_even(i, false));
 
-    r.get_and(&0, |nums| assert_eq!(v, nums)).unwrap();
+    r.get(&0).map(|nums| assert_eq!(v, &*nums)).unwrap();
 }

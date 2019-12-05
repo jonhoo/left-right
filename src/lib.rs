@@ -49,46 +49,45 @@
 //! book_reviews_w.refresh();
 //! assert_eq!(book_reviews_r.len(), 4);
 //! // reads will now return Some() because the map has been initialized
-//! assert_eq!(book_reviews_r.get_and("Grimms' Fairy Tales", |rs| rs.len()), Some(1));
+//! assert_eq!(book_reviews_r.get("Grimms' Fairy Tales").map(|rs| rs.len()), Some(1));
 //!
 //! // remember, this is a multi-value map, so we can have many reviews
 //! book_reviews_w.insert("Grimms' Fairy Tales",               "Eh, the title seemed weird.");
 //! book_reviews_w.insert("Pride and Prejudice",               "Too many words.");
 //!
 //! // but again, new writes are not yet visible
-//! assert_eq!(book_reviews_r.get_and("Grimms' Fairy Tales", |rs| rs.len()), Some(1));
+//! assert_eq!(book_reviews_r.get("Grimms' Fairy Tales").map(|rs| rs.len()), Some(1));
 //!
 //! // we need to refresh first
 //! book_reviews_w.refresh();
-//! assert_eq!(book_reviews_r.get_and("Grimms' Fairy Tales", |rs| rs.len()), Some(2));
+//! assert_eq!(book_reviews_r.get("Grimms' Fairy Tales").map(|rs| rs.len()), Some(2));
 //!
 //! // oops, this review has a lot of spelling mistakes, let's delete it.
 //! // empty deletes *all* reviews (though in this case, just one)
 //! book_reviews_w.empty("The Adventures of Sherlock Holmes");
 //! // but again, it's not visible to readers until we refresh
-//! assert_eq!(book_reviews_r.get_and("The Adventures of Sherlock Holmes", |rs| rs.len()), Some(1));
+//! assert_eq!(book_reviews_r.get("The Adventures of Sherlock Holmes").map(|rs| rs.len()), Some(1));
 //! book_reviews_w.refresh();
-//! assert_eq!(book_reviews_r.get_and("The Adventures of Sherlock Holmes", |rs| rs.len()), None);
+//! assert_eq!(book_reviews_r.get("The Adventures of Sherlock Holmes").map(|rs| rs.len()), None);
 //!
 //! // look up the values associated with some keys.
 //! let to_find = ["Pride and Prejudice", "Alice's Adventure in Wonderland"];
 //! for book in &to_find {
-//!     let reviewed = book_reviews_r.get_and(book, |reviews| {
-//!         for review in reviews {
+//!     if let Some(reviews) = book_reviews_r.get(book) {
+//!         for review in &*reviews {
 //!             println!("{}: {}", book, review);
 //!         }
-//!     });
-//!     if reviewed.is_none() {
+//!     } else {
 //!         println!("{} is unreviewed.", book);
 //!     }
 //! }
 //!
 //! // iterate over everything.
-//! book_reviews_r.for_each(|book, reviews| {
+//! for (book, reviews) in &book_reviews_r.read() {
 //!     for review in reviews {
 //!         println!("{}: \"{}\"", book, review);
 //!     }
-//! });
+//! }
 //! ```
 //!
 //! Reads from multiple threads are possible by cloning the `ReadHandle`.
@@ -280,7 +279,7 @@ mod write;
 pub use crate::write::WriteHandle;
 
 mod read;
-pub use crate::read::{ReadHandle, ReadHandleFactory};
+pub use crate::read::{MapReadRef, ReadGuard, ReadGuardIter, ReadHandle, ReadHandleFactory};
 
 pub mod shallow_copy;
 pub use crate::shallow_copy::ShallowCopy;

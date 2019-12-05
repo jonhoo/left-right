@@ -2,9 +2,9 @@ use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
 #[cfg(feature = "indexed")]
-use indexmap::IndexMap as MapImpl;
+pub(crate) use indexmap::IndexMap as MapImpl;
 #[cfg(not(feature = "indexed"))]
-use std::collections::HashMap as MapImpl;
+pub(crate) use std::collections::HashMap as MapImpl;
 
 #[cfg(not(feature = "smallvec"))]
 pub(crate) type Values<T> = Vec<T>;

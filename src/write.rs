@@ -28,23 +28,23 @@ use std::collections::hash_map::Entry;
 /// let (r, mut w) = evmap::new();
 ///
 /// // the map is uninitialized, so all lookups should return None
-/// assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
+/// assert_eq!(r.get(&x.0).map(|rs| rs.len()), None);
 ///
 /// w.refresh();
 ///
 /// // after the first refresh, it is empty, but ready
-/// assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
+/// assert_eq!(r.get(&x.0).map(|rs| rs.len()), None);
 ///
 /// w.insert(x.0, x);
 ///
 /// // it is empty even after an add (we haven't refresh yet)
-/// assert_eq!(r.get_and(&x.0, |rs| rs.len()), None);
+/// assert_eq!(r.get(&x.0).map(|rs| rs.len()), None);
 ///
 /// w.refresh();
 ///
 /// // but after the swap, the record is there!
-/// assert_eq!(r.get_and(&x.0, |rs| rs.len()), Some(1));
-/// assert_eq!(r.get_and(&x.0, |rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)), Some(true));
+/// assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
+/// assert_eq!(r.get(&x.0).map(|rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)), Some(true));
 /// ```
 pub struct WriteHandle<K, V, M = (), S = RandomState>
 where
