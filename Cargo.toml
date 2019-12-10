@@ -1,6 +1,6 @@
 [package]
 name = "evmap"
-version = "7.1.2"
+version = "7.1.3"
 edition = "2018"
 
 description = "A lock-free, eventually consistent, concurrent multi-value map."
