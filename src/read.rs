@@ -1,15 +1,14 @@
 use crate::inner::{Inner, Values};
 
 use std::borrow::Borrow;
-use std::cell;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::iter::{self, FromIterator};
 use std::marker::PhantomData;
-use std::mem;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
+use std::{cell, fmt, mem};
 
 /// A handle that may be used to read from the eventually consistent map.
 ///
@@ -35,6 +34,21 @@ where
     _not_sync_no_feature: PhantomData<cell::Cell<()>>,
 }
 
+impl<K, V, M, S> fmt::Debug for ReadHandle<K, V, M, S>
+where
+    K: Eq + Hash + fmt::Debug,
+    S: BuildHasher,
+    M: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReadHandle")
+            .field("epochs", &self.epochs)
+            .field("epoch", &self.epoch)
+            .field("my_epoch", &self.my_epoch)
+            .finish()
+    }
+}
+
 /// A type that is both `Sync` and `Send` and lets you produce new [`ReadHandle`] instances.
 ///
 /// This serves as a handy way to distribute read handles across many threads without requiring
@@ -48,6 +62,18 @@ where
 {
     inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
     epochs: crate::Epochs,
+}
+
+impl<K, V, M, S> fmt::Debug for ReadHandleFactory<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReadHandleFactory")
+            .field("epochs", &self.epochs)
+            .finish()
+    }
 }
 
 impl<K, V, M, S> Clone for ReadHandleFactory<K, V, M, S>

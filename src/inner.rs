@@ -1,3 +1,4 @@
+use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
 #[cfg(feature = "indexed")]
@@ -19,6 +20,22 @@ where
     pub(crate) data: MapImpl<K, Values<V>, S>,
     pub(crate) meta: M,
     ready: bool,
+}
+
+impl<K, V, M, S> fmt::Debug for Inner<K, V, M, S>
+where
+    K: Eq + Hash + fmt::Debug,
+    S: BuildHasher,
+    V: fmt::Debug,
+    M: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Inner")
+            .field("data", &self.data)
+            .field("meta", &self.meta)
+            .field("ready", &self.ready)
+            .finish()
+    }
 }
 
 impl<K, V, M, S> Clone for Inner<K, V, M, S>

@@ -6,7 +6,7 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
-use std::{mem, thread};
+use std::{fmt, mem, thread};
 
 #[cfg(feature = "indexed")]
 use indexmap::map::Entry;
@@ -62,6 +62,27 @@ where
     meta: M,
     first: bool,
     second: bool,
+}
+
+impl<K, V, M, S> fmt::Debug for WriteHandle<K, V, M, S>
+where
+    K: Eq + Hash + Clone + fmt::Debug,
+    S: BuildHasher + Clone,
+    V: Eq + ShallowCopy + fmt::Debug,
+    M: 'static + Clone + fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WriteHandle")
+            .field("epochs", &self.epochs)
+            .field("w_handle", &self.w_handle)
+            .field("oplog", &self.oplog)
+            .field("swap_index", &self.swap_index)
+            .field("r_handle", &self.r_handle)
+            .field("meta", &self.meta)
+            .field("first", &self.first)
+            .field("second", &self.second)
+            .finish()
+    }
 }
 
 pub(crate) fn new<K, V, M, S>(
@@ -155,7 +176,7 @@ where
     V: Eq + ShallowCopy,
     M: 'static + Clone,
 {
-    fn wait(&mut self, epochs: &mut MutexGuard<Vec<Arc<atomic::AtomicUsize>>>) {
+    fn wait(&mut self, epochs: &mut MutexGuard<'_, Vec<Arc<atomic::AtomicUsize>>>) {
         let mut iter = 0;
         let mut starti = 0;
         let high_bit = 1usize << (mem::size_of::<usize>() * 8 - 1);

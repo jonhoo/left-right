@@ -197,7 +197,7 @@
 //! ```
 //!
 //! in the `evmap` dependency entry, and `Vec` will always be used internally.
-#![deny(missing_docs)]
+#![deny(missing_docs, rust_2018_idioms, missing_debug_implementations)]
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -233,7 +233,7 @@ impl<V> PartialEq for Predicate<V> {
 impl<V> Eq for Predicate<V> {}
 
 impl<V> fmt::Debug for Predicate<V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Predicate")
             .field(&format_args!("{:p}", &*self.0 as *const _))
             .finish()
@@ -305,6 +305,19 @@ where
     meta: M,
     hasher: S,
     capacity: Option<usize>,
+}
+
+impl<M, S> fmt::Debug for Options<M, S>
+where
+    S: BuildHasher,
+    M: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Options")
+            .field("meta", &self.meta)
+            .field("capacity", &self.capacity)
+            .finish()
+    }
 }
 
 impl Default for Options<(), RandomState> {
