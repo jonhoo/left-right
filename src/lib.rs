@@ -431,15 +431,3 @@ where
         .with_meta(meta)
         .construct()
 }
-
-// test that ReadHandle isn't Sync
-// waiting on https://github.com/rust-lang/rust/issues/17606
-//#[test]
-//fn is_not_sync() {
-//    use std::sync;
-//    use std::thread;
-//    let (r, mut w) = new();
-//    w.insert(true, false);
-//    let x = sync::Arc::new(r);
-//    thread::spawn(move || { drop(x); });
-//}
