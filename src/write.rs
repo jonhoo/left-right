@@ -640,7 +640,6 @@ where
                     entry.insert(Values::with_capacity(additional));
                 }
             },
-            Operation::__Nonexhaustive => unreachable!(),
         }
     }
 
@@ -718,7 +717,6 @@ where
                     entry.insert(Values::with_capacity(additional));
                 }
             },
-            Operation::__Nonexhaustive => unreachable!(),
         }
     }
 }

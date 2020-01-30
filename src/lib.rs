@@ -241,12 +241,8 @@ impl<V> fmt::Debug for Predicate<V> {
 }
 
 /// A pending map operation.
-///
-/// Note that this enum should be considered
-/// [non-exhaustive](https://github.com/rust-lang/rust/issues/44109).
+#[non_exhaustive]
 #[derive(PartialEq, Eq, Debug)]
-// TODO: #[non_exhaustive]
-// https://github.com/rust-lang/rust/issues/44109
 pub enum Operation<K, V> {
     /// Replace the set of entries for this key with this value.
     Replace(K, V),
@@ -278,11 +274,6 @@ pub enum Operation<K, V> {
     ///
     /// This can improve performance by pre-allocating space for large value-sets.
     Reserve(K, usize),
-    // Since we have a feature that adds an enum variant, features are only additive (as they need
-    // to be) if users never try to exhaustively match on this enum. Once rust-lang/rust#44109
-    // lands, we'll have a more standard way to do this, but for now we rely on this trick:
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 mod write;
