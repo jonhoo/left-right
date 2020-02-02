@@ -431,3 +431,10 @@ where
         .with_meta(meta)
         .construct()
 }
+
+
+#[test]
+fn is_not_sync() {
+    extern crate static_assertions as sa;
+    sa::assert_not_impl_all!(ReadHandle<(), ()>: Send, Sync);
+}
