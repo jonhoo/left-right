@@ -432,7 +432,6 @@ where
         .construct()
 }
 
-
 #[test]
 fn is_not_sync() {
     extern crate static_assertions as sa;
