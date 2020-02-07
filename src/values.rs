@@ -157,7 +157,15 @@ where
             ValuesInner::Long(ref mut v) => {
                 // here, we actually want to be clever
                 // we want to potentially "downgrade" from a Long to a Short
-                if v.len() < BAG_THRESHOLD {
+                //
+                // NOTE: there may be more than one instance of row in the bag. if there is, we do
+                // not move to a SmallVec. The reason is simple: if we did, we would need to
+                // duplicate those rows again. But, how would we do so safely? If we clone into
+                // both the left and the right map (that is, on both first and second apply), then
+                // we would only free one of them. If we shallow_copy the one we have in the
+                // hashbag, then once any instance gets remove from both sides, it'll be freed,
+                // which will invalidate the remaining references.
+                if v.len() < BAG_THRESHOLD && v.len() == v.set_len() {
                     let mut short = smallvec::SmallVec::with_capacity(v.len());
                     // NOTE: this drain _must_ have a deterministic iteration order.
                     // that is, the items must be yielded in the same order regardless of whether
@@ -171,18 +179,7 @@ where
                     //   5. swap_remove A (2nd); left is A*, right drops A* and is now A
                     //      right dropped A* while A still has it -- no okay!
                     for (row, n) in v.drain() {
-                        // there may be more than one instance of row in the bag. if there is, we
-                        // need to clone them before inserting them into the smallvec. if we did
-                        // not (if we instead did a shallow copy), then dropping the second
-                        // occurrence of a duplicated element on second apply() would be a
-                        // double-free. this is definitely a little unfortunate, as it means not
-                        // only does T: Clone, but _also_ we have to clone a value that technically
-                        // the user has already given us a clone of (when they initially pushed
-                        // it!).
-                        for _ in 1..n {
-                            // TODO: need shadow copy in second
-                            short.push(row.clone());
-                        }
+                        assert_eq!(n, 1);
                         short.push(row);
                     }
                     std::mem::replace(&mut self.0, ValuesInner::Short(short));
