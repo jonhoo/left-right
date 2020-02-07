@@ -72,6 +72,100 @@ fn it_works() {
 }
 
 #[test]
+fn mapref() {
+    let x = ('x', 42);
+
+    let (r, mut w) = evmap::new();
+
+    // get a read ref to the map
+    // scope to ensure it gets dropped and doesn't stall refresh
+    {
+        let map = r.read();
+        // the map is uninitialized, so all lookups should return None
+        assert!(!map.is_destroyed());
+        assert!(map.is_empty());
+        assert!(!map.contains_key(&x.0));
+        assert!(map.get(&x.0).is_none());
+        assert_eq!(map.meta().unwrap(), &());
+    }
+
+    w.refresh();
+
+    {
+        let map = r.read();
+        // after the first refresh, it is empty, but ready
+        assert!(map.is_empty());
+        assert!(!map.contains_key(&x.0));
+        assert!(map.get(&x.0).is_none());
+        // since we're not using `meta`, we get ()
+        assert_eq!(map.meta().unwrap(), &());
+    }
+
+    w.insert(x.0, x);
+
+    {
+        let map = r.read();
+        // it is empty even after an add (we haven't refresh yet)
+        assert!(map.is_empty());
+        assert!(!map.contains_key(&x.0));
+        assert!(map.get(&x.0).is_none());
+        assert!(map.meta().is_some());
+    }
+
+    w.refresh();
+
+    {
+        let map = r.read();
+
+        // but after the swap, the record is there!
+        assert!(!map.is_empty());
+        assert!(map.contains_key(&x.0));
+        assert_eq!(map.get(&x.0).unwrap().len(), 1);
+        assert_eq!(map[&x.0].len(), 1);
+        assert!(map.meta().is_some());
+        assert!(map
+            .get(&x.0)
+            .unwrap()
+            .iter()
+            .any(|v| v.0 == x.0 && v.1 == x.1));
+
+        // non-existing records return None
+        assert!(map.get(&'y').is_none());
+        assert!(map.meta().is_some());
+
+        // if we purge, the readers still see the values
+        w.purge();
+
+        assert!(map
+            .get(&x.0)
+            .unwrap()
+            .iter()
+            .any(|v| v.0 == x.0 && v.1 == x.1));
+    }
+
+    // but once we refresh, things will be empty
+    w.refresh();
+
+    {
+        let map = r.read();
+        assert!(map.is_empty());
+        assert!(!map.contains_key(&x.0));
+        assert!(map.get(&x.0).is_none());
+        assert!(map.meta().is_some());
+    }
+
+    drop(w);
+    {
+        let map = r.read();
+        assert!(map.is_destroyed());
+        assert!(map.is_empty());
+        assert!(!map.contains_key(&x.0));
+        assert!(map.get(&x.0).is_none());
+        assert!(map.meta().is_none());
+    }
+}
+
+#[test]
 #[cfg(not(miri))]
 // https://github.com/rust-lang/miri/issues/658
 fn paniced_reader_doesnt_block_writer() {
