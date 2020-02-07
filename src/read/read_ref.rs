@@ -30,7 +30,7 @@ where
     ///
     /// Be careful with this function! While the iteration is ongoing, any writer that tries to
     /// refresh will block waiting on this reader to finish.
-    pub fn iter<'a>(&'a self) -> ReadGuardIter<'a, K, V, S> {
+    pub fn iter(&self) -> ReadGuardIter<'_, K, V, S> {
         ReadGuardIter {
             iter: self.guard.as_ref().map(|rg| rg.data.iter()),
         }

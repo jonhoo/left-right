@@ -26,7 +26,7 @@ enum ValuesInner<T, S> {
 
 impl<T, S> Values<ManuallyDrop<T>, S> {
     pub(crate) fn user_friendly(&self) -> &Values<T, S> {
-        unsafe { std::mem::transmute(self) }
+        unsafe { &*(self as *const Self as *const Values<T, S>) }
     }
 }
 
@@ -36,6 +36,14 @@ impl<T, S> Values<T, S> {
         match self.0 {
             ValuesInner::Short(ref v) => v.len(),
             ValuesInner::Long(ref v) => v.len(),
+        }
+    }
+
+    /// Returns true if the bag holds no values.
+    pub fn is_empty(&self) -> bool {
+        match self.0 {
+            ValuesInner::Short(ref v) => v.is_empty(),
+            ValuesInner::Long(ref v) => v.is_empty(),
         }
     }
 
@@ -206,7 +214,7 @@ where
         }
     }
 
-    fn to_long(&mut self, capacity: usize, hasher: &S) {
+    fn baggify(&mut self, capacity: usize, hasher: &S) {
         if let ValuesInner::Short(ref mut v) = self.0 {
             let mut long = hashbag::HashBag::with_capacity_and_hasher(capacity, hasher.clone());
 
@@ -226,7 +234,7 @@ where
             ValuesInner::Short(ref mut v) => {
                 let n = v.len() + additional;
                 if n >= BAG_THRESHOLD {
-                    self.to_long(n, hasher);
+                    self.baggify(n, hasher);
                 } else {
                     v.reserve(additional)
                 }
@@ -241,7 +249,7 @@ where
                 // we may want to upgrade to a Long..
                 let n = v.len() + 1;
                 if n >= BAG_THRESHOLD {
-                    self.to_long(n, hasher);
+                    self.baggify(n, hasher);
                     if let ValuesInner::Long(ref mut v) = self.0 {
                         v.insert(value);
                     } else {

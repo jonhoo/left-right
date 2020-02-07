@@ -195,6 +195,7 @@
 //! possible. This is ideal for maps that mostly use one element per key, as it can improvate
 //! memory locality with less indirection.
 #![deny(missing_docs, rust_2018_idioms, missing_debug_implementations)]
+#![allow(clippy::type_complexity)]
 
 use std::collections::hash_map::RandomState;
 use std::fmt;

@@ -322,7 +322,7 @@ mod test {
     #[test]
     fn reserve_and_fit() {
         const MIN: usize = (1 << 4) + 1;
-        const MAX: usize = (1 << 6);
+        const MAX: usize = 1 << 6;
 
         let (r, mut w) = new();
 

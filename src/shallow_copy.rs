@@ -29,6 +29,8 @@ use std::ops::{Deref, DerefMut};
 pub trait ShallowCopy {
     /// Perform an aliasing copy of this value.
     ///
+    /// # Safety
+    ///
     /// The use of this method is *only* safe if the values involved are never mutated, and only
     /// one of the copies is dropped; the remaining copies must be forgotten with `mem::forget`.
     unsafe fn shallow_copy(&self) -> ManuallyDrop<Self>;

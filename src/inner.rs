@@ -25,7 +25,7 @@ where
     S: BuildHasher,
 {
     pub(crate) unsafe fn do_drop(&mut self) -> &mut Inner<K, V, M, S> {
-        std::mem::transmute(self)
+        &mut *(self as *mut Self as *mut Inner<K, V, M, S>)
     }
 }
 

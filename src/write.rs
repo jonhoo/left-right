@@ -450,7 +450,9 @@ where
     ///
     /// The remaining value-bag will only be visible to readers after the next call to `refresh()`
     ///
-    /// Note that the given closure is called _twice_ for each element, once when called, and once
+    /// # Safety
+    ///
+    /// The given closure is called _twice_ for each element, once when called, and once
     /// on swap. It _must_ retain the same elements each time, otherwise a value may exist in one
     /// map, but not the other, leaving the two maps permanently out-of-sync. This is _really_ bad,
     /// as values are aliased between the maps, and are assumed safe to free when they leave the
@@ -570,7 +572,7 @@ where
                 if let Some(e) = inner.data.get_mut(key) {
                     // remove a matching value from the value set
                     // safety: this is fine
-                    e.swap_remove(unsafe { std::mem::transmute::<&V, &ManuallyDrop<V>>(value) });
+                    e.swap_remove(unsafe { &*(value as *const _ as *const ManuallyDrop<V>) });
                 }
             }
             Operation::Retain(ref key, ref mut predicate) => {
