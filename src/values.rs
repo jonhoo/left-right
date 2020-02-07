@@ -9,6 +9,12 @@ const BAG_THRESHOLD: usize = 32;
 #[repr(transparent)]
 pub struct Values<T, S = std::collections::hash_map::RandomState>(ValuesInner<T, S>);
 
+impl<T, S> Default for Values<T, S> {
+    fn default() -> Self {
+        Values(ValuesInner::Short(Default::default()))
+    }
+}
+
 impl<T, S> fmt::Debug for Values<T, S>
 where
     T: fmt::Debug,
@@ -285,5 +291,20 @@ where
             use std::iter::FromIterator;
             Self(ValuesInner::Short(smallvec::SmallVec::from_iter(iter)))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sensible_default() {
+        let v: Values<i32> = Values::default();
+        assert!(v.is_empty());
+        assert_eq!(v.len(), 0);
+        assert_eq!(v.capacity(), 1);
+        assert_eq!(v.iter().count(), 0);
+        assert_eq!(v.into_iter().count(), 0);
     }
 }
