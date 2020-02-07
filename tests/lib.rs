@@ -264,15 +264,16 @@ fn busybusybusy_inner(slow: bool) {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        match r.get(&i).map(|rs| {
-                            if slow {
-                                thread::sleep(time::Duration::from_millis(2));
-                            }
-                            Vec::from_iter(rs.iter().cloned())
-                        }) {
+                        let map = r.read();
+                        let rs = map.get(&i);
+                        if rs.is_some() && slow {
+                            thread::sleep(time::Duration::from_millis(2));
+                        }
+                        match rs {
                             Some(rs) => {
                                 assert_eq!(rs.len(), 1);
-                                assert_eq!(rs[0], i);
+                                assert!(rs.capacity() >= rs.len());
+                                assert_eq!(rs.iter().next().unwrap(), &i);
                                 break;
                             }
                             None => {
@@ -311,10 +312,12 @@ fn busybusybusy_heap() {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        match r.get(&i).map(|rs| Vec::from_iter(rs.iter().cloned())) {
+                        let map = r.read();
+                        let rs = map.get(&i);
+                        match rs {
                             Some(rs) => {
                                 assert_eq!(rs.len(), 1);
-                                assert_eq!(rs[0].len(), i);
+                                assert_eq!(rs.iter().next().unwrap().len(), i);
                                 break;
                             }
                             None => {
@@ -593,7 +596,7 @@ fn clone_churn() {
 
     thread::spawn(move || loop {
         let r = r.clone();
-        if let Some(_) = r.get(&1).map(|rs| rs.len()) {
+        if r.get(&1).is_some() {
             thread::yield_now();
         }
     });
