@@ -608,6 +608,39 @@ fn clone_churn() {
 }
 
 #[test]
+#[cfg(not(miri))]
+fn bigbag() {
+    use std::thread;
+    let (r, mut w) = evmap::new();
+
+    thread::spawn(move || loop {
+        let map = r.read();
+        if let Some(rs) = map.get(&1) {
+            assert!(rs.capacity() >= rs.len());
+            for i in 0..rs.len() {
+                assert!(rs.contains(&i));
+            }
+            assert_eq!(rs.into_iter().count(), rs.len());
+            drop(map);
+            thread::yield_now();
+        }
+    });
+
+    for _ in 0..8 {
+        for i in 0..128 {
+            w.insert(1, i);
+            w.refresh();
+        }
+        for i in (0..128).rev() {
+            w.remove(1, i);
+            w.fit(1);
+            w.refresh();
+        }
+        w.empty(1);
+    }
+}
+
+#[test]
 fn foreach() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a");
