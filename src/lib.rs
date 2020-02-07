@@ -362,7 +362,7 @@ where
     where
         K: Eq + Hash + Clone,
         S: BuildHasher + Clone,
-        V: Eq + Hash + Clone + ShallowCopy,
+        V: Eq + Hash + ShallowCopy,
         M: 'static + Clone,
     {
         let epochs = Default::default();
@@ -390,7 +390,7 @@ pub fn new<K, V>() -> (
 )
 where
     K: Eq + Hash + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
 {
     Options::default().construct()
 }
@@ -407,7 +407,7 @@ pub fn with_meta<K, V, M>(
 )
 where
     K: Eq + Hash + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
@@ -423,7 +423,7 @@ pub fn with_hasher<K, V, M, S>(
 ) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
 where
     K: Eq + Hash + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
     S: BuildHasher + Clone,
 {

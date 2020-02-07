@@ -52,7 +52,7 @@ pub struct WriteHandle<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
     epochs: crate::Epochs,
@@ -70,7 +70,7 @@ impl<K, V, M, S> fmt::Debug for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone + fmt::Debug,
     S: BuildHasher + Clone,
-    V: Eq + Hash + Clone + ShallowCopy + fmt::Debug,
+    V: Eq + Hash + ShallowCopy + fmt::Debug,
     M: 'static + Clone + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -95,7 +95,7 @@ pub(crate) fn new<K, V, M, S>(
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
     let m = w_handle.meta.clone();
@@ -116,7 +116,7 @@ impl<K, V, M, S> Drop for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
     fn drop(&mut self) {
@@ -167,7 +167,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
     fn wait(&mut self, epochs: &mut MutexGuard<'_, Vec<Arc<atomic::AtomicUsize>>>) {
@@ -688,7 +688,7 @@ impl<K, V, M, S> Extend<(K, V)> for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
@@ -704,7 +704,7 @@ impl<K, V, M, S> Deref for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + Clone + ShallowCopy,
+    V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
     type Target = ReadHandle<K, V, M, S>;

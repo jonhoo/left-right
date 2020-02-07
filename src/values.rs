@@ -138,7 +138,7 @@ where
 
 impl<T, S> Values<T, S>
 where
-    T: Eq + Hash + Clone,
+    T: Eq + Hash,
     S: BuildHasher + Clone,
 {
     pub(crate) fn new() -> Self {
