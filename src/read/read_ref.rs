@@ -1,8 +1,9 @@
 use super::ReadGuard;
-use crate::inner::Inner;
+use crate::{inner::Inner, values::Values};
 
 use std::borrow::Borrow;
 use std::hash::{BuildHasher, Hash};
+use std::mem::ManuallyDrop;
 
 /// A live reference into the read half of an evmap.
 ///
@@ -17,7 +18,7 @@ where
     K: Hash + Eq,
     S: BuildHasher,
 {
-    pub(super) guard: Option<ReadGuard<'rh, Inner<K, V, M, S>>>,
+    pub(super) guard: Option<ReadGuard<'rh, Inner<K, ManuallyDrop<V>, M, S>>>,
 }
 
 impl<'rh, K, V, M, S> MapReadRef<'rh, K, V, M, S>
@@ -56,7 +57,7 @@ where
         self.guard.as_ref().map(|inner| &inner.meta)
     }
 
-    /// Returns a reference to the value-set corresponding to the key.
+    /// Returns a reference to the values corresponding to the key.
     ///
     /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
     /// form *must* match those for the key type.
@@ -64,7 +65,7 @@ where
     /// Note that not all writes will be included with this read -- only those that have been
     /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
     /// function returns `None`.
-    pub fn get<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a [V]>
+    pub fn get<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a Values<V>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -73,7 +74,7 @@ where
         if !inner.is_ready() {
             return None;
         }
-        inner.data.get(key).map(|v| &v[..])
+        inner.data.get(key).map(Values::user_friendly)
     }
 
     /// Returns true if the writer has destroyed this map.
@@ -107,7 +108,7 @@ where
     Q: Eq + Hash + ?Sized,
     S: BuildHasher,
 {
-    type Output = [V];
+    type Output = Values<V>;
     fn index(&self, key: &Q) -> &Self::Output {
         self.get(key).unwrap()
     }
@@ -118,14 +119,14 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    type Item = (&'rg K, &'rg [V]);
+    type Item = (&'rg K, &'rg Values<V>);
     type IntoIter = ReadGuardIter<'rg, K, V, S>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
 }
 
-/// An [`Iterator`] over keys and value-sets in the evmap.
+/// An [`Iterator`] over keys and values in the evmap.
 #[derive(Debug)]
 pub struct ReadGuardIter<'rg, K, V, S>
 where
@@ -133,7 +134,7 @@ where
     S: BuildHasher,
 {
     iter: Option<
-        <&'rg crate::inner::MapImpl<K, crate::inner::Values<V>, S> as IntoIterator>::IntoIter,
+        <&'rg crate::inner::MapImpl<K, Values<ManuallyDrop<V>>, S> as IntoIterator>::IntoIter,
     >,
 }
 
@@ -142,10 +143,10 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    type Item = (&'rg K, &'rg [V]);
+    type Item = (&'rg K, &'rg Values<V>);
     fn next(&mut self) -> Option<Self::Item> {
         self.iter
             .as_mut()
-            .and_then(|iter| iter.next().map(|(k, v)| (k, &v[..])))
+            .and_then(|iter| iter.next().map(|(k, v)| (k, v.user_friendly())))
     }
 }

@@ -1,16 +1,13 @@
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
+use std::mem::ManuallyDrop;
 
 #[cfg(feature = "indexed")]
 pub(crate) use indexmap::IndexMap as MapImpl;
 #[cfg(not(feature = "indexed"))]
 pub(crate) use std::collections::HashMap as MapImpl;
 
-#[cfg(not(feature = "smallvec"))]
-pub(crate) type Values<T> = Vec<T>;
-
-#[cfg(feature = "smallvec")]
-pub(crate) type Values<T> = smallvec::SmallVec<[T; 1]>;
+use crate::values::Values;
 
 pub(crate) struct Inner<K, V, M, S>
 where
@@ -20,6 +17,16 @@ where
     pub(crate) data: MapImpl<K, Values<V>, S>,
     pub(crate) meta: M,
     ready: bool,
+}
+
+impl<K, V, M, S> Inner<K, ManuallyDrop<V>, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
+    pub(crate) unsafe fn do_drop(&mut self) -> &mut Inner<K, V, M, S> {
+        std::mem::transmute(self)
+    }
 }
 
 impl<K, V, M, S> fmt::Debug for Inner<K, V, M, S>
@@ -57,7 +64,7 @@ where
     }
 }
 
-impl<K, V, M, S> Inner<K, V, M, S>
+impl<K, V, M, S> Inner<K, ManuallyDrop<V>, M, S>
 where
     K: Eq + Hash,
     S: BuildHasher,
@@ -77,7 +84,13 @@ where
             ready: false,
         }
     }
+}
 
+impl<K, V, M, S> Inner<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
     pub fn mark_ready(&mut self) {
         self.ready = true;
     }

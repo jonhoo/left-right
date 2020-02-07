@@ -1,5 +1,7 @@
 extern crate evmap;
 
+use std::iter::FromIterator;
+
 macro_rules! assert_match {
     ($x:expr, $p:pat) => {
         if let $p = $x {
@@ -156,7 +158,7 @@ fn busybusybusy_inner(slow: bool) {
                             if slow {
                                 thread::sleep(time::Duration::from_millis(2));
                             }
-                            Vec::from(&*rs)
+                            Vec::from_iter(rs.iter().cloned())
                         }) {
                             Some(rs) => {
                                 assert_eq!(rs.len(), 1);
@@ -199,7 +201,7 @@ fn busybusybusy_heap() {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        match r.get(&i).map(|rs| Vec::from(&*rs)) {
+                        match r.get(&i).map(|rs| Vec::from_iter(rs.iter().cloned())) {
                             Some(rs) => {
                                 assert_eq!(rs.len(), 1);
                                 assert_eq!(rs[0].len(), i);
@@ -461,15 +463,16 @@ fn map_into() {
     w.insert(1, "x");
 
     use std::collections::HashMap;
-    let copy: HashMap<_, Vec<_>> = r.map_into(|&k, vs| (k, vs.to_vec()));
+    let copy: HashMap<_, Vec<_>> = r.map_into(|&k, vs| (k, Vec::from_iter(vs.iter().cloned())));
 
     assert_eq!(copy.len(), 2);
     assert!(copy.contains_key(&1));
     assert!(copy.contains_key(&2));
     assert_eq!(copy[&1].len(), 2);
     assert_eq!(copy[&2].len(), 1);
-    assert_eq!(copy[&1], vec!["a", "b"]);
-    assert_eq!(copy[&2], vec!["c"]);
+    assert!(copy[&1].contains(&"a"));
+    assert!(copy[&1].contains(&"b"));
+    assert!(copy[&2].contains(&"c"));
 }
 
 #[test]
@@ -503,8 +506,15 @@ fn foreach() {
     let r = r.read();
     for (k, vs) in &r {
         match k {
-            1 => assert_eq!(vs, &*vec!["a", "b"]),
-            2 => assert_eq!(vs, &*vec!["c"]),
+            1 => {
+                assert_eq!(vs.len(), 2);
+                assert!(vs.contains(&"a"));
+                assert!(vs.contains(&"b"));
+            }
+            2 => {
+                assert_eq!(vs.len(), 1);
+                assert!(vs.contains(&"c"));
+            }
             _ => unreachable!(),
         }
     }
@@ -529,5 +539,10 @@ fn retain() {
     unsafe { w.retain(0, is_even) }.refresh();
     v.retain(|i| is_even(i, false));
 
-    r.get(&0).map(|nums| assert_eq!(v, &*nums)).unwrap();
+    let mut vs = r
+        .get(&0)
+        .map(|nums| Vec::from_iter(nums.iter().cloned()))
+        .unwrap();
+    vs.sort();
+    assert_eq!(v, &*vs);
 }

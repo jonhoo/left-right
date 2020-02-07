@@ -3,6 +3,7 @@ use crate::inner::Inner;
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
+use std::mem::ManuallyDrop;
 use std::sync::atomic::AtomicPtr;
 use std::{fmt, sync};
 
@@ -17,7 +18,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub(super) inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
+    pub(super) inner: sync::Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
     pub(super) epochs: crate::Epochs,
 }
 
