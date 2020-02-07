@@ -250,17 +250,19 @@ where
 
                 // XXX: it really is too bad that we can't just .clone() the data here and save
                 // ourselves a lot of re-hashing, re-bucketization, etc.
-                w_handle
-                    .data
-                    .extend(r_handle.data.iter_mut().map(|(k, vs)| {
-                        (
-                            k.clone(),
-                            vs.iter()
-                                .map(|v| unsafe { (&**v).shallow_copy() })
-                                .collect(),
-                        )
-                    }));
+                w_handle.data.extend(r_handle.data.iter().map(|(k, vs)| {
+                    (
+                        k.clone(),
+                        Values::from_iter(
+                            vs.iter().map(|v| unsafe { (&**v).shallow_copy() }),
+                            r_handle.data.hasher(),
+                        ),
+                    )
+                }));
             }
+
+            // safety: we will not swap while we hold this reference
+            let r_hasher = unsafe { self.r_handle.hasher() };
 
             // the w_handle map has not seen any of the writes in the oplog
             // the r_handle map has not seen any of the writes following swap_index
@@ -279,12 +281,12 @@ where
                 // without calling their destructor).
                 for op in self.oplog.drain(0..self.swap_index) {
                     // because we are applying second, we _do_ want to perform drops
-                    Self::apply_second(unsafe { w_handle.do_drop() }, op);
+                    Self::apply_second(unsafe { w_handle.do_drop() }, op, r_hasher);
                 }
             }
             // the rest have to be cloned because they'll also be needed by the r_handle map
             for op in self.oplog.iter_mut() {
-                Self::apply_first(w_handle, op);
+                Self::apply_first(w_handle, op, r_hasher);
             }
             // the w_handle map is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
@@ -380,9 +382,10 @@ where
             self.oplog.push(op);
         } else {
             // we know there are no outstanding w_handle readers, so we can modify it directly!
-            let inner = self.w_handle.as_mut().unwrap();
+            let w_inner = self.w_handle.as_mut().unwrap();
+            let r_hasher = unsafe { self.r_handle.hasher() };
             // because we are applying second, we _do_ want to perform drops
-            Self::apply_second(unsafe { inner.do_drop() }, op);
+            Self::apply_second(unsafe { w_inner.do_drop() }, op, r_hasher);
             // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
 
@@ -503,7 +506,7 @@ where
     /// The value-bag will only disappear from readers after the next call to `refresh()`.
     ///
     /// Note that this does a _swap-remove_, so use it carefully.
-    pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &Values<V>)> {
+    pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &Values<V, S>)> {
         self.add_op(Operation::EmptyRandom(index));
         // the actual emptying won't happen until refresh(), which needs &mut self
         // so it's okay for us to return the references here
@@ -518,7 +521,11 @@ where
     }
 
     /// Apply ops in such a way that no values are dropped, only forgotten
-    fn apply_first(inner: &mut Inner<K, ManuallyDrop<V>, M, S>, op: &mut Operation<K, V>) {
+    fn apply_first(
+        inner: &mut Inner<K, ManuallyDrop<V>, M, S>,
+        op: &mut Operation<K, V>,
+        hasher: &S,
+    ) {
         match *op {
             Operation::Replace(ref key, ref mut value) => {
                 let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
@@ -530,7 +537,7 @@ where
                 // so it will switch back to inline allocation for the subsequent push.
                 vs.shrink_to_fit();
 
-                vs.push(unsafe { value.shallow_copy() });
+                vs.push(unsafe { value.shallow_copy() }, hasher);
             }
             Operation::Clear(ref key) => {
                 inner
@@ -544,7 +551,7 @@ where
                     .data
                     .entry(key.clone())
                     .or_insert_with(Values::new)
-                    .push(unsafe { value.shallow_copy() });
+                    .push(unsafe { value.shallow_copy() }, hasher);
             }
             Operation::Empty(ref key) => {
                 #[cfg(not(feature = "indexed"))]
@@ -590,17 +597,17 @@ where
             },
             Operation::Reserve(ref key, additional) => match inner.data.entry(key.clone()) {
                 Entry::Occupied(mut entry) => {
-                    entry.get_mut().reserve(additional);
+                    entry.get_mut().reserve(additional, hasher);
                 }
                 Entry::Vacant(entry) => {
-                    entry.insert(Values::with_capacity(additional));
+                    entry.insert(Values::with_capacity_and_hasher(additional, hasher));
                 }
             },
         }
     }
 
     /// Apply operations while allowing dropping of values
-    fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
+    fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>, hasher: &S) {
         match op {
             Operation::Replace(key, value) => {
                 let v = inner.data.entry(key).or_insert_with(Values::new);
@@ -610,7 +617,7 @@ where
 
                 v.shrink_to_fit();
 
-                v.push(value);
+                v.push(value, hasher);
             }
             Operation::Clear(key) => {
                 inner.data.entry(key).or_insert_with(Values::new).clear();
@@ -620,7 +627,7 @@ where
                     .data
                     .entry(key)
                     .or_insert_with(Values::new)
-                    .push(value);
+                    .push(value, hasher);
             }
             Operation::Empty(key) => {
                 #[cfg(not(feature = "indexed"))]
@@ -665,10 +672,10 @@ where
             },
             Operation::Reserve(key, additional) => match inner.data.entry(key) {
                 Entry::Occupied(mut entry) => {
-                    entry.get_mut().reserve(additional);
+                    entry.get_mut().reserve(additional, hasher);
                 }
                 Entry::Vacant(entry) => {
-                    entry.insert(Values::with_capacity(additional));
+                    entry.insert(Values::with_capacity_and_hasher(additional, hasher));
                 }
             },
         }

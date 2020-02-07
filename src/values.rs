@@ -1,27 +1,36 @@
 use std::borrow::Borrow;
-use std::hash::Hash;
+use std::fmt;
+use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
 
 const BAG_THRESHOLD: usize = 32;
 
 /// A bag of values for a given key in the evmap.
-#[derive(Debug)]
 #[repr(transparent)]
-pub struct Values<T>(ValuesInner<T>);
+pub struct Values<T, S = std::collections::hash_map::RandomState>(ValuesInner<T, S>);
 
-#[derive(Debug)]
-enum ValuesInner<T> {
-    Short(smallvec::SmallVec<[T; 1]>),
-    Long(hashbag::HashBag<T>),
+impl<T, S> fmt::Debug for Values<T, S>
+where
+    T: fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_set().entries(self.iter()).finish()
+    }
 }
 
-impl<T> Values<ManuallyDrop<T>> {
-    pub(crate) fn user_friendly(&self) -> &Values<T> {
+enum ValuesInner<T, S> {
+    Short(smallvec::SmallVec<[T; 1]>),
+    Long(hashbag::HashBag<T, S>),
+}
+
+impl<T, S> Values<ManuallyDrop<T>, S> {
+    pub(crate) fn user_friendly(&self) -> &Values<T, S> {
         unsafe { std::mem::transmute(self) }
     }
 }
 
-impl<T> Values<T> {
+impl<T, S> Values<T, S> {
     /// Returns the number of values.
     pub fn len(&self) -> usize {
         match self.0 {
@@ -41,7 +50,7 @@ impl<T> Values<T> {
     /// An iterator visiting all elements in arbitrary order.
     ///
     /// The iterator element type is &'a T.
-    pub fn iter(&self) -> ValuesIter<'_, T> {
+    pub fn iter(&self) -> ValuesIter<'_, T, S> {
         match self.0 {
             ValuesInner::Short(ref v) => ValuesIter::Short(v.iter()),
             ValuesInner::Long(ref v) => ValuesIter::Long(v.iter()),
@@ -57,6 +66,7 @@ impl<T> Values<T> {
         T: Borrow<Q>,
         Q: Eq + Hash,
         T: Eq + Hash,
+        S: BuildHasher,
     {
         match self.0 {
             ValuesInner::Short(ref v) => v.iter().any(|v| v.borrow() == value),
@@ -65,8 +75,8 @@ impl<T> Values<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a Values<T> {
-    type IntoIter = ValuesIter<'a, T>;
+impl<'a, T, S> IntoIterator for &'a Values<T, S> {
+    type IntoIter = ValuesIter<'a, T, S>;
     type Item = &'a T;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -74,14 +84,14 @@ impl<'a, T> IntoIterator for &'a Values<T> {
 }
 
 #[derive(Debug)]
-pub enum ValuesIter<'a, T> {
+pub enum ValuesIter<'a, T, S> {
     #[doc(hidden)]
     Short(<&'a smallvec::SmallVec<[T; 1]> as IntoIterator>::IntoIter),
     #[doc(hidden)]
-    Long(<&'a hashbag::HashBag<T> as IntoIterator>::IntoIter),
+    Long(<&'a hashbag::HashBag<T, S> as IntoIterator>::IntoIter),
 }
 
-impl<'a, T> Iterator for ValuesIter<'a, T> {
+impl<'a, T, S> Iterator for ValuesIter<'a, T, S> {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
         match *self {
@@ -98,31 +108,34 @@ impl<'a, T> Iterator for ValuesIter<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for ValuesIter<'a, T>
+impl<'a, T, S> ExactSizeIterator for ValuesIter<'a, T, S>
 where
     <&'a smallvec::SmallVec<[T; 1]> as IntoIterator>::IntoIter: ExactSizeIterator,
-    <&'a hashbag::HashBag<T> as IntoIterator>::IntoIter: ExactSizeIterator,
+    <&'a hashbag::HashBag<T, S> as IntoIterator>::IntoIter: ExactSizeIterator,
 {
 }
 
-impl<'a, T> std::iter::FusedIterator for ValuesIter<'a, T>
+impl<'a, T, S> std::iter::FusedIterator for ValuesIter<'a, T, S>
 where
     <&'a smallvec::SmallVec<[T; 1]> as IntoIterator>::IntoIter: std::iter::FusedIterator,
-    <&'a hashbag::HashBag<T> as IntoIterator>::IntoIter: std::iter::FusedIterator,
+    <&'a hashbag::HashBag<T, S> as IntoIterator>::IntoIter: std::iter::FusedIterator,
 {
 }
 
-impl<T> Values<T>
+impl<T, S> Values<T, S>
 where
     T: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
 {
     pub(crate) fn new() -> Self {
         Self(ValuesInner::Short(smallvec::SmallVec::new()))
     }
 
-    pub(crate) fn with_capacity(capacity: usize) -> Self {
+    pub(crate) fn with_capacity_and_hasher(capacity: usize, hasher: &S) -> Self {
         if capacity > BAG_THRESHOLD {
-            Self(ValuesInner::Long(hashbag::HashBag::with_capacity(capacity)))
+            Self(ValuesInner::Long(
+                hashbag::HashBag::with_capacity_and_hasher(capacity, hasher.clone()),
+            ))
         } else {
             Self(ValuesInner::Short(smallvec::SmallVec::with_capacity(
                 capacity,
@@ -138,6 +151,17 @@ where
                 // we want to potentially "downgrade" from a Long to a Short
                 if v.len() < BAG_THRESHOLD {
                     let mut short = smallvec::SmallVec::with_capacity(v.len());
+                    // NOTE: this drain _must_ have a deterministic iteration order.
+                    // that is, the items must be yielded in the same order regardless of whether
+                    // we are iterating on the left or right map. otherwise, this happens;
+                    //
+                    //   1. after shrink_to_fit, left value is AA*B*, right is B*AA*.
+                    //      X* elements are shallow copies of each other
+                    //   2. swap_remove B (1st); left is AA*B*, right is now A*A
+                    //   3. swap_remove B (2nd); left drops B* and is now AA*, right is A*A
+                    //   4. swap_remove A (1st); left is now A*, right is A*A
+                    //   5. swap_remove A (2nd); left is A*, right drops A* and is now A
+                    //      right dropped A* while A still has it -- no okay!
                     for (row, n) in v.drain() {
                         // there may be more than one instance of row in the bag. if there is, we
                         // need to clone them before inserting them into the smallvec. if we did
@@ -148,6 +172,7 @@ where
                         // the user has already given us a clone of (when they initially pushed
                         // it!).
                         for _ in 1..n {
+                            // TODO: need shadow copy in second
                             short.push(row.clone());
                         }
                         short.push(row);
@@ -181,9 +206,10 @@ where
         }
     }
 
-    fn to_long(&mut self, capacity: usize) {
+    fn to_long(&mut self, capacity: usize, hasher: &S) {
         if let ValuesInner::Short(ref mut v) = self.0 {
-            let mut long = hashbag::HashBag::with_capacity(capacity);
+            let mut long = hashbag::HashBag::with_capacity_and_hasher(capacity, hasher.clone());
+
             // NOTE: this _may_ drop some values since the bag does not keep duplicates.
             // that should be fine -- if we drop for the first time, we're dropping
             // ManuallyDrop, which won't actually drop the shallow copies. when we drop for
@@ -195,12 +221,12 @@ where
         }
     }
 
-    pub(crate) fn reserve(&mut self, additional: usize) {
+    pub(crate) fn reserve(&mut self, additional: usize, hasher: &S) {
         match self.0 {
             ValuesInner::Short(ref mut v) => {
                 let n = v.len() + additional;
                 if n >= BAG_THRESHOLD {
-                    self.to_long(n);
+                    self.to_long(n, hasher);
                 } else {
                     v.reserve(additional)
                 }
@@ -209,13 +235,13 @@ where
         }
     }
 
-    pub(crate) fn push(&mut self, value: T) {
+    pub(crate) fn push(&mut self, value: T, hasher: &S) {
         match self.0 {
             ValuesInner::Short(ref mut v) => {
                 // we may want to upgrade to a Long..
                 let n = v.len() + 1;
                 if n >= BAG_THRESHOLD {
-                    self.to_long(n);
+                    self.to_long(n, hasher);
                     if let ValuesInner::Long(ref mut v) = self.0 {
                         v.insert(value);
                     } else {
@@ -240,20 +266,18 @@ where
             ValuesInner::Long(ref mut v) => v.retain(|v, n| if f(v) { n } else { 0 }),
         }
     }
-}
 
-impl<A> std::iter::FromIterator<A> for Values<A>
-where
-    A: Hash + Eq,
-{
-    fn from_iter<T>(iter: T) -> Self
+    pub(crate) fn from_iter<I>(iter: I, hasher: &S) -> Self
     where
-        T: IntoIterator<Item = A>,
+        I: IntoIterator<Item = T>,
     {
         let iter = iter.into_iter();
         if iter.size_hint().0 > BAG_THRESHOLD {
-            Self(ValuesInner::Long(hashbag::HashBag::from_iter(iter)))
+            let mut long = hashbag::HashBag::with_hasher(hasher.clone());
+            long.extend(iter);
+            Self(ValuesInner::Long(long))
         } else {
+            use std::iter::FromIterator;
             Self(ValuesInner::Short(smallvec::SmallVec::from_iter(iter)))
         }
     }

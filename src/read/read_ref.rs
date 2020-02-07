@@ -65,7 +65,7 @@ where
     /// Note that not all writes will be included with this read -- only those that have been
     /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
     /// function returns `None`.
-    pub fn get<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a Values<V>>
+    pub fn get<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a Values<V, S>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -108,7 +108,7 @@ where
     Q: Eq + Hash + ?Sized,
     S: BuildHasher,
 {
-    type Output = Values<V>;
+    type Output = Values<V, S>;
     fn index(&self, key: &Q) -> &Self::Output {
         self.get(key).unwrap()
     }
@@ -119,7 +119,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    type Item = (&'rg K, &'rg Values<V>);
+    type Item = (&'rg K, &'rg Values<V, S>);
     type IntoIter = ReadGuardIter<'rg, K, V, S>;
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -134,7 +134,7 @@ where
     S: BuildHasher,
 {
     iter: Option<
-        <&'rg crate::inner::MapImpl<K, Values<ManuallyDrop<V>>, S> as IntoIterator>::IntoIter,
+        <&'rg crate::inner::MapImpl<K, Values<ManuallyDrop<V>, S>, S> as IntoIterator>::IntoIter,
     >,
 }
 
@@ -143,7 +143,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    type Item = (&'rg K, &'rg Values<V>);
+    type Item = (&'rg K, &'rg Values<V, S>);
     fn next(&mut self) -> Option<Self::Item> {
         self.iter
             .as_mut()

@@ -14,7 +14,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub(crate) data: MapImpl<K, Values<V>, S>,
+    pub(crate) data: MapImpl<K, Values<V, S>, S>,
     pub(crate) meta: M,
     ready: bool,
 }

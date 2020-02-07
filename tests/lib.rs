@@ -613,12 +613,24 @@ fn bigbag() {
     use std::thread;
     let (r, mut w) = evmap::new();
 
-    thread::spawn(move || loop {
+    let ndistinct = 32;
+
+    let jh = thread::spawn(move || loop {
         let map = r.read();
+        if map.is_destroyed() {
+            break;
+        }
         if let Some(rs) = map.get(&1) {
-            assert!(rs.capacity() >= rs.len());
-            for i in 0..rs.len() {
-                assert!(rs.contains(&i));
+            assert!(rs.len() <= ndistinct * (ndistinct - 1));
+            let mut found = true;
+            for i in 0..ndistinct {
+                if found {
+                    if !rs.contains(&[i][..]) {
+                        found = false;
+                    }
+                } else {
+                    assert!(!found);
+                }
             }
             assert_eq!(rs.into_iter().count(), rs.len());
             drop(map);
@@ -626,18 +638,27 @@ fn bigbag() {
         }
     });
 
-    for _ in 0..8 {
-        for i in 0..128 {
-            w.insert(1, i);
-            w.refresh();
+    for _ in 0..64 {
+        for i in 1..ndistinct {
+            // add some duplicates too
+            // total:
+            for _ in 0..i {
+                w.insert(1, vec![i]);
+                w.refresh();
+            }
         }
-        for i in (0..128).rev() {
-            w.remove(1, i);
-            w.fit(1);
-            w.refresh();
+        for i in (1..ndistinct).rev() {
+            for _ in 0..i {
+                w.remove(1, vec![i]);
+                w.fit(1);
+                w.refresh();
+            }
         }
         w.empty(1);
     }
+
+    drop(w);
+    jh.join().unwrap();
 }
 
 #[test]

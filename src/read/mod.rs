@@ -181,6 +181,17 @@ where
         }
     }
 
+    /// Safety: only safe is long as it is guarnteed that no swaps will happen for the lifetime of
+    /// the returned reference.
+    pub(crate) unsafe fn hasher(&self) -> &S {
+        self.inner
+            .load(atomic::Ordering::Acquire)
+            .as_ref()
+            .unwrap()
+            .data
+            .hasher()
+    }
+
     /// Take out a guarded live reference to the read side of the map.
     ///
     /// This lets you perform more complex read operations on the map.
@@ -210,7 +221,7 @@ where
     }
 
     /// Internal version of `get_and`
-    fn get_raw<Q: ?Sized>(&self, key: &Q) -> Option<ReadGuard<'_, Values<ManuallyDrop<V>>>>
+    fn get_raw<Q: ?Sized>(&self, key: &Q) -> Option<ReadGuard<'_, Values<ManuallyDrop<V>, S>>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -233,7 +244,7 @@ where
     /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
     /// function returns `None`.
     #[inline]
-    pub fn get<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, Values<V>>>
+    pub fn get<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, Values<V, S>>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -255,7 +266,7 @@ where
     /// function returns `None`.
     ///
     /// If no values exist for the given key, `Some(None, _)` is returned.
-    pub fn meta_get<Q: ?Sized>(&self, key: &Q) -> Option<(Option<ReadGuard<'_, Values<V>>>, M)>
+    pub fn meta_get<Q: ?Sized>(&self, key: &Q) -> Option<(Option<ReadGuard<'_, Values<V, S>>>, M)>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -293,7 +304,7 @@ where
     /// Read all values in the map, and transform them into a new collection.
     pub fn map_into<Map, Collector, Target>(&self, mut f: Map) -> Collector
     where
-        Map: FnMut(&K, &Values<V>) -> Target,
+        Map: FnMut(&K, &Values<V, S>) -> Target,
         Collector: FromIterator<Target>,
     {
         Collector::from_iter(self.read().iter().map(|(k, v)| f(k, v)))
