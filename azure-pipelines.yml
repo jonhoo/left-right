@@ -7,6 +7,7 @@ jobs:
    displayName: "Run miri on test suite"
    pool:
      vmImage: ubuntu-16.04
+   continueOnError: true
    steps:
      - template: install-rust.yml@templates
        parameters:
