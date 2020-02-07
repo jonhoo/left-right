@@ -1,10 +1,12 @@
-use crate::inner::{Inner, Values};
+use crate::inner::Inner;
+use crate::values::Values;
 
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::iter::FromIterator;
 use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
@@ -29,7 +31,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>,
+    pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
     pub(crate) epochs: crate::Epochs,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
     my_epoch: sync::atomic::AtomicUsize,
@@ -72,7 +74,7 @@ where
 }
 
 pub(crate) fn new<K, V, M, S>(
-    inner: Inner<K, V, M, S>,
+    inner: Inner<K, ManuallyDrop<V>, M, S>,
     epochs: crate::Epochs,
 ) -> ReadHandle<K, V, M, S>
 where
@@ -88,7 +90,10 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    fn new(inner: sync::Arc<AtomicPtr<Inner<K, V, M, S>>>, epochs: crate::Epochs) -> Self {
+    fn new(
+        inner: sync::Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
+        epochs: crate::Epochs,
+    ) -> Self {
         // tell writer about our epoch tracker
         let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
         epochs.lock().unwrap().push(Arc::clone(&epoch));
@@ -118,7 +123,7 @@ where
     S: BuildHasher,
     M: Clone,
 {
-    fn handle(&self) -> Option<ReadGuard<'_, Inner<K, V, M, S>>> {
+    fn handle(&self) -> Option<ReadGuard<'_, Inner<K, ManuallyDrop<V>, M, S>>> {
         // once we update our epoch, the writer can no longer do a swap until we set the MSB to
         // indicate that we've finished our read. however, we still need to deal with the case of a
         // race between when the writer reads our epoch and when they decide to make the swap.
@@ -176,6 +181,17 @@ where
         }
     }
 
+    /// Safety: only safe is long as it is guarnteed that no swaps will happen for the lifetime of
+    /// the returned reference.
+    pub(crate) unsafe fn hasher(&self) -> &S {
+        self.inner
+            .load(atomic::Ordering::Acquire)
+            .as_ref()
+            .unwrap()
+            .data
+            .hasher()
+    }
+
     /// Take out a guarded live reference to the read side of the map.
     ///
     /// This lets you perform more complex read operations on the map.
@@ -205,7 +221,7 @@ where
     }
 
     /// Internal version of `get_and`
-    fn get_raw<Q: ?Sized>(&self, key: &Q) -> Option<ReadGuard<'_, Values<V>>>
+    fn get_raw<Q: ?Sized>(&self, key: &Q) -> Option<ReadGuard<'_, Values<ManuallyDrop<V>, S>>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -217,7 +233,7 @@ where
         inner.map_opt(|inner| inner.data.get(key))
     }
 
-    /// Returns a guarded reference to the value-set corresponding to the key.
+    /// Returns a guarded reference to the values corresponding to the key.
     ///
     /// While the guard lives, the map cannot be refreshed.
     ///
@@ -228,16 +244,16 @@ where
     /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
     /// function returns `None`.
     #[inline]
-    pub fn get<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, [V]>>
+    pub fn get<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, Values<V, S>>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
         // call `borrow` here to monomorphize `get_raw` fewer times
-        Some(self.get_raw(key.borrow())?.map_ref(|values| &**values))
+        Some(self.get_raw(key.borrow())?.map_ref(Values::user_friendly))
     }
 
-    /// Returns a guarded reference to the value-set corresponding to the key along with the map
+    /// Returns a guarded reference to the values corresponding to the key along with the map
     /// meta.
     ///
     /// While the guard lives, the map cannot be refreshed.
@@ -250,7 +266,7 @@ where
     /// function returns `None`.
     ///
     /// If no values exist for the given key, `Some(None, _)` is returned.
-    pub fn meta_get<Q: ?Sized>(&self, key: &Q) -> Option<(Option<ReadGuard<'_, [V]>>, M)>
+    pub fn meta_get<Q: ?Sized>(&self, key: &Q) -> Option<(Option<ReadGuard<'_, Values<V, S>>>, M)>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -262,7 +278,7 @@ where
         let meta = inner.meta.clone();
         let res = inner
             .map_opt(|inner| inner.data.get(key))
-            .map(|r| r.map_ref(|v| &**v));
+            .map(|r| r.map_ref(Values::user_friendly));
         Some((res, meta))
     }
 
@@ -288,7 +304,7 @@ where
     /// Read all values in the map, and transform them into a new collection.
     pub fn map_into<Map, Collector, Target>(&self, mut f: Map) -> Collector
     where
-        Map: FnMut(&K, &[V]) -> Target,
+        Map: FnMut(&K, &Values<V, S>) -> Target,
         Collector: FromIterator<Target>,
     {
         Collector::from_iter(self.read().iter().map(|(k, v)| f(k, v)))
@@ -306,13 +322,13 @@ mod test {
     #[test]
     fn reserve_and_fit() {
         const MIN: usize = (1 << 4) + 1;
-        const MAX: usize = (1 << 6);
+        const MAX: usize = 1 << 6;
 
         let (r, mut w) = new();
 
         w.reserve(0, MAX).refresh();
 
-        assert_eq!(r.get_raw(&0).unwrap().capacity(), MAX);
+        assert!(r.get_raw(&0).unwrap().capacity() >= MAX);
 
         for i in 0..MIN {
             w.insert(0, i);

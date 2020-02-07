@@ -181,22 +181,21 @@
 //! approximately twice of that of a regular `HashMap`, and more if writes rarely refresh after
 //! writing.
 //!
-//! # Small Vector Optimization
+//! # Value storage
 //!
-//! By default, the value-set for each key in the map uses the `smallvec` crate to keep a
-//! maximum of one element stored inline with the map, as opposed to separately heap-allocated
-//! with a plain `Vec`. Operations such as `Fit` and `Replace` will automatically switch
-//! back to the inline storage if possible. This is ideal for maps that mostly use one
-//! element per key, as it can improvate memory locality with less indirection.
-//!
-//! If this is undesirable, simple set:
-//!
-//! ```toml
-//! default-features = false
-//! ```
-//!
-//! in the `evmap` dependency entry, and `Vec` will always be used internally.
+//! The values for each key in the map are stored in [`Values`]. Conceptually, each `Values` is a
+//! _bag_ or _multiset_; it can store multiple copies of the same value. `evmap` applies some
+//! cleverness in an attempt to reduce unnecessary allocations and keep the cost of operations on
+//! even large value-bags small. For small bags, `Values` uses the `smallvec` crate. This avoids
+//! allocation entirely for single-element bags, and uses a `Vec` if the bag is relatively small.
+//! For large bags, `Values` uses the `hashbag` crate, which enables `evmap` to efficiently look up
+//! and remove specific elements in the value bag. For bags larger than one element, but smaller
+//! than the threshold for moving to `hashbag`, we use `smallvec` to avoid unnecessary hashing.
+//! Operations such as `Fit` and `Replace` will automatically switch back to the inline storage if
+//! possible. This is ideal for maps that mostly use one element per key, as it can improvate
+//! memory locality with less indirection.
 #![deny(missing_docs, rust_2018_idioms, missing_debug_implementations)]
+#![allow(clippy::type_complexity)]
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -206,12 +205,15 @@ use std::sync::{atomic, Arc, Mutex};
 mod inner;
 use crate::inner::Inner;
 
+mod values;
+pub use values::Values;
+
 pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 
 /// Unary predicate used to retain elements.
 ///
-/// The arguments to the predicate function are the current value in the value-set, and `true` if
-/// this is the first value in the value-set on the second map, or `false` otherwise.
+/// The predicate function is called once for each distinct value, and `true` if this is the
+/// _first_ call to the predicate on the _second_ application of the operation.
 pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send + Sync>);
 
 impl<V> Predicate<V> {
@@ -262,16 +264,16 @@ pub enum Operation<K, V> {
     Purge,
     /// Retains all values matching the given predicate.
     Retain(K, Predicate<V>),
-    /// Shrinks a value-set to it's minimum necessary size, freeing memory
-    /// and potentially improving cache locality if the `smallvec` feature is used.
+    /// Shrinks [`Values`] to their minimum necessary size, freeing memory
+    /// and potentially improving cache locality.
     ///
-    /// If no key is given, all value-sets will shrink to fit.
+    /// If no key is given, all `Values` will shrink to fit.
     Fit(Option<K>),
-    /// Reserves capacity for some number of additional elements in a value-set,
-    /// or creates an empty value-set for this key with the given capacity if
-    /// it doesn't already exist.
+    /// Reserves capacity for some number of additional elements in [`Values`]
+    /// for the given key. If the given key does not exist, allocate an empty
+    /// `Values` with the given capacity.
     ///
-    /// This can improve performance by pre-allocating space for large value-sets.
+    /// This can improve performance by pre-allocating space for large bags of values.
     Reserve(K, usize),
 }
 
@@ -360,7 +362,7 @@ where
     where
         K: Eq + Hash + Clone,
         S: BuildHasher + Clone,
-        V: Eq + ShallowCopy,
+        V: Eq + Hash + Clone + ShallowCopy,
         M: 'static + Clone,
     {
         let epochs = Default::default();
@@ -388,7 +390,7 @@ pub fn new<K, V>() -> (
 )
 where
     K: Eq + Hash + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
 {
     Options::default().construct()
 }
@@ -405,7 +407,7 @@ pub fn with_meta<K, V, M>(
 )
 where
     K: Eq + Hash + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
@@ -421,7 +423,7 @@ pub fn with_hasher<K, V, M, S>(
 ) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
 where
     K: Eq + Hash + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
     S: BuildHasher + Clone,
 {

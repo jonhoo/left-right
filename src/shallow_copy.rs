@@ -1,5 +1,6 @@
 //! Types that can be cheaply aliased.
 
+use std::mem::ManuallyDrop;
 use std::ops::{Deref, DerefMut};
 
 /// Types that implement this trait can be cheaply copied by (potentially) aliasing the data they
@@ -10,12 +11,14 @@ use std::ops::{Deref, DerefMut};
 ///
 /// ```rust
 /// # use evmap::ShallowCopy;
+/// use std::mem::ManuallyDrop;
+///
 /// #[derive(Copy, Clone)]
 /// struct T;
 ///
 /// impl ShallowCopy for T {
-///     unsafe fn shallow_copy(&mut self) -> Self {
-///         *self
+///     unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+///         ManuallyDrop::new(*self)
 ///     }
 /// }
 /// ```
@@ -26,9 +29,11 @@ use std::ops::{Deref, DerefMut};
 pub trait ShallowCopy {
     /// Perform an aliasing copy of this value.
     ///
+    /// # Safety
+    ///
     /// The use of this method is *only* safe if the values involved are never mutated, and only
     /// one of the copies is dropped; the remaining copies must be forgotten with `mem::forget`.
-    unsafe fn shallow_copy(&mut self) -> Self;
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self>;
 }
 
 use std::sync::Arc;
@@ -36,8 +41,8 @@ impl<T> ShallowCopy for Arc<T>
 where
     T: ?Sized,
 {
-    unsafe fn shallow_copy(&mut self) -> Self {
-        Arc::from_raw(&**self as *const _)
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        ManuallyDrop::new(Arc::from_raw(&**self as *const _))
     }
 }
 
@@ -46,8 +51,8 @@ impl<T> ShallowCopy for Rc<T>
 where
     T: ?Sized,
 {
-    unsafe fn shallow_copy(&mut self) -> Self {
-        Rc::from_raw(&**self as *const _)
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        ManuallyDrop::new(Rc::from_raw(&**self as *const _))
     }
 }
 
@@ -55,35 +60,35 @@ impl<T> ShallowCopy for Box<T>
 where
     T: ?Sized,
 {
-    unsafe fn shallow_copy(&mut self) -> Self {
-        Box::from_raw(&mut **self as *mut _)
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        ManuallyDrop::new(Box::from_raw(&**self as *const _ as *mut _))
     }
 }
 
 impl ShallowCopy for String {
-    unsafe fn shallow_copy(&mut self) -> Self {
-        let buf = self.as_bytes_mut().as_mut_ptr();
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        let buf = self.as_bytes().as_ptr();
         let len = self.len();
         let cap = self.capacity();
-        String::from_raw_parts(buf, len, cap)
+        ManuallyDrop::new(String::from_raw_parts(buf as *mut _, len, cap))
     }
 }
 
 impl<T> ShallowCopy for Vec<T> {
-    unsafe fn shallow_copy(&mut self) -> Self {
-        let ptr = self.as_mut_ptr();
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        let ptr = self.as_ptr() as *mut _;
         let len = self.len();
         let cap = self.capacity();
-        Vec::from_raw_parts(ptr, len, cap)
+        ManuallyDrop::new(Vec::from_raw_parts(ptr, len, cap))
     }
 }
 
 #[cfg(feature = "bytes")]
 impl ShallowCopy for bytes::Bytes {
-    unsafe fn shallow_copy(&mut self) -> Self {
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
         let len = self.len();
         let buf: &'static [u8] = std::slice::from_raw_parts(self.as_ptr(), len);
-        bytes::Bytes::from_static(buf)
+        ManuallyDrop::new(bytes::Bytes::from_static(buf))
     }
 }
 
@@ -91,8 +96,8 @@ impl<'a, T> ShallowCopy for &'a T
 where
     T: ?Sized,
 {
-    unsafe fn shallow_copy(&mut self) -> Self {
-        &*self
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        ManuallyDrop::new(&*self)
     }
 }
 
@@ -114,8 +119,8 @@ impl<T> ShallowCopy for CopyValue<T>
 where
     T: Copy,
 {
-    unsafe fn shallow_copy(&mut self) -> Self {
-        CopyValue(self.0)
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        ManuallyDrop::new(CopyValue(self.0))
     }
 }
 
@@ -135,8 +140,8 @@ impl<T> DerefMut for CopyValue<T> {
 macro_rules! impl_shallow_copy_for_copy_primitives {
     ($($t:ty)*) => ($(
         impl ShallowCopy for $t {
-            unsafe fn shallow_copy(&mut self) -> Self {
-                *self
+            unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+                ManuallyDrop::new(*self)
             }
         }
     )*)
@@ -152,8 +157,8 @@ macro_rules! tuple_impls {
     )+) => {
         $(
             impl<$($T:ShallowCopy),+> ShallowCopy for ($($T,)+) {
-                unsafe fn shallow_copy(&mut self) -> Self {
-                    ($(self.$idx.shallow_copy(),)+)
+                unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+                    ManuallyDrop::new(($(ManuallyDrop::into_inner(self.$idx.shallow_copy()),)+))
                 }
             }
         )+

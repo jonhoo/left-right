@@ -1,9 +1,11 @@
 use super::{Operation, Predicate, ShallowCopy};
-use crate::inner::{Inner, Values};
+use crate::inner::Inner;
 use crate::read::ReadHandle;
+use crate::values::Values;
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
+use std::mem::ManuallyDrop;
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{fmt, mem, thread};
@@ -50,11 +52,11 @@ pub struct WriteHandle<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
 {
     epochs: crate::Epochs,
-    w_handle: Option<Box<Inner<K, V, M, S>>>,
+    w_handle: Option<Box<Inner<K, ManuallyDrop<V>, M, S>>>,
     oplog: Vec<Operation<K, V>>,
     swap_index: usize,
     r_handle: ReadHandle<K, V, M, S>,
@@ -68,7 +70,7 @@ impl<K, V, M, S> fmt::Debug for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone + fmt::Debug,
     S: BuildHasher + Clone,
-    V: Eq + ShallowCopy + fmt::Debug,
+    V: Eq + Hash + Clone + ShallowCopy + fmt::Debug,
     M: 'static + Clone + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -86,14 +88,14 @@ where
 }
 
 pub(crate) fn new<K, V, M, S>(
-    w_handle: Inner<K, V, M, S>,
+    w_handle: Inner<K, ManuallyDrop<V>, M, S>,
     epochs: crate::Epochs,
     r_handle: ReadHandle<K, V, M, S>,
 ) -> WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
 {
     let m = w_handle.meta.clone();
@@ -114,7 +116,7 @@ impl<K, V, M, S> Drop for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
 {
     fn drop(&mut self) {
@@ -146,26 +148,18 @@ where
 
         let w_handle = &mut self.w_handle.as_mut().unwrap().data;
 
-        #[cfg(not(feature = "indexed"))]
-        let drain = w_handle.drain();
-        #[cfg(feature = "indexed")]
-        let drain = w_handle.drain(..);
-
         // all readers have now observed the NULL, so we own both handles.
         // all records are duplicated between w_handle and r_handle.
         // since the two maps are exactly equal, we need to make sure that we *don't* call the
         // destructors of any of the values that are in our map, as they'll all be called when the
-        // last read handle goes out of scope.
-        for (_, mut vs) in drain {
-            for v in vs.drain(..) {
-                mem::forget(v);
-            }
-        }
+        // last read handle goes out of scope. to do so, we first clear w_handle, which won't drop
+        // any elements since its values are kept as ManuallyDrop:
+        w_handle.clear();
 
-        // then we drop r_handle, which will free all the records. this is safe, since we know that
-        // no readers are using this pointer anymore (due to the .wait() following swapping the
-        // pointer with NULL).
-        drop(unsafe { Box::from_raw(r_handle) });
+        // then we transmute r_handle to remove the ManuallyDrop, and then drop it, which will free
+        // all the records. this is safe, since we know that no readers are using this pointer
+        // anymore (due to the .wait() following swapping the pointer with NULL).
+        drop(unsafe { Box::from_raw(r_handle as *mut Inner<K, V, M, S>) });
     }
 }
 
@@ -173,7 +167,7 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
 {
     fn wait(&mut self, epochs: &mut MutexGuard<'_, Vec<Arc<atomic::AtomicUsize>>>) {
@@ -256,15 +250,19 @@ where
 
                 // XXX: it really is too bad that we can't just .clone() the data here and save
                 // ourselves a lot of re-hashing, re-bucketization, etc.
-                w_handle
-                    .data
-                    .extend(r_handle.data.iter_mut().map(|(k, vs)| {
-                        (
-                            k.clone(),
-                            vs.iter_mut().map(|v| unsafe { v.shallow_copy() }).collect(),
-                        )
-                    }));
+                w_handle.data.extend(r_handle.data.iter().map(|(k, vs)| {
+                    (
+                        k.clone(),
+                        Values::from_iter(
+                            vs.iter().map(|v| unsafe { (&**v).shallow_copy() }),
+                            r_handle.data.hasher(),
+                        ),
+                    )
+                }));
             }
+
+            // safety: we will not swap while we hold this reference
+            let r_hasher = unsafe { self.r_handle.hasher() };
 
             // the w_handle map has not seen any of the writes in the oplog
             // the r_handle map has not seen any of the writes following swap_index
@@ -282,12 +280,13 @@ where
                 // removed (since those removals have already happened on the other map, and
                 // without calling their destructor).
                 for op in self.oplog.drain(0..self.swap_index) {
-                    Self::apply_second(w_handle, op);
+                    // because we are applying second, we _do_ want to perform drops
+                    Self::apply_second(unsafe { w_handle.do_drop() }, op, r_hasher);
                 }
             }
             // the rest have to be cloned because they'll also be needed by the r_handle map
             for op in self.oplog.iter_mut() {
-                Self::apply_first(w_handle, op);
+                Self::apply_first(w_handle, op, r_hasher);
             }
             // the w_handle map is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
@@ -383,27 +382,28 @@ where
             self.oplog.push(op);
         } else {
             // we know there are no outstanding w_handle readers, so we can modify it directly!
-            let inner = self.w_handle.as_mut().unwrap();
-            Self::apply_second(inner, op);
+            let w_inner = self.w_handle.as_mut().unwrap();
+            let r_hasher = unsafe { self.r_handle.hasher() };
+            // because we are applying second, we _do_ want to perform drops
+            Self::apply_second(unsafe { w_inner.do_drop() }, op, r_hasher);
             // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
         }
 
         self
     }
 
-    /// Add the given value to the value-set of the given key.
+    /// Add the given value to the value-bag of the given key.
     ///
-    /// The updated value-set will only be visible to readers after the next call to `refresh()`.
+    /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
     pub fn insert(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::Add(k, v))
     }
 
-    /// Replace the value-set of the given key with the given value.
+    /// Replace the value-bag of the given key with the given value.
     ///
-    /// With the `smallvec` feature enabled, replacing the value will automatically
-    /// deallocate any heap storage and place the new value back into
-    /// the `SmallVec` inline storage. This can improve cache locality for common
-    /// cases where the value-set is only ever a single element.
+    /// Replacing the value will automatically deallocate any heap storage and place the new value
+    /// back into the `SmallVec` inline storage. This can improve cache locality for common
+    /// cases where the value-bag is only ever a single element.
     ///
     /// See [the doc section on this](./index.html#small-vector-optimization) for more information.
     ///
@@ -412,32 +412,32 @@ where
         self.add_op(Operation::Replace(k, v))
     }
 
-    /// Clear the value-set of the given key, without removing it.
+    /// Clear the value-bag of the given key, without removing it.
     ///
-    /// If a value-set already exists, this will clear it but leave the
-    /// allocated memory intact for reuse, or if no associated value-set exists
-    /// an empty value-set will be created for the given key.
+    /// If a value-bag already exists, this will clear it but leave the
+    /// allocated memory intact for reuse, or if no associated value-bag exists
+    /// an empty value-bag will be created for the given key.
     ///
     /// The new value will only be visible to readers after the next call to `refresh()`.
     pub fn clear(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Clear(k))
     }
 
-    /// Remove the given value from the value-set of the given key.
+    /// Remove the given value from the value-bag of the given key.
     ///
-    /// The updated value-set will only be visible to readers after the next call to `refresh()`.
+    /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
     pub fn remove(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::Remove(k, v))
     }
 
-    /// Remove the value-set for the given key.
+    /// Remove the value-bag for the given key.
     ///
-    /// The value-set will only disappear from readers after the next call to `refresh()`.
+    /// The value-bag will only disappear from readers after the next call to `refresh()`.
     pub fn empty(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Empty(k))
     }
 
-    /// Purge all value-sets from the map.
+    /// Purge all value-bags from the map.
     ///
     /// The map will only appear empty to readers after the next call to `refresh()`.
     ///
@@ -448,9 +448,11 @@ where
 
     /// Retain elements for the given key using the provided predicate function.
     ///
-    /// The remaining value-set will only be visible to readers after the next call to `refresh()`
+    /// The remaining value-bag will only be visible to readers after the next call to `refresh()`
     ///
-    /// Note that the given closure is called _twice_ for each element, once when called, and once
+    /// # Safety
+    ///
+    /// The given closure is called _twice_ for each element, once when called, and once
     /// on swap. It _must_ retain the same elements each time, otherwise a value may exist in one
     /// map, but not the other, leaving the two maps permanently out-of-sync. This is _really_ bad,
     /// as values are aliased between the maps, and are assumed safe to free when they leave the
@@ -458,13 +460,13 @@ where
     /// `false` the second time would free the value, but leave an aliased pointer to it in the
     /// other side of the map.
     ///
-    /// The arguments to the predicate function are the current value in the value-set, and `true`
-    /// if this is the first value in the value-set on the second map, or `false` otherwise. Use
+    /// The arguments to the predicate function are the current value in the value-bag, and `true`
+    /// if this is the first value in the value-bag on the second map, or `false` otherwise. Use
     /// the second argument to know when to reset any closure-local state to ensure deterministic
     /// operation.
     ///
     /// So, stated plainly, the given closure _must_ return the same order of true/false for each
-    /// of the two iterations over the value-set. That is, the sequence of returned booleans before
+    /// of the two iterations over the value-bag. That is, the sequence of returned booleans before
     /// the second argument is true must be exactly equal to the sequence of returned booleans
     /// at and beyond when the second argument is true.
     pub unsafe fn retain<F>(&mut self, k: K, f: F) -> &mut Self
@@ -474,40 +476,39 @@ where
         self.add_op(Operation::Retain(k, Predicate(Box::new(f))))
     }
 
-    /// Shrinks a value-set to it's minimum necessary size, freeing memory
-    /// and potentially improving cache locality by switching to inline storage
-    /// if the `smallvec` feature is used.
+    /// Shrinks a value-bag to it's minimum necessary size, freeing memory
+    /// and potentially improving cache locality by switching to inline storage.
     ///
-    /// The optimized value-set will only be visible to readers after the next call to `refresh()`
+    /// The optimized value-bag will only be visible to readers after the next call to `refresh()`
     pub fn fit(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Fit(Some(k)))
     }
 
-    /// Like [`WriteHandle::fit`](#method.fit), but shrinks <b>all</b> value-sets in the map.
+    /// Like [`WriteHandle::fit`](#method.fit), but shrinks <b>all</b> value-bags in the map.
     ///
-    /// The optimized value-sets will only be visible to readers after the next call to `refresh()`
+    /// The optimized value-bags will only be visible to readers after the next call to `refresh()`
     pub fn fit_all(&mut self) -> &mut Self {
         self.add_op(Operation::Fit(None))
     }
 
-    /// Reserves capacity for some number of additional elements in a value-set,
-    /// or creates an empty value-set for this key with the given capacity if
+    /// Reserves capacity for some number of additional elements in a value-bag,
+    /// or creates an empty value-bag for this key with the given capacity if
     /// it doesn't already exist.
     ///
     /// Readers are unaffected by this operation, but it can improve performance
-    /// by pre-allocating space for large value-sets.
+    /// by pre-allocating space for large value-bags.
     pub fn reserve(&mut self, k: K, additional: usize) -> &mut Self {
         self.add_op(Operation::Reserve(k, additional))
     }
 
     #[cfg(feature = "indexed")]
-    /// Remove the value-set for a key at a specified index.
+    /// Remove the value-bag for a key at a specified index.
     ///
     /// This is effectively random removal.
-    /// The value-set will only disappear from readers after the next call to `refresh()`.
+    /// The value-bag will only disappear from readers after the next call to `refresh()`.
     ///
     /// Note that this does a _swap-remove_, so use it carefully.
-    pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &[V])> {
+    pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &Values<V, S>)> {
         self.add_op(Operation::EmptyRandom(index));
         // the actual emptying won't happen until refresh(), which needs &mut self
         // so it's okay for us to return the references here
@@ -518,106 +519,70 @@ where
         // r_handle side, but not to the w_handle (will be applied on the next swap). We must make
         // sure that we read the most up to date map here.
         let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
-        unsafe { (*inner).data.get_index(index) }.map(|(k, vs)| (k, &vs[..]))
+        unsafe { (*inner).data.get_index(index) }.map(|(k, vs)| (k, vs.user_friendly()))
     }
 
     /// Apply ops in such a way that no values are dropped, only forgotten
-    fn apply_first(inner: &mut Inner<K, V, M, S>, op: &mut Operation<K, V>) {
+    fn apply_first(
+        inner: &mut Inner<K, ManuallyDrop<V>, M, S>,
+        op: &mut Operation<K, V>,
+        hasher: &S,
+    ) {
         match *op {
             Operation::Replace(ref key, ref mut value) => {
                 let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
 
-                unsafe {
-                    // truncate vector without dropping values
-                    vs.set_len(0);
-                }
+                // truncate vector
+                vs.clear();
 
-                // implicit shrink_to_fit on replace op when using smallvec,
-                // as it will switch back to inline allocation for the subsequent push.
-                #[cfg(feature = "smallvec")]
+                // implicit shrink_to_fit on replace op
+                // so it will switch back to inline allocation for the subsequent push.
                 vs.shrink_to_fit();
 
-                vs.push(unsafe { value.shallow_copy() });
+                vs.push(unsafe { value.shallow_copy() }, hasher);
             }
-            Operation::Clear(ref key) => match inner.data.entry(key.clone()) {
-                Entry::Occupied(mut entry) => unsafe {
-                    // truncate vector without dropping values
-                    entry.get_mut().set_len(0);
-                },
-                Entry::Vacant(entry) => {
-                    entry.insert(Values::new());
-                }
-            },
+            Operation::Clear(ref key) => {
+                inner
+                    .data
+                    .entry(key.clone())
+                    .or_insert_with(Values::new)
+                    .clear();
+            }
             Operation::Add(ref key, ref mut value) => {
                 inner
                     .data
                     .entry(key.clone())
                     .or_insert_with(Values::new)
-                    .push(unsafe { value.shallow_copy() });
+                    .push(unsafe { value.shallow_copy() }, hasher);
             }
             Operation::Empty(ref key) => {
                 #[cfg(not(feature = "indexed"))]
-                let rm = inner.data.remove(key);
+                inner.data.remove(key);
                 #[cfg(feature = "indexed")]
-                let rm = inner.data.swap_remove(key);
-                if let Some(mut vs) = rm {
-                    unsafe {
-                        // truncate vector without dropping values
-                        vs.set_len(0);
-                    }
-                }
+                inner.data.swap_remove(key);
             }
             Operation::Purge => {
-                // first, make sure we won't drop any of the values
-                for vs in inner.data.values_mut() {
-                    unsafe {
-                        vs.set_len(0);
-                    }
-                }
-                // then, empty the map
                 inner.data.clear();
             }
             #[cfg(feature = "indexed")]
             Operation::EmptyRandom(index) => {
-                if let Some((_k, mut vs)) = inner.data.swap_remove_index(index) {
-                    // don't run destructors yet -- still in use by other map
-                    unsafe {
-                        vs.set_len(0);
-                    }
-                }
+                inner.data.swap_remove_index(index);
             }
             Operation::Remove(ref key, ref value) => {
                 if let Some(e) = inner.data.get_mut(key) {
-                    // find the first entry that matches all fields
-                    if let Some(i) = e.iter().position(|v| v == value) {
-                        let v = e.swap_remove(i);
-                        // don't run destructor yet -- still in use by other map
-                        mem::forget(v);
-                    }
+                    // remove a matching value from the value set
+                    // safety: this is fine
+                    e.swap_remove(unsafe { &*(value as *const _ as *const ManuallyDrop<V>) });
                 }
             }
             Operation::Retain(ref key, ref mut predicate) => {
                 if let Some(e) = inner.data.get_mut(key) {
-                    let mut del = 0;
-                    let len = e.len();
-
-                    // "bubble up" the values we wish to remove, so they can be truncated.
-                    //
-                    // See https://github.com/servo/rust-smallvec/blob/a775b5f74cce0d3c7218608fd9f6fd721bb0f461/lib.rs#L881-L897
-                    // for SmallVec's implementation of `retain`, the only difference being that we
-                    // cannot drop values here, so they are truncated with `set_len`
-                    for i in 0..len {
-                        if !predicate.eval(unsafe { e.get_unchecked(i) }, false) {
-                            del += 1;
-                        } else {
-                            e.swap(i - del, i);
-                        }
-                    }
-
-                    unsafe {
-                        // truncate vector without dropping values
-                        e.set_len(len - del);
-                    }
+                    let mut first = true;
+                    e.retain(move |v| {
+                        let retain = predicate.eval(v, first);
+                        first = false;
+                        retain
+                    });
                 }
             }
             Operation::Fit(ref key) => match key {
@@ -634,37 +599,37 @@ where
             },
             Operation::Reserve(ref key, additional) => match inner.data.entry(key.clone()) {
                 Entry::Occupied(mut entry) => {
-                    entry.get_mut().reserve(additional);
+                    entry.get_mut().reserve(additional, hasher);
                 }
                 Entry::Vacant(entry) => {
-                    entry.insert(Values::with_capacity(additional));
+                    entry.insert(Values::with_capacity_and_hasher(additional, hasher));
                 }
             },
         }
     }
 
     /// Apply operations while allowing dropping of values
-    fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>) {
+    fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>, hasher: &S) {
         match op {
             Operation::Replace(key, value) => {
                 let v = inner.data.entry(key).or_insert_with(Values::new);
+
+                // we are going second, so we should drop!
                 v.clear();
 
-                #[cfg(feature = "smallvec")]
                 v.shrink_to_fit();
 
-                v.push(value);
+                v.push(value, hasher);
             }
             Operation::Clear(key) => {
-                let v = inner.data.entry(key).or_insert_with(Values::new);
-                v.clear();
+                inner.data.entry(key).or_insert_with(Values::new).clear();
             }
             Operation::Add(key, value) => {
                 inner
                     .data
                     .entry(key)
                     .or_insert_with(Values::new)
-                    .push(value);
+                    .push(value, hasher);
             }
             Operation::Empty(key) => {
                 #[cfg(not(feature = "indexed"))]
@@ -682,9 +647,7 @@ where
             Operation::Remove(key, value) => {
                 if let Some(e) = inner.data.get_mut(&key) {
                     // find the first entry that matches all fields
-                    if let Some(i) = e.iter().position(|v| v == &value) {
-                        e.swap_remove(i);
-                    }
+                    e.swap_remove(&value);
                 }
             }
             Operation::Retain(key, mut predicate) => {
@@ -711,10 +674,10 @@ where
             },
             Operation::Reserve(key, additional) => match inner.data.entry(key) {
                 Entry::Occupied(mut entry) => {
-                    entry.get_mut().reserve(additional);
+                    entry.get_mut().reserve(additional, hasher);
                 }
                 Entry::Vacant(entry) => {
-                    entry.insert(Values::with_capacity(additional));
+                    entry.insert(Values::with_capacity_and_hasher(additional, hasher));
                 }
             },
         }
@@ -725,7 +688,7 @@ impl<K, V, M, S> Extend<(K, V)> for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
 {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
@@ -741,7 +704,7 @@ impl<K, V, M, S> Deref for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + ShallowCopy,
+    V: Eq + Hash + Clone + ShallowCopy,
     M: 'static + Clone,
 {
     type Target = ReadHandle<K, V, M, S>;
