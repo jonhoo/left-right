@@ -164,6 +164,26 @@
 //! }
 //! ```
 //!
+//!```compile_fail
+//! use evmap::ReadHandle;
+//!
+//! fn is_sync<T: Sync>() {
+//!   // dummy function just used for its parameterized type bound
+//! }
+//!
+//! is_sync::<ReadHandle<u64, u64>>()
+//!```
+//!
+//!```
+//! use evmap::ReadHandle;
+//!
+//! fn is_send<T: Send>() {
+//!   // dummy function just used for its parameterized type bound
+//! }
+//!
+//! is_send::<ReadHandle<u64, u64>>()
+//!```
+//!
 //! # Implementation
 //!
 //! Under the hood, the map is implemented using two regular `HashMap`s, an operational log,
@@ -430,10 +450,4 @@ where
         .with_hasher(hasher)
         .with_meta(meta)
         .construct()
-}
-
-#[test]
-fn is_not_sync() {
-    extern crate static_assertions as sa;
-    sa::assert_not_impl_all!(ReadHandle<(), ()>: Send, Sync);
 }
