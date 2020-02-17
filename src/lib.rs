@@ -164,9 +164,9 @@
 //! }
 //! ```
 //!
-//! `ReadHandle` is not `Sync` as it is not safe to share a single instance
-//! amongst threads. A fresh `ReadHandle` needs to be created for each thread
-//! either by cloning a `ReadHandle` or from a `ReadHandleFactory`.
+//! ReadHandle is not Sync as it is not safe to share a single instance
+//! amongst threads. A fresh ReadHandle needs to be created for each thread
+//! either by cloning a ReadHandle or from a ReadHandleFactory.
 //!
 //! The reason for this is that each ReadHandle assumes that only one
 //! thread operates on it at a time. For details, see the implementation
@@ -184,7 +184,7 @@
 //! is_sync::<ReadHandle<u64, u64>>()
 //!```
 //!
-//! ReadHandle is Send though, since in order to send a ReadHandle, there must
+//! ReadHandle **is** Send though, since in order to send a ReadHandle, there must
 //! be no references to it, so no thread is operating on it.
 //!
 //!```
