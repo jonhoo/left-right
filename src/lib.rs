@@ -168,6 +168,10 @@
 //! amongst threads. A fresh `ReadHandle` needs to be created for each thread
 //! either by cloning a `ReadHandle` or from a `ReadHandleFactory`.
 //!
+//! The reason for this is that each ReadHandle assumes that only one
+//! thread operates on it at a time. For details, see the implementation
+//! comments on ReadHandle.
+//!
 //!```compile_fail
 //! use evmap::ReadHandle;
 //!
@@ -180,7 +184,8 @@
 //! is_sync::<ReadHandle<u64, u64>>()
 //!```
 //!
-//! `ReadHandle` is `Send` so it is safe to send to other threads
+//! ReadHandle is Send though, since in order to send a ReadHandle, there must
+//! be no references to it, so no thread is operating on it.
 //!
 //!```
 //! use evmap::ReadHandle;
