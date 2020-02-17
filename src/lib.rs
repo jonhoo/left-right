@@ -164,6 +164,10 @@
 //! }
 //! ```
 //!
+//! `ReadHandle` is not `Sync` as it is not safe to share a single instance
+//! amongst threads. A fresh `ReadHandle` needs to be created for each thread
+//! either by cloning a `ReadHandle` or from a `ReadHandleFactory`.
+//!
 //!```compile_fail
 //! use evmap::ReadHandle;
 //!
@@ -171,8 +175,12 @@
 //!   // dummy function just used for its parameterized type bound
 //! }
 //!
+//! // the line below will not compile as ReadHandle does not implement Sync
+//!
 //! is_sync::<ReadHandle<u64, u64>>()
 //!```
+//!
+//! `ReadHandle` is `Send` so it is safe to send to other threads
 //!
 //!```
 //! use evmap::ReadHandle;
@@ -183,6 +191,8 @@
 //!
 //! is_send::<ReadHandle<u64, u64>>()
 //!```
+//!
+//! For further explanation of `Sync` and `Send` [here](https://doc.rust-lang.org/nomicon/send-and-sync.html)
 //!
 //! # Implementation
 //!
