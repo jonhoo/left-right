@@ -163,6 +163,41 @@
 //! }
 //! ```
 //!
+//! `ReadHandle` is not `Sync` as it is not safe to share a single instance
+//! amongst threads. A fresh `ReadHandle` needs to be created for each thread
+//! either by cloning a `ReadHandle` or from a `ReadHandleFactory`.
+//!
+//! The reason for this is that each `ReadHandle` assumes that only one
+//! thread operates on it at a time. For details, see the implementation
+//! comments on `ReadHandle`.
+//!
+//!```compile_fail
+//! use evmap::ReadHandle;
+//!
+//! fn is_sync<T: Sync>() {
+//!   // dummy function just used for its parameterized type bound
+//! }
+//!
+//! // the line below will not compile as ReadHandle does not implement Sync
+//!
+//! is_sync::<ReadHandle<u64, u64>>()
+//!```
+//!
+//! `ReadHandle` **is** `Send` though, since in order to send a `ReadHandle`,
+//! there must be no references to it, so no thread is operating on it.
+//!
+//!```
+//! use evmap::ReadHandle;
+//!
+//! fn is_send<T: Send>() {
+//!   // dummy function just used for its parameterized type bound
+//! }
+//!
+//! is_send::<ReadHandle<u64, u64>>()
+//!```
+//!
+//! For further explanation of `Sync` and `Send` [here](https://doc.rust-lang.org/nomicon/send-and-sync.html)
+//!
 //! # Implementation
 //!
 //! Under the hood, the map is implemented using two regular `HashMap`s, an operational log,
@@ -432,15 +467,3 @@ where
         .with_meta(meta)
         .construct()
 }
-
-// test that ReadHandle isn't Sync
-// waiting on https://github.com/rust-lang/rust/issues/17606
-//#[test]
-//fn is_not_sync() {
-//    use std::sync;
-//    use std::thread;
-//    let (r, mut w) = new();
-//    w.insert(true, false);
-//    let x = sync::Arc::new(r);
-//    thread::spawn(move || { drop(x); });
-//}
