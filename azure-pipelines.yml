@@ -3,6 +3,14 @@ jobs:
    parameters:
      minrust: 1.40.0
      codecov_token: $(CODECOV_TOKEN_SECRET)
+ - job: benchmark
+   displayName: "Check that benchmark compiles"
+   pool:
+     vmImage: ubuntu-latest
+   steps:
+     - template: install-rust.yml@templates
+     - bash: cd benchmark && cargo check
+       displayName: cargo check benchmark/
  - job: miri
    displayName: "Run miri on test suite"
    pool:
