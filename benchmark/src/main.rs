@@ -2,17 +2,17 @@ extern crate chashmap;
 #[macro_use]
 extern crate clap;
 extern crate evmap;
+extern crate parking_lot;
 extern crate rand;
 extern crate zipf;
-extern crate parking_lot;
 
 use chashmap::CHashMap;
-use std::collections::HashMap;
 use clap::{App, Arg};
+use std::collections::HashMap;
 
-use std::time;
 use std::sync;
 use std::thread;
+use std::time;
 
 fn main() {
     let matches = App::new("Concurrent HashMap Benchmarker")
@@ -70,8 +70,8 @@ fn main() {
     let dur_in_s = dur_in_ns as f64 / 1_000_000_000_f64;
     let span = 10000;
 
-    let stat =
-        |var: &str, op, results: Vec<(_, usize)>| for (i, res) in results.into_iter().enumerate() {
+    let stat = |var: &str, op, results: Vec<(_, usize)>| {
+        for (i, res) in results.into_iter().enumerate() {
             println!(
                 "{:2} {:2} {:10} {:10} {:8.0} ops/s {} {}",
                 readers,
@@ -82,7 +82,8 @@ fn main() {
                 op,
                 i
             )
-        };
+        }
+    };
 
     let mut join = Vec::with_capacity(readers + writers);
     // first, benchmark Arc<RwLock<HashMap>>
@@ -101,7 +102,8 @@ fn main() {
             let dist = dist.to_owned();
             thread::spawn(move || drive(map, end, dist, true, span))
         }));
-        let (wres, rres): (Vec<_>, _) = join.drain(..)
+        let (wres, rres): (Vec<_>, _) = join
+            .drain(..)
             .map(|jh| jh.join().unwrap())
             .partition(|&(write, _)| write);
         stat("std", "write", wres);
@@ -124,7 +126,8 @@ fn main() {
             let dist = dist.to_owned();
             thread::spawn(move || drive(map, end, dist, true, span))
         }));
-        let (wres, rres): (Vec<_>, _) = join.drain(..)
+        let (wres, rres): (Vec<_>, _) = join
+            .drain(..)
             .map(|jh| jh.join().unwrap())
             .partition(|&(write, _)| write);
         stat("chashmap", "write", wres);
@@ -149,7 +152,8 @@ fn main() {
             let dist = dist.to_owned();
             thread::spawn(move || drive(map, end, dist, true, span))
         }));
-        let (wres, rres): (Vec<_>, _) = join.drain(..)
+        let (wres, rres): (Vec<_>, _) = join
+            .drain(..)
             .map(|jh| jh.join().unwrap())
             .partition(|&(write, _)| write);
 
@@ -225,7 +229,9 @@ enum EvHandle {
 impl Backend for EvHandle {
     fn b_get(&self, key: u64) -> u64 {
         if let EvHandle::Read(ref r) = *self {
-            r.get_and(&key, |v| v[0]).unwrap_or(0)
+            r.get(&key)
+                .map(|v| v.iter().next().cloned().unwrap())
+                .unwrap_or(0)
         } else {
             unreachable!();
         }
