@@ -2,6 +2,7 @@ use super::ReadGuard;
 use crate::{inner::Inner, values::Values};
 
 use std::borrow::Borrow;
+use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
 
@@ -13,12 +14,12 @@ use std::mem::ManuallyDrop;
 /// Since the map remains immutable while this lives, the methods on this type all give you
 /// unguarded references to types contained in the map.
 #[derive(Debug)]
-pub struct MapReadRef<'rh, K, V, M, S>
+pub struct MapReadRef<'rh, K, V, M = (), S = RandomState>
 where
     K: Hash + Eq,
     S: BuildHasher,
 {
-    pub(super) guard: Option<ReadGuard<'rh, Inner<K, ManuallyDrop<V>, M, S>>>,
+    pub(super) guard: ReadGuard<'rh, Inner<K, ManuallyDrop<V>, M, S>>,
 }
 
 impl<'rh, K, V, M, S> MapReadRef<'rh, K, V, M, S>
@@ -32,29 +33,23 @@ where
     /// refresh will block waiting on this reader to finish.
     pub fn iter(&self) -> ReadGuardIter<'_, K, V, S> {
         ReadGuardIter {
-            iter: self.guard.as_ref().map(|rg| rg.data.iter()),
+            iter: Some(self.guard.data.iter()),
         }
     }
 
     /// Returns the number of non-empty keys present in the map.
     pub fn len(&self) -> usize {
-        self.guard
-            .as_ref()
-            .map(|inner| inner.data.len())
-            .unwrap_or(0)
+        self.guard.data.len()
     }
 
     /// Returns true if the map contains no elements.
     pub fn is_empty(&self) -> bool {
-        self.guard
-            .as_ref()
-            .map(|inner| inner.data.is_empty())
-            .unwrap_or(true)
+        self.guard.data.is_empty()
     }
 
     /// Get the current meta value.
-    pub fn meta(&self) -> Option<&M> {
-        self.guard.as_ref().map(|inner| &inner.meta)
+    pub fn meta(&self) -> &M {
+        &self.guard.meta
     }
 
     /// Returns a reference to the values corresponding to the key.
@@ -70,18 +65,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let inner = self.guard.as_ref()?;
-        if !inner.is_ready() {
-            return None;
-        }
-        inner.data.get(key).map(Values::user_friendly)
-    }
-
-    /// Returns true if the writer has destroyed this map.
-    ///
-    /// See [`WriteHandle::destroy`].
-    pub fn is_destroyed(&self) -> bool {
-        self.guard.is_none()
+        self.guard.data.get(key).map(Values::user_friendly)
     }
 
     /// Returns true if the map contains any values for the specified key.
@@ -93,12 +77,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        let inner = self.guard.as_ref();
-        match inner {
-            None => false,
-            Some(ref inner) if !inner.is_ready() => false,
-            Some(ref inner) => inner.data.contains_key(key),
-        }
+        self.guard.data.contains_key(key)
     }
 }
 

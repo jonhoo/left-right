@@ -80,49 +80,43 @@ fn mapref() {
     // get a read ref to the map
     // scope to ensure it gets dropped and doesn't stall refresh
     {
-        let map = r.read();
-        // the map is uninitialized, so all lookups should return None
-        assert!(!map.is_destroyed());
-        assert!(map.is_empty());
-        assert!(!map.contains_key(&x.0));
-        assert!(map.get(&x.0).is_none());
-        assert_eq!(map.meta().unwrap(), &());
+        assert!(r.read().is_none());
     }
 
     w.refresh();
 
     {
-        let map = r.read();
+        let map = r.read().unwrap();
         // after the first refresh, it is empty, but ready
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
         assert!(map.get(&x.0).is_none());
         // since we're not using `meta`, we get ()
-        assert_eq!(map.meta().unwrap(), &());
+        assert_eq!(map.meta(), &());
     }
 
     w.insert(x.0, x);
 
     {
-        let map = r.read();
+        let map = r.read().unwrap();
         // it is empty even after an add (we haven't refresh yet)
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
         assert!(map.get(&x.0).is_none());
-        assert!(map.meta().is_some());
+        assert_eq!(map.meta(), &());
     }
 
     w.refresh();
 
     {
-        let map = r.read();
+        let map = r.read().unwrap();
 
         // but after the swap, the record is there!
         assert!(!map.is_empty());
         assert!(map.contains_key(&x.0));
         assert_eq!(map.get(&x.0).unwrap().len(), 1);
         assert_eq!(map[&x.0].len(), 1);
-        assert!(map.meta().is_some());
+        assert_eq!(map.meta(), &());
         assert!(map
             .get(&x.0)
             .unwrap()
@@ -131,7 +125,7 @@ fn mapref() {
 
         // non-existing records return None
         assert!(map.get(&'y').is_none());
-        assert!(map.meta().is_some());
+        assert_eq!(map.meta(), &());
 
         // if we purge, the readers still see the values
         w.purge();
@@ -147,21 +141,17 @@ fn mapref() {
     w.refresh();
 
     {
-        let map = r.read();
+        let map = r.read().unwrap();
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
         assert!(map.get(&x.0).is_none());
-        assert!(map.meta().is_some());
+        assert_eq!(map.meta(), &());
     }
 
     drop(w);
     {
         let map = r.read();
-        assert!(map.is_destroyed());
-        assert!(map.is_empty());
-        assert!(!map.contains_key(&x.0));
-        assert!(map.get(&x.0).is_none());
-        assert!(map.meta().is_none());
+        assert!(map.is_none(), "the map should have been destroyed");
     }
 }
 
@@ -254,6 +244,7 @@ fn busybusybusy_inner(slow: bool) {
         n *= 100;
     }
     let (r, mut w) = evmap::new();
+    w.refresh();
 
     let rs: Vec<_> = (0..threads)
         .map(|_| {
@@ -263,7 +254,7 @@ fn busybusybusy_inner(slow: bool) {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        let map = r.read();
+                        let map = r.read().unwrap();
                         let rs = map.get(&i);
                         if rs.is_some() && slow {
                             thread::sleep(time::Duration::from_millis(2));
@@ -303,6 +294,7 @@ fn busybusybusy_heap() {
     let threads = 2;
     let n = 1000;
     let (r, mut w) = evmap::new::<_, Vec<_>>();
+    w.refresh();
 
     let rs: Vec<_> = (0..threads)
         .map(|_| {
@@ -311,7 +303,7 @@ fn busybusybusy_heap() {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        let map = r.read();
+                        let map = r.read().unwrap();
                         let rs = map.get(&i);
                         match rs {
                             Some(rs) => {
@@ -611,14 +603,12 @@ fn clone_churn() {
 fn bigbag() {
     use std::thread;
     let (r, mut w) = evmap::new();
+    w.refresh();
 
     let ndistinct = 32;
 
     let jh = thread::spawn(move || loop {
-        let map = r.read();
-        if map.is_destroyed() {
-            break;
-        }
+        let map = if let Some(map) = r.read() { map } else { break };
         if let Some(rs) = map.get(&1) {
             assert!(rs.len() <= ndistinct * (ndistinct - 1));
             let mut found = true;
@@ -669,7 +659,7 @@ fn foreach() {
     w.refresh();
     w.insert(1, "x");
 
-    let r = r.read();
+    let r = r.read().unwrap();
     for (k, vs) in &r {
         match k {
             1 => {

@@ -83,7 +83,7 @@
 //! }
 //!
 //! // iterate over everything.
-//! for (book, reviews) in &book_reviews_r.read() {
+//! for (book, reviews) in &book_reviews_r.read().unwrap() {
 //!     for review in reviews {
 //!         println!("{}: \"{}\"", book, review);
 //!     }

@@ -198,21 +198,25 @@ where
     ///
     /// While the reference lives, the map cannot be refreshed.
     ///
+    /// If no refresh has happened, or the map has been destroyed, this function returns `None`.
+    ///
     /// See [`MapReadRef`].
-    pub fn read(&self) -> MapReadRef<'_, K, V, M, S> {
-        MapReadRef {
-            guard: self.handle(),
+    pub fn read(&self) -> Option<MapReadRef<'_, K, V, M, S>> {
+        let guard = self.handle()?;
+        if !guard.is_ready() {
+            return None;
         }
+        Some(MapReadRef { guard })
     }
 
     /// Returns the number of non-empty keys present in the map.
     pub fn len(&self) -> usize {
-        self.read().len()
+        self.read().map_or(0, |x| x.len())
     }
 
     /// Returns true if the map contains no elements.
     pub fn is_empty(&self) -> bool {
-        self.read().is_empty()
+        self.read().map_or(true, |x| x.is_empty())
     }
 
     /// Get the current meta value.
@@ -286,7 +290,7 @@ where
     ///
     /// See [`WriteHandle::destroy`].
     pub fn is_destroyed(&self) -> bool {
-        self.read().is_destroyed()
+        self.handle().is_none()
     }
 
     /// Returns true if the map contains any values for the specified key.
@@ -298,7 +302,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.read().contains_key(key)
+        self.read().map_or(false, |x| x.contains_key(key))
     }
 
     /// Read all values in the map, and transform them into a new collection.
@@ -307,7 +311,7 @@ where
         Map: FnMut(&K, &Values<V, S>) -> Target,
         Collector: FromIterator<Target>,
     {
-        Collector::from_iter(self.read().iter().map(|(k, v)| f(k, v)))
+        Collector::from_iter(self.read().iter().flatten().map(|(k, v)| f(k, v)))
     }
 }
 
