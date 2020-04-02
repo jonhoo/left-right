@@ -17,6 +17,7 @@ use std::mem::ManuallyDrop;
 pub struct MapReadRef<'rh, K, V, M = (), S = RandomState>
 where
     K: Hash + Eq,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     pub(super) guard: ReadGuard<'rh, Inner<K, ManuallyDrop<V>, M, S>>,
@@ -25,6 +26,7 @@ where
 impl<'rh, K, V, M, S> MapReadRef<'rh, K, V, M, S>
 where
     K: Hash + Eq,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     /// Iterate over all key + valuesets in the map.
@@ -68,6 +70,29 @@ where
         self.guard.data.get(key).map(Values::user_friendly)
     }
 
+    /// Returns a guarded reference to _one_ value corresponding to the key.
+    ///
+    /// This is mostly intended for use when you are working with no more than one value per key.
+    /// If there are multiple values stored for this key, there are no guarantees to which element
+    /// is returned.
+    ///
+    /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
+    /// form *must* match those for the key type.
+    ///
+    /// Note that not all writes will be included with this read -- only those that have been
+    /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
+    /// function returns `None`.
+    pub fn get_one<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.guard
+            .data
+            .get(key)
+            .and_then(|values| values.user_friendly().get_one())
+    }
+
     /// Returns true if the map contains any values for the specified key.
     ///
     /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
@@ -79,11 +104,29 @@ where
     {
         self.guard.data.contains_key(key)
     }
+
+    /// Returns true if the map contains the specified value for the specified key.
+    ///
+    /// The key and value may be any borrowed form of the map's respective types, but `Hash` and
+    /// `Eq` on the borrowed form *must* match.
+    pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
+    where
+        K: Borrow<Q>,
+        V: Borrow<W>,
+        Q: Hash + Eq,
+        W: Hash + Eq,
+    {
+        self.guard
+            .data
+            .get(key)
+            .map_or(false, |values| values.user_friendly().contains(value))
+    }
 }
 
 impl<'rh, K, Q, V, M, S> std::ops::Index<&'_ Q> for MapReadRef<'rh, K, V, M, S>
 where
     K: Eq + Hash + Borrow<Q>,
+    V: Eq + Hash,
     Q: Eq + Hash + ?Sized,
     S: BuildHasher,
 {
@@ -96,6 +139,7 @@ where
 impl<'rg, 'rh, K, V, M, S> IntoIterator for &'rg MapReadRef<'rh, K, V, M, S>
 where
     K: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     type Item = (&'rg K, &'rg Values<V, S>);
@@ -110,6 +154,7 @@ where
 pub struct ReadGuardIter<'rg, K, V, S>
 where
     K: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     iter: Option<
@@ -120,6 +165,7 @@ where
 impl<'rg, K, V, S> Iterator for ReadGuardIter<'rg, K, V, S>
 where
     K: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     type Item = (&'rg K, &'rg Values<V, S>);

@@ -471,7 +471,7 @@ where
     /// at and beyond when the second argument is true.
     pub unsafe fn retain<F>(&mut self, k: K, f: F) -> &mut Self
     where
-        F: FnMut(&V, bool) -> bool + 'static + Send + Sync,
+        F: FnMut(&V, bool) -> bool + 'static + Send,
     {
         self.add_op(Operation::Retain(k, Predicate(Box::new(f))))
     }

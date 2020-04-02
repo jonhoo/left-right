@@ -1,3 +1,4 @@
+use crate::values::{Values, ValuesIter};
 use std::mem;
 use std::sync;
 use std::sync::atomic;
@@ -62,5 +63,14 @@ impl<'rh, T: ?Sized> Drop for ReadGuard<'rh, T> {
             (self.epoch + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),
             atomic::Ordering::Release,
         );
+    }
+}
+
+impl<'rh, T, S> IntoIterator for &'rh ReadGuard<'rh, Values<T, S>> {
+    type Item = &'rh T;
+    type IntoIter = ValuesIter<'rh, T, S>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.t.into_iter()
     }
 }

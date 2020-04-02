@@ -120,6 +120,7 @@ where
 impl<K, V, M, S> ReadHandle<K, V, M, S>
 where
     K: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
     M: Clone,
 {
@@ -257,6 +258,30 @@ where
         Some(self.get_raw(key.borrow())?.map_ref(Values::user_friendly))
     }
 
+    /// Returns a guarded reference to _one_ value corresponding to the key.
+    ///
+    /// This is mostly intended for use when you are working with no more than one value per key.
+    /// If there are multiple values stored for this key, there are no guarantees to which element
+    /// is returned.
+    ///
+    /// While the guard lives, the map cannot be refreshed.
+    ///
+    /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
+    /// form must match those for the key type.
+    ///
+    /// Note that not all writes will be included with this read -- only those that have been
+    /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
+    /// function returns `None`.
+    #[inline]
+    pub fn get_one<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, V>>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.get_raw(key.borrow())?
+            .map_opt(|x| x.user_friendly().get_one())
+    }
+
     /// Returns a guarded reference to the values corresponding to the key along with the map
     /// meta.
     ///
@@ -303,6 +328,22 @@ where
         Q: Hash + Eq,
     {
         self.read().map_or(false, |x| x.contains_key(key))
+    }
+
+    /// Returns true if the map contains the specified value for the specified key.
+    ///
+    /// The key and value may be any borrowed form of the map's respective types, but `Hash` and
+    /// `Eq` on the borrowed form *must* match.
+    pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
+    where
+        K: Borrow<Q>,
+        V: Borrow<W>,
+        Q: Hash + Eq,
+        W: Hash + Eq,
+    {
+        self.get_raw(key.borrow())
+            .map(|x| x.user_friendly().contains(value))
+            .unwrap_or(false)
     }
 
     /// Read all values in the map, and transform them into a new collection.

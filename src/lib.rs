@@ -249,7 +249,7 @@ pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
 ///
 /// The predicate function is called once for each distinct value, and `true` if this is the
 /// _first_ call to the predicate on the _second_ application of the operation.
-pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send + Sync>);
+pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send>);
 
 impl<V> Predicate<V> {
     /// Evaluate the predicate for the given element
