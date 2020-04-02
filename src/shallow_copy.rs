@@ -26,6 +26,12 @@ use std::ops::{Deref, DerefMut};
 /// If you have a non-`Copy` type, the value returned by `shallow_copy` should point to the same
 /// data as the `&mut self`, and it should be safe to `mem::forget` either of the copies as long as
 /// the other is dropped normally afterwards.
+///
+/// For complex, non-`Copy` types, you can place the type behind a wrapper that implements
+/// `ShallowCopy` such as `Box` or `Arc`.
+/// Alternatively, if your type is made up of types that all implement `ShallowCopy`, consider
+/// using the `evmap-derive` crate, which contains a derive macro for `ShallowCopy`.
+/// See that crate's documentation for details.
 pub trait ShallowCopy {
     /// Perform an aliasing copy of this value.
     ///
@@ -62,6 +68,19 @@ where
 {
     unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
         ManuallyDrop::new(Box::from_raw(&**self as *const _ as *mut _))
+    }
+}
+
+impl<T> ShallowCopy for Option<T>
+where
+    T: ShallowCopy,
+{
+    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
+        ManuallyDrop::new(if let Some(value) = self {
+            Some(ManuallyDrop::into_inner(value.shallow_copy()))
+        } else {
+            None
+        })
     }
 }
 
@@ -106,7 +125,7 @@ where
 ///
 /// This is effectively a way to bypass the `ShallowCopy` optimization.
 /// Note that you do not need this wrapper for most `Copy` primitives.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Default)]
 #[repr(transparent)]
 pub struct CopyValue<T>(T);
 

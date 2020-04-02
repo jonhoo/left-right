@@ -1,0 +1,30 @@
+[package]
+name = "evmap-derive"
+version = "9.0.0"
+edition = "2018"
+
+description = "A lock-free, eventually consistent, concurrent multi-value map."
+readme = "README.md"
+
+authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+
+documentation = "https://docs.rs/evmap"
+homepage = "https://github.com/jonhoo/rust-evmap"
+repository = "https://github.com/jonhoo/rust-evmap.git"
+
+keywords = ["map","multi-value","lock-free"]
+categories = ["concurrency", "data-structures"]
+
+license = "MIT/Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "1.0.16"
+quote = "1.0.2"
+proc-macro2 = "1.0.9"
+
+[dev-dependencies]
+evmap = { path = "../", version = "9.0.0" }
+trybuild = "1.0.24"

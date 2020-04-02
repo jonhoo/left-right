@@ -1,0 +1,30 @@
+error[E0277]: the trait bound `std::cell::Cell<()>: evmap::shallow_copy::ShallowCopy` is not satisfied
+ --> $DIR/lib.rs:7:2
+  |
+7 |     f2: std::cell::Cell<()>,
+  |     ^^ the trait `evmap::shallow_copy::ShallowCopy` is not implemented for `std::cell::Cell<()>`
+  |
+  = note: required by `evmap::shallow_copy::ShallowCopy::shallow_copy`
+
+error[E0277]: the trait bound `std::cell::Cell<()>: evmap::shallow_copy::ShallowCopy` is not satisfied
+  --> $DIR/lib.rs:10:10
+   |
+10 | #[derive(ShallowCopy)]
+   |          ^^^^^^^^^^^ the trait `evmap::shallow_copy::ShallowCopy` is not implemented for `std::cell::Cell<()>`
+   |
+   = note: required by `evmap::shallow_copy::ShallowCopy::shallow_copy`
+
+error[E0599]: no method named `shallow_copy` found for struct `Generic<std::cell::Cell<()>>` in the current scope
+  --> $DIR/lib.rs:24:10
+   |
+14 | struct Generic<T> {
+   | ----------------- method `shallow_copy` not found for this
+...
+24 |     generic.shallow_copy();
+   |             ^^^^^^^^^^^^ method not found in `Generic<std::cell::Cell<()>>`
+   |
+   = note: the method `shallow_copy` exists but the following trait bounds were not satisfied:
+           `Generic<std::cell::Cell<()>> : evmap::shallow_copy::ShallowCopy`
+   = help: items from traits can only be used if the trait is implemented and in scope
+   = note: the following trait defines an item `shallow_copy`, perhaps you need to implement it:
+           candidate #1: `evmap::shallow_copy::ShallowCopy`
