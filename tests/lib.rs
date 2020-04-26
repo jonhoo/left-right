@@ -166,7 +166,7 @@ fn mapref() {
 }
 
 #[test]
-#[cfg(not(miri))]
+#[cfg_attr(miri, ignore)]
 // https://github.com/rust-lang/miri/issues/658
 fn paniced_reader_doesnt_block_writer() {
     let (r, mut w) = evmap::new();
@@ -234,17 +234,16 @@ fn clone_types() {
 }
 
 #[test]
-#[cfg(not(miri))]
+#[cfg_attr(miri, ignore)]
 fn busybusybusy_fast() {
     busybusybusy_inner(false);
 }
 #[test]
-#[cfg(not(miri))]
+#[cfg_attr(miri, ignore)]
 fn busybusybusy_slow() {
     busybusybusy_inner(true);
 }
 
-#[cfg(not(miri))]
 fn busybusybusy_inner(slow: bool) {
     use std::thread;
     use std::time;
@@ -297,7 +296,7 @@ fn busybusybusy_inner(slow: bool) {
 }
 
 #[test]
-#[cfg(not(miri))]
+#[cfg_attr(miri, ignore)]
 fn busybusybusy_heap() {
     use std::thread;
 
@@ -589,7 +588,7 @@ fn map_into() {
 }
 
 #[test]
-#[cfg(not(miri))]
+#[cfg_attr(miri, ignore)]
 fn clone_churn() {
     use std::thread;
     let (r, mut w) = evmap::new();
@@ -608,7 +607,7 @@ fn clone_churn() {
 }
 
 #[test]
-#[cfg(not(miri))]
+#[cfg_attr(miri, ignore)]
 fn bigbag() {
     use std::thread;
     let (r, mut w) = evmap::new();
