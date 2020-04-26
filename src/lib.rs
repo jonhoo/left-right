@@ -262,7 +262,8 @@ impl<V> Predicate<V> {
 impl<V> PartialEq for Predicate<V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        &*self.0 as *const _ == &*other.0 as *const _
+        // only compare data, not vtable: https://stackoverflow.com/q/47489449/472927
+        &*self.0 as *const _ as *const () == &*other.0 as *const _ as *const ()
     }
 }
 
