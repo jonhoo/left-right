@@ -3,6 +3,14 @@ jobs:
    parameters:
      minrust: 1.40.0
      codecov_token: $(CODECOV_TOKEN_SECRET)
+ - job: derive
+   displayName: "Test evmap-derive"
+   pool:
+     vmImage: ubuntu-latest
+   steps:
+     - template: install-rust.yml@templates
+     - script: cargo test
+       displayName: cargo test
  - job: benchmark
    displayName: "Check that benchmark compiles"
    pool:
