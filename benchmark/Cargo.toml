@@ -5,7 +5,7 @@ authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
 
 [dependencies]
-evmap = { version = "9", path = "../" }
+evmap = { version = "10", path = "../" }
 chashmap = "2.1.0"
 clap = "2.20.3"
 zipf = "6"
