@@ -1,15 +1,8 @@
-extern crate chashmap;
-#[macro_use]
-extern crate clap;
-extern crate evmap;
-extern crate parking_lot;
-extern crate rand;
-extern crate zipf;
-
 use chashmap::CHashMap;
+use clap::{crate_version, value_t};
 use clap::{App, Arg};
+use rand::prelude::*;
 use std::collections::HashMap;
-
 use std::sync;
 use std::thread;
 use std::time;
@@ -88,7 +81,7 @@ fn main() {
     let mut join = Vec::with_capacity(readers + writers);
     // first, benchmark Arc<RwLock<HashMap>>
     if matches.is_present("compare") {
-        let map: HashMap<u64, u64> = HashMap::with_capacity(5_000_000);
+        let map: HashMap<usize, usize> = HashMap::with_capacity(5_000_000);
         let map = sync::Arc::new(parking_lot::RwLock::new(map));
         let start = time::Instant::now();
         let end = start + dur;
@@ -112,7 +105,7 @@ fn main() {
 
     // then, benchmark Arc<CHashMap>
     if matches.is_present("compare") {
-        let map: CHashMap<u64, u64> = CHashMap::with_capacity(5_000_000);
+        let map: CHashMap<usize, usize> = CHashMap::with_capacity(5_000_000);
         let map = sync::Arc::new(map);
         let start = time::Instant::now();
         let end = start + dur;
@@ -168,8 +161,8 @@ fn main() {
 }
 
 trait Backend {
-    fn b_get(&self, key: u64) -> u64;
-    fn b_put(&mut self, key: u64, value: u64);
+    fn b_get(&self, key: usize) -> usize;
+    fn b_put(&mut self, key: usize, value: usize);
 }
 
 fn drive<B: Backend>(
@@ -179,19 +172,17 @@ fn drive<B: Backend>(
     write: bool,
     span: usize,
 ) -> (bool, usize) {
-    use rand::Rng;
-
     let mut ops = 0;
     let skewed = dist == "skewed";
     let mut t_rng = rand::thread_rng();
-    let mut zipf = zipf::ZipfDistribution::new(rand::thread_rng(), span, 1.03).unwrap();
+    let zipf = zipf::ZipfDistribution::new(span, 1.03).unwrap();
     while time::Instant::now() < end {
         // generate both so that overhead is always the same
-        let id_uniform: u64 = t_rng.gen_range(0, span as u64);
-        let id_skewed = zipf.next_u64();
+        let id_uniform: usize = t_rng.gen_range(0, span as usize);
+        let id_skewed: usize = zipf.sample(&mut t_rng);
         let id = if skewed { id_skewed } else { id_uniform };
         if write {
-            backend.b_put(id, t_rng.next_u64());
+            backend.b_put(id, t_rng.gen());
         } else {
             backend.b_get(id);
         }
@@ -201,33 +192,33 @@ fn drive<B: Backend>(
     (write, ops)
 }
 
-impl Backend for sync::Arc<CHashMap<u64, u64>> {
-    fn b_get(&self, key: u64) -> u64 {
+impl Backend for sync::Arc<CHashMap<usize, usize>> {
+    fn b_get(&self, key: usize) -> usize {
         self.get(&key).map(|v| *v).unwrap_or(0)
     }
 
-    fn b_put(&mut self, key: u64, value: u64) {
+    fn b_put(&mut self, key: usize, value: usize) {
         self.insert(key, value);
     }
 }
 
-impl Backend for sync::Arc<parking_lot::RwLock<HashMap<u64, u64>>> {
-    fn b_get(&self, key: u64) -> u64 {
+impl Backend for sync::Arc<parking_lot::RwLock<HashMap<usize, usize>>> {
+    fn b_get(&self, key: usize) -> usize {
         self.read().get(&key).map(|&v| v).unwrap_or(0)
     }
 
-    fn b_put(&mut self, key: u64, value: u64) {
+    fn b_put(&mut self, key: usize, value: usize) {
         self.write().insert(key, value);
     }
 }
 
 enum EvHandle {
-    Read(evmap::ReadHandle<u64, u64>),
-    Write(sync::Arc<parking_lot::Mutex<(evmap::WriteHandle<u64, u64>, usize, usize)>>),
+    Read(evmap::ReadHandle<usize, usize>),
+    Write(sync::Arc<parking_lot::Mutex<(evmap::WriteHandle<usize, usize>, usize, usize)>>),
 }
 
 impl Backend for EvHandle {
-    fn b_get(&self, key: u64) -> u64 {
+    fn b_get(&self, key: usize) -> usize {
         if let EvHandle::Read(ref r) = *self {
             r.get(&key)
                 .map(|v| v.iter().next().cloned().unwrap())
@@ -237,7 +228,7 @@ impl Backend for EvHandle {
         }
     }
 
-    fn b_put(&mut self, key: u64, value: u64) {
+    fn b_put(&mut self, key: usize, value: usize) {
         if let EvHandle::Write(ref w) = *self {
             let mut w = w.lock();
             w.0.update(key, value);

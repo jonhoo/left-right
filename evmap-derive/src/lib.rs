@@ -1,7 +1,8 @@
 //! This crate provides procedural derive macros to simplify the usage of `evmap`.
 //!
 //! Currently, only `#[derive(ShallowCopy)]` is supported; see below.
-#![deny(missing_docs)]
+#![warn(missing_docs, rust_2018_idioms, intra_doc_link_resolution_failure)]
+
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
@@ -91,26 +92,26 @@ fn fields(data: &Data, type_name: &Ident) -> TokenStream {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => {
                 let recurse = fields.named.iter().map(|f| {
-                        let name = &f.ident;
-                        quote_spanned! {f.span()=>
-                            #name: std::mem::ManuallyDrop::into_inner(
-                                evmap::shallow_copy::ShallowCopy::shallow_copy(&self.#name)
-                            )
-                        }
-                    });
+                    let name = &f.ident;
+                    quote_spanned! {f.span()=>
+                        #name: std::mem::ManuallyDrop::into_inner(
+                            evmap::shallow_copy::ShallowCopy::shallow_copy(&self.#name)
+                        )
+                    }
+                });
                 quote! {
                     std::mem::ManuallyDrop::new(Self { #(#recurse,)* })
                 }
             }
             Fields::Unnamed(fields) => {
                 let recurse = fields.unnamed.iter().enumerate().map(|(i, f)| {
-                        let index = Index::from(i);
-                        quote_spanned! {f.span()=>
-                            std::mem::ManuallyDrop::into_inner(
-                                evmap::shallow_copy::ShallowCopy::shallow_copy(&self.#index)
-                            )
-                        }
-                    });
+                    let index = Index::from(i);
+                    quote_spanned! {f.span()=>
+                        std::mem::ManuallyDrop::into_inner(
+                            evmap::shallow_copy::ShallowCopy::shallow_copy(&self.#index)
+                        )
+                    }
+                });
                 quote! {
                     std::mem::ManuallyDrop::new(#type_name(#(#recurse,)*))
                 }
@@ -154,9 +155,7 @@ fn fields(data: &Data, type_name: &Ident) -> TokenStream {
                         });
                         (quote! { (#(#field_names,)*) }, quote! { (#(#recurse,)*) })
                     }
-                    Fields::Unit => {
-                        (quote!(), quote!())
-                    }
+                    Fields::Unit => (quote!(), quote!()),
                 };
                 let name = &f.ident;
                 quote_spanned! {f.span()=>

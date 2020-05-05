@@ -1,21 +1,20 @@
 [package]
 name = "evmap-derive"
-version = "9.0.0"
-edition = "2018"
-
-description = "A lock-free, eventually consistent, concurrent multi-value map."
-readme = "README.md"
-
+version = "0.1.0"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
 
-documentation = "https://docs.rs/evmap"
-homepage = "https://github.com/jonhoo/rust-evmap"
+description = "Derive macro for evmap::ShallowCopy"
 repository = "https://github.com/jonhoo/rust-evmap.git"
 
-keywords = ["map","multi-value","lock-free"]
-categories = ["concurrency", "data-structures"]
+keywords = ["derive","evmap"]
+categories = []
 
-license = "MIT/Apache-2.0"
+[badges]
+azure-devops = { project = "jonhoo/jonhoo", pipeline = "evmap", build = "8" }
+codecov = { repository = "jonhoo/rust-evmap", branch = "master", service = "github" }
+maintenance = { status = "passively-maintained" }
 
 [lib]
 proc-macro = true
@@ -26,5 +25,5 @@ quote = "1.0.2"
 proc-macro2 = "1.0.9"
 
 [dev-dependencies]
-evmap = { path = "../", version = "9.0.0" }
+evmap = { path = "../", version = "9" }
 trybuild = "1.0.24"

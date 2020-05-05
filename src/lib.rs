@@ -229,7 +229,12 @@
 //! Operations such as `Fit` and `Replace` will automatically switch back to the inline storage if
 //! possible. This is ideal for maps that mostly use one element per key, as it can improvate
 //! memory locality with less indirection.
-#![deny(missing_docs, rust_2018_idioms, missing_debug_implementations)]
+#![warn(
+    missing_docs,
+    rust_2018_idioms,
+    missing_debug_implementations,
+    intra_doc_link_resolution_failure
+)]
 #![allow(clippy::type_complexity)]
 
 use std::collections::hash_map::RandomState;
