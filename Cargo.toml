@@ -1,6 +1,6 @@
 [package]
 name = "evmap"
-version = "10.0.0"
+version = "10.0.1"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"

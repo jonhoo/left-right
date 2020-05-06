@@ -200,7 +200,7 @@ where
                         assert_eq!(n, 1);
                         short.push(row);
                     }
-                    std::mem::replace(&mut self.0, ValuesInner::Short(short));
+                    self.0 = ValuesInner::Short(short);
                 } else {
                     v.shrink_to_fit();
                 }
@@ -240,7 +240,7 @@ where
             // exact same original state, this change from short/long should occur exactly
             // the same.
             long.extend(v.drain(..));
-            std::mem::replace(&mut self.0, ValuesInner::Long(long));
+            self.0 = ValuesInner::Long(long);
         }
     }
 
