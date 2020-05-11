@@ -170,27 +170,32 @@ where
     V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, Vec<Arc<atomic::AtomicUsize>>>) {
+    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<atomic::AtomicUsize>>>) {
         let mut iter = 0;
         let mut starti = 0;
         let high_bit = 1usize << (mem::size_of::<usize>() * 8 - 1);
-        self.last_epochs.resize(epochs.len(), 0);
+        // we're over-estimating here, but slab doesn't expose its max index
+        self.last_epochs.resize(epochs.capacity(), 0);
         'retry: loop {
             // read all and see if all have changed (which is likely)
-            for (i, epoch) in epochs.iter().enumerate().skip(starti) {
-                if self.last_epochs[i] & high_bit != 0 {
+            for (ii, (ri, epoch)) in epochs.iter().enumerate().skip(starti) {
+                // note that `ri` _may_ have been re-used since we last read into last_epochs.
+                // this is okay though, as a change still implies that the new reader must have
+                // arrived _after_ we did the atomic swap, and thus must also have seen the new
+                // pointer.
+                if self.last_epochs[ri] & high_bit != 0 {
                     // reader was not active right after last swap
                     // and therefore *must* only see new pointer
                     continue;
                 }
 
                 let now = epoch.load(atomic::Ordering::Acquire);
-                if (now != self.last_epochs[i]) | (now & high_bit != 0) | (now == 0) {
+                if (now != self.last_epochs[ri]) | (now & high_bit != 0) | (now == 0) {
                     // reader must have seen last swap
                 } else {
                     // reader may not have seen swap
                     // continue from this reader's epoch
-                    starti = i;
+                    starti = ii;
 
                     // how eagerly should we retry?
                     if iter != 20 {
@@ -319,8 +324,8 @@ where
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         atomic::fence(atomic::Ordering::SeqCst);
 
-        for (i, epoch) in epochs.iter().enumerate() {
-            self.last_epochs[i] = epoch.load(atomic::Ordering::Acquire);
+        for (ri, epoch) in epochs.iter() {
+            self.last_epochs[ri] = epoch.load(atomic::Ordering::Acquire);
         }
 
         // NOTE: at this point, there are likely still readers using the w_handle we got
