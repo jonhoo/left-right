@@ -248,7 +248,7 @@ use crate::inner::Inner;
 mod values;
 pub use values::Values;
 
-pub(crate) type Epochs = Arc<Mutex<Vec<Arc<atomic::AtomicUsize>>>>;
+pub(crate) type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicUsize>>>>;
 
 /// Unary predicate used to retain elements.
 ///

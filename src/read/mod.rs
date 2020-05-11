@@ -34,6 +34,7 @@ where
     pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
     pub(crate) epochs: crate::Epochs,
     epoch: sync::Arc<sync::atomic::AtomicUsize>,
+    epoch_i: usize,
     my_epoch: sync::atomic::AtomicUsize,
 
     // Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to
@@ -43,6 +44,18 @@ where
     // `Clone`. Since optin_builtin_traits is still an unstable feature, we use this hack to make
     // `ReadHandle` be marked as `!Sync` (since it contains an `Cell` which is `!Sync`).
     _not_sync_no_feature: PhantomData<cell::Cell<()>>,
+}
+
+impl<K, V, M, S> Drop for ReadHandle<K, V, M, S>
+where
+    K: Eq + Hash,
+    S: BuildHasher,
+{
+    fn drop(&mut self) {
+        // parity must be restored, so okay to lock since we're not holding up the epoch
+        let e = self.epochs.lock().unwrap().remove(self.epoch_i);
+        assert!(Arc::ptr_eq(&e, &self.epoch));
+    }
 }
 
 impl<K, V, M, S> fmt::Debug for ReadHandle<K, V, M, S>
@@ -96,11 +109,13 @@ where
     ) -> Self {
         // tell writer about our epoch tracker
         let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
-        epochs.lock().unwrap().push(Arc::clone(&epoch));
+        // okay to lock, since we're not holding up the epoch
+        let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
 
         Self {
             epochs,
             epoch,
+            epoch_i,
             my_epoch: atomic::AtomicUsize::new(0),
             inner,
             _not_sync_no_feature: PhantomData,
