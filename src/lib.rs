@@ -294,9 +294,11 @@ pub enum Operation<K, V> {
     Remove(K, V),
     /// Remove the value set for this key.
     Empty(K),
-    #[cfg(feature = "indexed")]
-    /// Drop a key at a random index
-    EmptyRandom(usize),
+    #[cfg(feature = "eviction")]
+    /// Drop keys at the given indices.
+    ///
+    /// The list of indices must be sorted in ascending order.
+    EmptyAt(Vec<usize>),
     /// Remove all values in the value set for this key.
     Clear(K),
     /// Remove all values for all keys.

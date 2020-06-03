@@ -445,21 +445,51 @@ fn empty() {
 }
 
 #[test]
-#[cfg(feature = "indexed")]
+#[cfg(feature = "eviction")]
 fn empty_random() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.empty_at_index(0);
+
+    let mut rng = rand::thread_rng();
+    let removed: Vec<_> = w.empty_random(&mut rng, 1).map(|(&k, _)| k).collect();
     w.refresh();
 
     // should only have one value set left
-    assert_eq!(r.len(), 1);
+    assert_eq!(removed.len(), 1);
+    let kept = 3 - removed[0];
     // one of them must have gone away
-    assert!(
-        (!r.contains_key(&1) && r.contains_key(&2)) || (r.contains_key(&1) && !r.contains_key(&2))
-    );
+    assert_eq!(r.len(), 1);
+    assert!(!r.contains_key(&removed[0]));
+    assert!(r.contains_key(&kept));
+
+    // remove the other one
+    let removed: Vec<_> = w.empty_random(&mut rng, 100).map(|(&k, _)| k).collect();
+    w.refresh();
+
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0], kept);
+    assert!(r.is_empty());
+}
+
+#[test]
+#[cfg(feature = "eviction")]
+fn empty_random_multiple() {
+    let (r, mut w) = evmap::new();
+    w.insert(1, "a");
+    w.insert(1, "b");
+    w.insert(2, "c");
+
+    let mut rng = rand::thread_rng();
+    let removed1: Vec<_> = w.empty_random(&mut rng, 1).map(|(&k, _)| k).collect();
+    let removed2: Vec<_> = w.empty_random(&mut rng, 1).map(|(&k, _)| k).collect();
+    w.refresh();
+
+    assert_eq!(removed1.len(), 1);
+    assert_eq!(removed2.len(), 1);
+    assert_ne!(removed1[0], removed2[0]);
+    assert!(r.is_empty());
 }
 
 #[test]

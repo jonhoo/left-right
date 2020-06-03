@@ -506,25 +506,42 @@ where
         self.add_op(Operation::Reserve(k, additional))
     }
 
-    #[cfg(feature = "indexed")]
-    /// Remove the value-bag for a key at a specified index.
+    #[cfg(feature = "eviction")]
+    /// Remove the value-bag for `n` randomly chosen keys.
     ///
-    /// This is effectively random removal.
-    /// The value-bag will only disappear from readers after the next call to `refresh()`.
-    ///
-    /// Note that this does a _swap-remove_, so use it carefully.
-    pub fn empty_at_index(&mut self, index: usize) -> Option<(&K, &Values<V, S>)> {
-        self.add_op(Operation::EmptyRandom(index));
-        // the actual emptying won't happen until refresh(), which needs &mut self
-        // so it's okay for us to return the references here
+    /// This method immediately calls `refresh()` to ensure that the keys and values it returns
+    /// match the elements that will be emptied on the next call to `refresh()`. The value-bags
+    /// will only disappear from readers after the next call to `refresh()`.
+    pub fn empty_random<'a>(
+        &'a mut self,
+        rng: &mut impl rand::Rng,
+        n: usize,
+    ) -> impl ExactSizeIterator<Item = (&'a K, &'a Values<V, S>)> {
+        // force a refresh so that our view into self.r_handle matches the indices we choose.
+        // if we didn't do this, the `i`th element of r_handle may be a completely different
+        // element than the one that _will_ be evicted when `EmptyAt([.. i ..])` is applied.
+        // this would be bad since we are telling the caller which elements we are evicting!
+        // note also that we _must_ use `r_handle`, not `w_handle`, since `w_handle` may have
+        // pending operations even after a refresh!
+        self.refresh();
 
-        // NOTE to future zealots intent on removing the unsafe code: it's **NOT** okay to use
-        // self.w_handle here, since that does not have all pending operations applied to it yet.
-        // Specifically, there may be an *eviction* pending that already has been applied to the
-        // r_handle side, but not to the w_handle (will be applied on the next swap). We must make
-        // sure that we read the most up to date map here.
         let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
-        unsafe { (*inner).data.get_index(index) }.map(|(k, vs)| (k, vs.user_friendly()))
+        let inner: &'a _ = unsafe { &(*inner).data };
+
+        // let's pick some (distinct) indices to evict!
+        let n = n.min(inner.len());
+        let indices = rand::seq::index::sample(rng, inner.len(), n);
+
+        // we need to sort the indices so that, later, we can make sure to swap remove from last to
+        // first (and so not accidentally remove the wrong index).
+        let mut to_remove = indices.clone().into_vec();
+        to_remove.sort();
+        self.add_op(Operation::EmptyAt(to_remove));
+
+        indices.into_iter().map(move |i| {
+            let (k, vs) = inner.get_index(i).expect("in-range");
+            (k, vs.user_friendly())
+        })
     }
 
     /// Apply ops in such a way that no values are dropped, only forgotten
@@ -569,9 +586,11 @@ where
             Operation::Purge => {
                 inner.data.clear();
             }
-            #[cfg(feature = "indexed")]
-            Operation::EmptyRandom(index) => {
-                inner.data.swap_remove_index(index);
+            #[cfg(feature = "eviction")]
+            Operation::EmptyAt(ref indices) => {
+                for &index in indices.iter().rev() {
+                    inner.data.swap_remove_index(index);
+                }
             }
             Operation::Remove(ref key, ref value) => {
                 if let Some(e) = inner.data.get_mut(key) {
@@ -645,9 +664,11 @@ where
             Operation::Purge => {
                 inner.data.clear();
             }
-            #[cfg(feature = "indexed")]
-            Operation::EmptyRandom(index) => {
-                inner.data.swap_remove_index(index);
+            #[cfg(feature = "eviction")]
+            Operation::EmptyAt(indices) => {
+                for &index in indices.iter().rev() {
+                    inner.data.swap_remove_index(index);
+                }
             }
             Operation::Remove(key, value) => {
                 if let Some(e) = inner.data.get_mut(&key) {
