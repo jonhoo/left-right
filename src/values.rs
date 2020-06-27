@@ -1,9 +1,8 @@
+use crate::BAG_THRESHOLD;
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
-
-const BAG_THRESHOLD: usize = 32;
 
 /// A bag of values for a given key in the evmap.
 #[repr(transparent)]

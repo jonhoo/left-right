@@ -754,9 +754,8 @@ fn get_one_long() {
 
     let (r, mut w) = evmap::new();
 
-    // Add 32 items to meet the BAG_THRESHOLD and
-    // ensure the inner type is ValuesInner::Long.
-    let values = 0..32;
+    // Add BAG_THRESHOLD items to ensure the inner type is ValuesInner::Long.
+    let values = 0..evmap::BAG_THRESHOLD;
     for i in values.clone() {
         w.insert(x, i);
     }
