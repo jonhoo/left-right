@@ -745,7 +745,7 @@ fn get_one_short() {
 
     w.refresh();
 
-    assert_match!(r.get_one(&x.0).unwrap().as_ref(), ('x', 42));
+    assert_match!(r.get_one(&x.0).as_deref(), Some(('x', 42)));
 }
 
 #[test]
