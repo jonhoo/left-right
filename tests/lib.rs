@@ -732,3 +732,40 @@ fn retain() {
     vs.sort();
     assert_eq!(v, &*vs);
 }
+
+#[test]
+fn get_one_short() {
+    let x = ('x', 42);
+
+    let (r, mut w) = evmap::new();
+
+    w.insert(x.0, x);
+
+    assert_match!(r.get_one(&x.0), None);
+
+    w.refresh();
+
+    assert_match!(r.get_one(&x.0).unwrap().as_ref(), ('x', 42));
+}
+
+#[test]
+fn get_one_long() {
+    let x = ('x', 42);
+
+    let (r, mut w) = evmap::new();
+
+    // Add 32 items to meet the BAG_THRESHOLD and
+    // ensure the inner type is ValuesInner::Long.
+    let values = 0..32;
+    for i in values.clone() {
+        w.insert(x.0, i);
+    }
+
+    assert_match!(r.get_one(&x.0), None);
+
+    w.refresh();
+
+    // We don't know exactly which value we're going to get but
+    // it better be one of the values we inserted.
+    assert!(values.contains(r.get_one(&x.0).unwrap().as_ref()));
+}
