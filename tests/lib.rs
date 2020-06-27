@@ -750,7 +750,7 @@ fn get_one_short() {
 
 #[test]
 fn get_one_long() {
-    let x = ('x', 42);
+    let x = 'x';
 
     let (r, mut w) = evmap::new();
 
@@ -758,14 +758,14 @@ fn get_one_long() {
     // ensure the inner type is ValuesInner::Long.
     let values = 0..32;
     for i in values.clone() {
-        w.insert(x.0, i);
+        w.insert(x, i);
     }
 
-    assert_match!(r.get_one(&x.0), None);
+    assert_match!(r.get_one(&x), None);
 
     w.refresh();
 
     // We don't know exactly which value we're going to get but
     // it better be one of the values we inserted.
-    assert!(values.contains(r.get_one(&x.0).unwrap().as_ref()));
+    assert!(values.contains(r.get_one(&x).unwrap().as_ref()));
 }
