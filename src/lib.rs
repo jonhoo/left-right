@@ -250,6 +250,8 @@ pub use values::Values;
 
 pub(crate) type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicUsize>>>>;
 
+/// This value determines when a value-set is promoted from a list to a HashBag.
+///
 /// This is only pub so it can be used in tests!
 #[doc(hidden)]
 pub const BAG_THRESHOLD: usize = 32;
