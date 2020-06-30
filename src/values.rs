@@ -1,8 +1,10 @@
-use crate::BAG_THRESHOLD;
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
+
+/// This value determines when a value-set is promoted from a list to a HashBag.
+const BAG_THRESHOLD: usize = 32;
 
 /// A bag of values for a given key in the evmap.
 #[repr(transparent)]
