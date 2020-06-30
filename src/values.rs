@@ -319,8 +319,8 @@ mod tests {
 
     macro_rules! assert_empty {
         ($x:expr) => {
-            assert!($x.is_empty());
             assert_eq!($x.len(), 0);
+            assert!($x.is_empty());
             assert_eq!($x.iter().count(), 0);
             assert_eq!($x.into_iter().count(), 0);
             assert_eq!($x.get_one(), None);
@@ -329,8 +329,8 @@ mod tests {
 
     macro_rules! assert_len {
         ($x:expr, $n:expr) => {
-            assert!(!$x.is_empty());
             assert_eq!($x.len(), $n);
+            assert!(!$x.is_empty());
             assert_eq!($x.iter().count(), $n);
             assert_eq!($x.into_iter().count(), $n);
         };
