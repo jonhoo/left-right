@@ -732,3 +732,19 @@ fn retain() {
     vs.sort();
     assert_eq!(v, &*vs);
 }
+
+#[test]
+fn get_one() {
+    let x = ('x', 42);
+
+    let (r, mut w) = evmap::new();
+
+    w.insert(x.0, x);
+    w.insert(x.0, x);
+
+    assert_match!(r.get_one(&x.0), None);
+
+    w.refresh();
+
+    assert_match!(r.get_one(&x.0).as_deref(), Some(('x', 42)));
+}
