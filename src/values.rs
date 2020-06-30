@@ -308,14 +308,106 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::hash_map::RandomState;
+
+    macro_rules! assert_empty {
+        ($x:expr) => {
+            assert!($x.is_empty());
+            assert_eq!($x.len(), 0);
+            assert_eq!($x.iter().count(), 0);
+            assert_eq!($x.into_iter().count(), 0);
+            assert_eq!($x.get_one(), None);
+        };
+    }
+
+    macro_rules! assert_len {
+        ($x:expr, $n:expr) => {
+            assert!(!$x.is_empty());
+            assert_eq!($x.len(), $n);
+            assert_eq!($x.iter().count(), $n);
+            assert_eq!($x.into_iter().count(), $n);
+        };
+    }
+
+    fn has_short_values<T, S>(v: &Values<T, S>) -> bool {
+        match v.0 {
+            ValuesInner::Short(_) => true,
+            _ => false,
+        }
+    }
+    fn has_long_values<T, S>(v: &Values<T, S>) -> bool {
+        !has_short_values(v)
+    }
 
     #[test]
     fn sensible_default() {
         let v: Values<i32> = Values::default();
-        assert!(v.is_empty());
-        assert_eq!(v.len(), 0);
+        assert!(has_short_values(&v));
         assert_eq!(v.capacity(), 1);
-        assert_eq!(v.iter().count(), 0);
-        assert_eq!(v.into_iter().count(), 0);
+        assert_empty!(v);
+    }
+
+    #[test]
+    fn short_values() {
+        let hasher = RandomState::default();
+        let mut v = Values::new();
+
+        let values = 0..BAG_THRESHOLD - 1;
+        let len = values.clone().count();
+        for i in values.clone() {
+            v.push(i, &hasher);
+        }
+
+        for i in values.clone() {
+            assert!(v.contains(&i));
+        }
+        assert!(has_short_values(&v));
+        assert_len!(v, len);
+        assert_eq!(v.get_one(), Some(&0));
+
+        v.clear();
+
+        assert_empty!(v);
+
+        // clear() should not affect capacity or value type!
+        assert!(v.capacity() > 1);
+        assert!(has_short_values(&v));
+
+        v.shrink_to_fit();
+
+        assert_eq!(v.capacity(), 1);
+    }
+
+    #[test]
+    fn long_values() {
+        let hasher = RandomState::default();
+        let mut v = Values::new();
+
+        let values = 0..BAG_THRESHOLD;
+        let len = values.clone().count();
+        for i in values.clone() {
+            v.push(i, &hasher);
+        }
+
+        for i in values.clone() {
+            assert!(v.contains(&i));
+        }
+        assert!(has_long_values(&v));
+        assert_len!(v, len);
+        assert!(values.contains(v.get_one().unwrap()));
+
+        v.clear();
+
+        assert_empty!(v);
+
+        // clear() should not affect capacity or value type!
+        assert!(v.capacity() > 1);
+        assert!(has_long_values(&v));
+
+        v.shrink_to_fit();
+
+        // Now we have short values!
+        assert!(has_short_values(&v));
+        assert_eq!(v.capacity(), 1);
     }
 }

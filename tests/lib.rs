@@ -734,11 +734,12 @@ fn retain() {
 }
 
 #[test]
-fn get_one_short() {
+fn get_one() {
     let x = ('x', 42);
 
     let (r, mut w) = evmap::new();
 
+    w.insert(x.0, x);
     w.insert(x.0, x);
 
     assert_match!(r.get_one(&x.0), None);
@@ -746,25 +747,4 @@ fn get_one_short() {
     w.refresh();
 
     assert_match!(r.get_one(&x.0).as_deref(), Some(('x', 42)));
-}
-
-#[test]
-fn get_one_long() {
-    let x = 'x';
-
-    let (r, mut w) = evmap::new();
-
-    // Add BAG_THRESHOLD items to ensure the inner type is ValuesInner::Long.
-    let values = 0..evmap::BAG_THRESHOLD;
-    for i in values.clone() {
-        w.insert(x, i);
-    }
-
-    assert_match!(r.get_one(&x), None);
-
-    w.refresh();
-
-    // We don't know exactly which value we're going to get but
-    // it better be one of the values we inserted.
-    assert!(values.contains(r.get_one(&x).unwrap().as_ref()));
 }
