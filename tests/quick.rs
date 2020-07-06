@@ -69,6 +69,7 @@ use Op::*;
 enum Op<K, V> {
     Add(K, V),
     Remove(K),
+    Refresh,
 }
 
 impl<K, V> Arbitrary for Op<K, V>
@@ -77,15 +78,20 @@ where
     V: Arbitrary,
 {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        match g.gen::<u32>() % 4 {
+        match g.gen::<u32>() % 3 {
             0 => Add(K::arbitrary(g), V::arbitrary(g)),
-            _ => Remove(K::arbitrary(g)),
+            1 => Remove(K::arbitrary(g)),
+            _ => Refresh,
         }
     }
 }
 
-fn do_ops<K, V, S>(ops: &[Op<K, V>], a: &mut WriteHandle<K, V, (), S>, b: &mut HashMap<K, Vec<V>>)
-where
+fn do_ops<K, V, S>(
+    ops: &[Op<K, V>],
+    evmap: &mut WriteHandle<K, V, (), S>,
+    write_ref: &mut HashMap<K, Vec<V>>,
+    read_ref: &mut HashMap<K, Vec<V>>,
+) where
     K: Hash + Eq + Clone,
     V: Clone + evmap::ShallowCopy + Eq + Hash,
     S: BuildHasher + Clone,
@@ -93,12 +99,19 @@ where
     for op in ops {
         match *op {
             Add(ref k, ref v) => {
-                a.insert(k.clone(), v.clone());
-                b.entry(k.clone()).or_insert_with(Vec::new).push(v.clone());
+                evmap.insert(k.clone(), v.clone());
+                write_ref
+                    .entry(k.clone())
+                    .or_insert_with(Vec::new)
+                    .push(v.clone());
             }
             Remove(ref k) => {
-                a.empty(k.clone());
-                b.remove(k);
+                evmap.empty(k.clone());
+                write_ref.remove(k);
+            }
+            Refresh => {
+                evmap.refresh();
+                *read_ref = write_ref.clone();
             }
         }
     }
@@ -184,17 +197,23 @@ impl Arbitrary for Alphabet {
 #[quickcheck]
 fn operations_i8(ops: Large<Vec<Op<i8, i8>>>) -> bool {
     let (r, mut w) = evmap::new();
-    let mut reference = HashMap::new();
-    do_ops(&ops, &mut w, &mut reference);
+    let mut write_ref = HashMap::new();
+    let mut read_ref = HashMap::new();
+    do_ops(&ops, &mut w, &mut write_ref, &mut read_ref);
+    assert_maps_equivalent(&r, &read_ref);
+
     w.refresh();
-    assert_maps_equivalent(&r, &reference)
+    assert_maps_equivalent(&r, &write_ref)
 }
 
 #[quickcheck]
 fn operations_string(ops: Vec<Op<Alphabet, i8>>) -> bool {
     let (r, mut w) = evmap::new();
-    let mut reference = HashMap::new();
-    do_ops(&ops, &mut w, &mut reference);
+    let mut write_ref = HashMap::new();
+    let mut read_ref = HashMap::new();
+    do_ops(&ops, &mut w, &mut write_ref, &mut read_ref);
+    assert_maps_equivalent(&r, &read_ref);
+
     w.refresh();
-    assert_maps_equivalent(&r, &reference)
+    assert_maps_equivalent(&r, &write_ref)
 }
