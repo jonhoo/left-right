@@ -1,3 +1,5 @@
+#![cfg(not(miri))]
+
 extern crate evmap;
 
 use evmap::{ReadHandle, WriteHandle};
