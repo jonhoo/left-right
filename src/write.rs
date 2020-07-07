@@ -431,14 +431,30 @@ where
     /// Remove the given value from the value-bag of the given key.
     ///
     /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
+    #[deprecated(since = "11.0.0", note = "Renamed to remove_value")]
     pub fn remove(&mut self, k: K, v: V) -> &mut Self {
+        self.remove_value(k, v)
+    }
+
+    /// Remove the given value from the value-bag of the given key.
+    ///
+    /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
+    pub fn remove_value(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::Remove(k, v))
     }
 
     /// Remove the value-bag for the given key.
     ///
     /// The value-bag will only disappear from readers after the next call to `refresh()`.
+    #[deprecated(since = "11.0.0", note = "Renamed to remove_entry")]
     pub fn empty(&mut self, k: K) -> &mut Self {
+        self.remove_entry(k)
+    }
+
+    /// Remove the value-bag for the given key.
+    ///
+    /// The value-bag will only disappear from readers after the next call to `refresh()`.
+    pub fn remove_entry(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Empty(k))
     }
 
