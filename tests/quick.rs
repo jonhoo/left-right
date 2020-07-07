@@ -69,6 +69,7 @@ use Op::*;
 enum Op<K, V> {
     Add(K, V),
     Remove(K),
+    RemoveValue(K, V),
     Refresh,
 }
 
@@ -78,9 +79,10 @@ where
     V: Arbitrary,
 {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        match g.gen::<u32>() % 3 {
+        match g.gen::<u32>() % 4 {
             0 => Add(K::arbitrary(g), V::arbitrary(g)),
             1 => Remove(K::arbitrary(g)),
+            2 => RemoveValue(K::arbitrary(g), V::arbitrary(g)),
             _ => Refresh,
         }
     }
@@ -108,6 +110,15 @@ fn do_ops<K, V, S>(
             Remove(ref k) => {
                 evmap.empty(k.clone());
                 write_ref.remove(k);
+            }
+            RemoveValue(ref k, ref v) => {
+                evmap.remove(k.clone(), v.clone());
+                write_ref.get_mut(k).and_then(|values| {
+                    values
+                        .iter_mut()
+                        .position(|value| value == v)
+                        .and_then(|pos| Some(values.remove(pos)))
+                });
             }
             Refresh => {
                 evmap.refresh();
