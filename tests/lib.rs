@@ -748,3 +748,38 @@ fn get_one() {
 
     assert_match!(r.get_one(&x.0).as_deref(), Some(('x', 42)));
 }
+
+#[test]
+fn insert_remove() {
+    let x = 'x';
+
+    let (r, mut w) = evmap::new();
+
+    w.insert(x, x);
+
+    w.remove(x, x);
+    w.refresh();
+
+    // There are no more values associated with this key
+    assert!(r.get(&x).is_some());
+    assert_match!(r.get(&x).as_deref().unwrap().len(), 0);
+
+    // But the map is NOT empty! It still has an empty bag for the key!
+    assert!(!r.is_empty());
+    assert_eq!(r.len(), 1);
+}
+
+#[test]
+fn insert_empty() {
+    let x = 'x';
+
+    let (r, mut w) = evmap::new();
+
+    w.insert(x, x);
+
+    w.empty(x);
+    w.refresh();
+
+    assert!(r.is_empty());
+    assert!(r.get(&x).is_none());
+}
