@@ -36,6 +36,8 @@ jobs:
        displayName: cargo miri setup
      - script: cargo miri test
        displayName: cargo miri test
+       env:
+         QUICKCHECK_TESTS: 500
  - job: asan
    displayName: "Run address sanitizer on test suite"
    pool:
