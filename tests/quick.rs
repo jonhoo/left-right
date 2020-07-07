@@ -119,7 +119,7 @@ fn do_ops<K, V, S>(
                     values
                         .iter_mut()
                         .position(|value| value == v)
-                        .and_then(|pos| Some(values.remove(pos)))
+                        .and_then(|pos| Some(values.swap_remove(pos)))
                 });
             }
             Refresh => {
