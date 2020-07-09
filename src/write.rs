@@ -748,4 +748,46 @@ mod tests {
         assert!(w.oplog[w.swap_index..].is_empty());
         w.flush();
     }
+
+    #[test]
+    fn flush_no_refresh() {
+        let x = 'x';
+
+        let (_, mut w) = new();
+
+        // Until we refresh, writes are written directly instead of going to the
+        // oplog (because there can't be any readers on the w_handle table).
+        w.refresh();
+
+        assert_eq!(w.second, true);
+
+        w.flush();
+
+        // No refresh because there are no operations
+        assert_eq!(w.second, true);
+
+        w.insert(x, x);
+        w.flush();
+
+        // A refresh happened!
+        assert_eq!(w.second, false);
+
+        // Reset this flag so we can see if another refresh happens
+        w.second = true;
+
+        w.flush();
+
+        // Subsequent flushes don't refresh until there are more ops!
+        assert_eq!(w.second, true);
+
+        w.insert(x, x);
+        w.flush();
+
+        assert_eq!(w.second, false);
+        w.second = true;
+
+        // Sanity check that a refresh would have been visible
+        w.refresh();
+        assert_eq!(w.second, false);
+    }
 }
