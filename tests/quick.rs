@@ -57,7 +57,7 @@ fn insert_empty(insert: Vec<u8>, remove: Vec<u8>) -> bool {
     }
     w.refresh();
     for &key in &remove {
-        w.empty(key);
+        w.remove_entry(key);
     }
     w.refresh();
     let elements = &set(&insert) - &set(&remove);
@@ -110,16 +110,16 @@ fn do_ops<K, V, S>(
                     .push(v.clone());
             }
             Remove(ref k) => {
-                evmap.empty(k.clone());
+                evmap.remove_entry(k.clone());
                 write_ref.remove(k);
             }
             RemoveValue(ref k, ref v) => {
-                evmap.remove(k.clone(), v.clone());
+                evmap.remove_value(k.clone(), v.clone());
                 write_ref.get_mut(k).and_then(|values| {
                     values
                         .iter_mut()
                         .position(|value| value == v)
-                        .and_then(|pos| Some(values.remove(pos)))
+                        .and_then(|pos| Some(values.swap_remove(pos)))
                 });
             }
             Refresh => {

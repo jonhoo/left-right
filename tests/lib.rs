@@ -174,22 +174,6 @@ fn paniced_reader_doesnt_block_writer() {
 }
 
 #[test]
-fn flush_noblock() {
-    let x = ('x', 42);
-
-    let (r, mut w) = evmap::new();
-    w.insert(x.0, x);
-    w.refresh();
-    assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
-
-    // pin the epoch
-    let _map = r.read();
-    // refresh would hang here, but flush won't
-    assert!(w.pending().is_empty());
-    w.flush();
-}
-
-#[test]
 fn read_after_drop() {
     let x = ('x', 42);
 
@@ -350,14 +334,14 @@ fn clear_vs_empty() {
     w.clear(1);
     w.refresh();
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
-    w.empty(1);
+    w.remove_entry(1);
     w.refresh();
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     // and again to test both apply_first and apply_second
     w.clear(1);
     w.refresh();
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
-    w.empty(1);
+    w.remove_entry(1);
     w.refresh();
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
 }
@@ -391,7 +375,7 @@ fn absorb_negative_immediate() {
     let (r, mut w) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
-    w.remove(1, "a");
+    w.remove_value(1, "a");
     w.refresh();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
@@ -404,7 +388,7 @@ fn absorb_negative_later() {
     w.insert(1, "a");
     w.insert(1, "b");
     w.refresh();
-    w.remove(1, "a");
+    w.remove_value(1, "a");
     w.refresh();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
@@ -421,9 +405,9 @@ fn absorb_multi() {
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 
-    w.remove(1, "a");
+    w.remove_value(1, "a");
     w.insert(1, "c");
-    w.remove(1, "c");
+    w.remove_value(1, "c");
     w.refresh();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
@@ -436,7 +420,7 @@ fn empty() {
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.empty(1);
+    w.remove_entry(1);
     w.refresh();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
@@ -499,7 +483,7 @@ fn empty_post_refresh() {
     w.insert(1, "b");
     w.insert(2, "c");
     w.refresh();
-    w.empty(1);
+    w.remove_entry(1);
     w.refresh();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
@@ -525,7 +509,7 @@ fn clear() {
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(0));
 
-    w.empty(1);
+    w.remove_entry(1);
     w.refresh();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
@@ -668,12 +652,12 @@ fn bigbag() {
         }
         for i in (1..ndistinct).rev() {
             for _ in 0..i {
-                w.remove(1, vec![i]);
+                w.remove_value(1, vec![i]);
                 w.fit(1);
                 w.refresh();
             }
         }
-        w.empty(1);
+        w.remove_entry(1);
     }
 
     drop(w);
@@ -750,14 +734,14 @@ fn get_one() {
 }
 
 #[test]
-fn insert_remove() {
+fn insert_remove_value() {
     let x = 'x';
 
     let (r, mut w) = evmap::new();
 
     w.insert(x, x);
 
-    w.remove(x, x);
+    w.remove_value(x, x);
     w.refresh();
 
     // There are no more values associated with this key
@@ -770,14 +754,14 @@ fn insert_remove() {
 }
 
 #[test]
-fn insert_empty() {
+fn insert_remove_entry() {
     let x = 'x';
 
     let (r, mut w) = evmap::new();
 
     w.insert(x, x);
 
-    w.empty(x);
+    w.remove_entry(x);
     w.refresh();
 
     assert!(r.is_empty());

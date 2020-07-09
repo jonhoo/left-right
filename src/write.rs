@@ -336,38 +336,12 @@ where
         self
     }
 
-    /// Gives the sequence of operations that have not yet been applied.
-    ///
-    /// Note that until the *first* call to `refresh`, the sequence of operations is always empty.
-    ///
-    /// ```
-    /// # use evmap::Operation;
-    /// let x = ('x', 42);
-    ///
-    /// let (r, mut w) = evmap::new();
-    ///
-    /// // before the first refresh, no oplog is kept
-    /// w.refresh();
-    ///
-    /// assert_eq!(w.pending(), &[]);
-    /// w.insert(x.0, x);
-    /// assert_eq!(w.pending(), &[Operation::Add(x.0, x)]);
-    /// w.refresh();
-    /// w.remove(x.0, x);
-    /// assert_eq!(w.pending(), &[Operation::Remove(x.0, x)]);
-    /// w.refresh();
-    /// assert_eq!(w.pending(), &[]);
-    /// ```
-    pub fn pending(&self) -> &[Operation<K, V>] {
-        &self.oplog[self.swap_index..]
-    }
-
     /// Refresh as necessary to ensure that all operations are visible to readers.
     ///
     /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
     /// This method will only do so if there are pending operations.
     pub fn flush(&mut self) -> &mut Self {
-        if !self.pending().is_empty() {
+        if self.swap_index < self.oplog.len() {
             self.refresh();
         }
 
@@ -431,15 +405,31 @@ where
     /// Remove the given value from the value-bag of the given key.
     ///
     /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
+    #[deprecated(since = "11.0.0", note = "Renamed to remove_value")]
     pub fn remove(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Remove(k, v))
+        self.remove_value(k, v)
+    }
+
+    /// Remove the given value from the value-bag of the given key.
+    ///
+    /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
+    pub fn remove_value(&mut self, k: K, v: V) -> &mut Self {
+        self.add_op(Operation::RemoveValue(k, v))
     }
 
     /// Remove the value-bag for the given key.
     ///
     /// The value-bag will only disappear from readers after the next call to `refresh()`.
+    #[deprecated(since = "11.0.0", note = "Renamed to remove_entry")]
     pub fn empty(&mut self, k: K) -> &mut Self {
-        self.add_op(Operation::Empty(k))
+        self.remove_entry(k)
+    }
+
+    /// Remove the value-bag for the given key.
+    ///
+    /// The value-bag will only disappear from readers after the next call to `refresh()`.
+    pub fn remove_entry(&mut self, k: K) -> &mut Self {
+        self.add_op(Operation::RemoveEntry(k))
     }
 
     /// Purge all value-bags from the map.
@@ -577,7 +567,7 @@ where
                     .or_insert_with(Values::new)
                     .push(unsafe { value.shallow_copy() }, hasher);
             }
-            Operation::Empty(ref key) => {
+            Operation::RemoveEntry(ref key) => {
                 #[cfg(not(feature = "indexed"))]
                 inner.data.remove(key);
                 #[cfg(feature = "indexed")]
@@ -592,7 +582,7 @@ where
                     inner.data.swap_remove_index(index);
                 }
             }
-            Operation::Remove(ref key, ref value) => {
+            Operation::RemoveValue(ref key, ref value) => {
                 if let Some(e) = inner.data.get_mut(key) {
                     // remove a matching value from the value set
                     // safety: this is fine
@@ -655,7 +645,7 @@ where
                     .or_insert_with(Values::new)
                     .push(value, hasher);
             }
-            Operation::Empty(key) => {
+            Operation::RemoveEntry(key) => {
                 #[cfg(not(feature = "indexed"))]
                 inner.data.remove(&key);
                 #[cfg(feature = "indexed")]
@@ -670,7 +660,7 @@ where
                     inner.data.swap_remove_index(index);
                 }
             }
-            Operation::Remove(key, value) => {
+            Operation::RemoveValue(key, value) => {
                 if let Some(e) = inner.data.get_mut(&key) {
                     // find the first entry that matches all fields
                     e.swap_remove(&value);
@@ -736,5 +726,68 @@ where
     type Target = ReadHandle<K, V, M, S>;
     fn deref(&self) -> &Self::Target {
         &self.r_handle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::new;
+
+    #[test]
+    fn flush_noblock() {
+        let x = ('x', 42);
+
+        let (r, mut w) = new();
+        w.insert(x.0, x);
+        w.refresh();
+        assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
+
+        // pin the epoch
+        let _map = r.read();
+        // refresh would hang here, but flush won't
+        assert!(w.oplog[w.swap_index..].is_empty());
+        w.flush();
+    }
+
+    #[test]
+    fn flush_no_refresh() {
+        let x = 'x';
+
+        let (_, mut w) = new();
+
+        // Until we refresh, writes are written directly instead of going to the
+        // oplog (because there can't be any readers on the w_handle table).
+        w.refresh();
+
+        assert_eq!(w.second, true);
+
+        w.flush();
+
+        // No refresh because there are no operations
+        assert_eq!(w.second, true);
+
+        w.insert(x, x);
+        w.flush();
+
+        // A refresh happened!
+        assert_eq!(w.second, false);
+
+        // Reset this flag so we can see if another refresh happens
+        w.second = true;
+
+        w.flush();
+
+        // Subsequent flushes don't refresh until there are more ops!
+        assert_eq!(w.second, true);
+
+        w.insert(x, x);
+        w.flush();
+
+        assert_eq!(w.second, false);
+        w.second = true;
+
+        // Sanity check that a refresh would have been visible
+        w.refresh();
+        assert_eq!(w.second, false);
     }
 }
