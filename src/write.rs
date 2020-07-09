@@ -341,7 +341,7 @@ where
     /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
     /// This method will only do so if there are pending operations.
     pub fn flush(&mut self) -> &mut Self {
-        if !self.oplog[self.swap_index..].is_empty() {
+        if self.swap_index < self.oplog.len() {
             self.refresh();
         }
 
