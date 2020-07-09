@@ -64,6 +64,8 @@ where
     meta: M,
     first: bool,
     second: bool,
+    #[cfg(test)]
+    refreshes: usize,
 }
 
 impl<K, V, M, S> fmt::Debug for WriteHandle<K, V, M, S>
@@ -109,6 +111,8 @@ where
         meta: m,
         first: true,
         second: false,
+        #[cfg(test)]
+        refreshes: 0,
     }
 }
 
@@ -332,6 +336,11 @@ where
         self.w_handle = Some(r_handle);
         self.second = self.first;
         self.first = false;
+
+        #[cfg(test)]
+        {
+            self.refreshes += 1;
+        }
 
         self
     }
@@ -759,35 +768,31 @@ mod tests {
         // oplog (because there can't be any readers on the w_handle table).
         w.refresh();
 
-        assert_eq!(w.second, true);
+        assert_eq!(w.refreshes, 1);
 
         w.flush();
 
         // No refresh because there are no operations
-        assert_eq!(w.second, true);
+        assert_eq!(w.refreshes, 1);
 
         w.insert(x, x);
         w.flush();
 
         // A refresh happened!
-        assert_eq!(w.second, false);
-
-        // Reset this flag so we can see if another refresh happens
-        w.second = true;
+        assert_eq!(w.refreshes, 2);
 
         w.flush();
 
         // Subsequent flushes don't refresh until there are more ops!
-        assert_eq!(w.second, true);
+        assert_eq!(w.refreshes, 2);
 
         w.insert(x, x);
         w.flush();
 
-        assert_eq!(w.second, false);
-        w.second = true;
+        assert_eq!(w.refreshes, 3);
 
         // Sanity check that a refresh would have been visible
         w.refresh();
-        assert_eq!(w.second, false);
+        assert_eq!(w.refreshes, 4);
     }
 }
