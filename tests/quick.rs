@@ -62,7 +62,7 @@ fn insert_empty(insert: Vec<u8>, remove: Vec<u8>) -> bool {
     w.refresh();
     let elements = &set(&insert) - &set(&remove);
     r.len() == elements.len()
-        && r.map_into::<_, Vec<()>, _>(|_, _| ()).len() == elements.len()
+        && r.read().iter().map(|r| r.keys()).flatten().count() == elements.len()
         && elements.iter().all(|k| r.get(k).is_some())
 }
 
@@ -137,14 +137,13 @@ where
     S: BuildHasher,
 {
     assert_eq!(a.len(), b.len());
-    let keys = a.map_into::<_, Vec<K>, _>(|k, _| k.clone());
-    for key in &keys {
+    for key in a.read().iter().map(|r| r.keys()).flatten() {
         assert!(b.contains_key(key), "b does not contain {:?}", key);
     }
     for key in b.keys() {
         assert!(a.get(key).is_some(), "a does not contain {:?}", key);
     }
-    for key in &keys {
+    for key in a.read().iter().map(|r| r.keys()).flatten() {
         let mut ev_map_values: Vec<V> = a.get(key).unwrap().iter().copied().collect();
         ev_map_values.sort();
         let mut map_values = b[key].clone();

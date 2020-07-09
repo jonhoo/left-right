@@ -39,6 +39,22 @@ where
         }
     }
 
+    /// Iterate over all keys in the map.
+    ///
+    /// Be careful with this function! While the iteration is ongoing, any writer that tries to
+    /// refresh will block waiting on this reader to finish.
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.iter().map(|(k, _)| k)
+    }
+
+    /// Iterate over all values in the map.
+    ///
+    /// Be careful with this function! While the iteration is ongoing, any writer that tries to
+    /// refresh will block waiting on this reader to finish.
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.iter().map(|(_, v)| v).flatten()
+    }
+
     /// Returns the number of non-empty keys present in the map.
     pub fn len(&self) -> usize {
         self.guard.data.len()
