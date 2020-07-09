@@ -285,15 +285,15 @@ impl<V> fmt::Debug for Predicate<V> {
 /// A pending map operation.
 #[non_exhaustive]
 #[derive(PartialEq, Eq, Debug)]
-pub enum Operation<K, V> {
+pub(crate) enum Operation<K, V> {
     /// Replace the set of entries for this key with this value.
     Replace(K, V),
     /// Add this value to the set of entries for this key.
     Add(K, V),
     /// Remove this value from the set of entries for this key.
-    Remove(K, V),
+    RemoveValue(K, V),
     /// Remove the value set for this key.
-    Empty(K),
+    RemoveEntry(K),
     #[cfg(feature = "eviction")]
     /// Drop keys at the given indices.
     ///

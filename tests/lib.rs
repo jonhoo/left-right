@@ -174,22 +174,6 @@ fn paniced_reader_doesnt_block_writer() {
 }
 
 #[test]
-fn flush_noblock() {
-    let x = ('x', 42);
-
-    let (r, mut w) = evmap::new();
-    w.insert(x.0, x);
-    w.refresh();
-    assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
-
-    // pin the epoch
-    let _map = r.read();
-    // refresh would hang here, but flush won't
-    assert!(w.pending().is_empty());
-    w.flush();
-}
-
-#[test]
 fn read_after_drop() {
     let x = ('x', 42);
 
