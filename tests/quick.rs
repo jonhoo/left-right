@@ -229,3 +229,36 @@ fn operations_string(ops: Vec<Op<Alphabet, i8>>) -> bool {
     w.refresh();
     assert_maps_equivalent(&r, &write_ref)
 }
+
+#[quickcheck]
+fn keys_values(ops: Large<Vec<Op<i8, i8>>>) -> bool {
+    let (r, mut w) = evmap::new();
+    let mut write_ref = HashMap::new();
+    let mut read_ref = HashMap::new();
+    do_ops(&ops, &mut w, &mut write_ref, &mut read_ref);
+
+    if let Some(read_guard) = r.read() {
+        let (r_visit, mut w_visit) = evmap::new();
+        for (k, v_set) in read_guard.keys().zip(read_guard.values()) {
+            assert!(read_guard[k].iter().all(|v| v_set.contains(v)));
+            assert!(v_set.iter().all(|v| read_guard[k].contains(v)));
+
+            assert!(!r_visit.contains_key(k));
+
+            // If the value set is empty, we still need to add the key.
+            // But we need to add the key with an empty value bag.
+            // Just add something and then remove the value, but leave the bag.
+            if v_set.is_empty() {
+                w_visit.insert(*k, 0);
+                w_visit.remove_value(*k, 0);
+            } else {
+                for value in v_set {
+                    w_visit.insert(*k, *value);
+                }
+            }
+            w_visit.refresh();
+        }
+        assert_eq!(r_visit.len(), read_ref.len());
+    }
+    true
+}

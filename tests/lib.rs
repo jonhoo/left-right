@@ -602,13 +602,7 @@ fn keys() {
     w.refresh();
     w.insert(1, "x");
 
-    let mut keys = r
-        .read()
-        .iter()
-        .map(|r| r.keys())
-        .flatten()
-        .copied()
-        .collect::<Vec<_>>();
+    let mut keys = r.read().unwrap().keys().copied().collect::<Vec<_>>();
     keys.sort();
 
     assert_eq!(keys, vec![1, 2]);
@@ -625,14 +619,17 @@ fn values() {
 
     let mut values = r
         .read()
-        .iter()
-        .map(|r| r.values())
-        .flatten()
-        .copied()
-        .collect::<Vec<_>>();
-    values.sort();
+        .unwrap()
+        .values()
+        .map(|value_bag| {
+            let mut inner_items = value_bag.iter().copied().collect::<Vec<_>>();
+            inner_items.sort();
+            inner_items
+        })
+        .collect::<Vec<Vec<_>>>();
+    values.sort_by_key(|value_vec| value_vec.len());
 
-    assert_eq!(values, vec!["a", "b", "c"]);
+    assert_eq!(values, vec![vec!["c"], vec!["a", "b"]]);
 }
 
 #[test]

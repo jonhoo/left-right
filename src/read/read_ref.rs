@@ -43,16 +43,20 @@ where
     ///
     /// Be careful with this function! While the iteration is ongoing, any writer that tries to
     /// refresh will block waiting on this reader to finish.
-    pub fn keys(&self) -> impl Iterator<Item = &K> {
-        self.iter().map(|(k, _)| k)
+    pub fn keys(&self) -> KeysIter<'_, K, V, S> {
+        KeysIter {
+            iter: self.guard.data.iter(),
+        }
     }
 
-    /// Iterate over all values in the map.
+    /// Iterate over all value sets in the map.
     ///
     /// Be careful with this function! While the iteration is ongoing, any writer that tries to
     /// refresh will block waiting on this reader to finish.
-    pub fn values(&self) -> impl Iterator<Item = &V> {
-        self.iter().map(|(_, v)| v).flatten()
+    pub fn values(&self) -> ValuesIter<'_, K, V, S> {
+        ValuesIter {
+            iter: self.guard.data.iter(),
+        }
     }
 
     /// Returns the number of non-empty keys present in the map.
@@ -185,5 +189,51 @@ where
     type Item = (&'rg K, &'rg Values<V, S>);
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|(k, v)| (k, v.user_friendly()))
+    }
+}
+
+/// An [`Iterator`] over keys.
+#[derive(Debug)]
+pub struct KeysIter<'rg, K, V, S>
+where
+    K: Eq + Hash,
+    V: Eq + Hash,
+    S: BuildHasher,
+{
+    iter: <&'rg crate::inner::MapImpl<K, Values<ManuallyDrop<V>, S>, S> as IntoIterator>::IntoIter,
+}
+
+impl<'rg, K, V, S> Iterator for KeysIter<'rg, K, V, S>
+where
+    K: Eq + Hash,
+    V: Eq + Hash,
+    S: BuildHasher,
+{
+    type Item = &'rg K;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|(k, _)| k)
+    }
+}
+
+/// An [`Iterator`] over value sets.
+#[derive(Debug)]
+pub struct ValuesIter<'rg, K, V, S>
+where
+    K: Eq + Hash,
+    V: Eq + Hash,
+    S: BuildHasher,
+{
+    iter: <&'rg crate::inner::MapImpl<K, Values<ManuallyDrop<V>, S>, S> as IntoIterator>::IntoIter,
+}
+
+impl<'rg, K, V, S> Iterator for ValuesIter<'rg, K, V, S>
+where
+    K: Eq + Hash,
+    V: Eq + Hash,
+    S: BuildHasher,
+{
+    type Item = &'rg Values<V, S>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|(_, v)| v.user_friendly())
     }
 }
