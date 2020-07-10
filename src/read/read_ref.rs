@@ -35,7 +35,7 @@ where
     /// refresh will block waiting on this reader to finish.
     pub fn iter(&self) -> ReadGuardIter<'_, K, V, S> {
         ReadGuardIter {
-            iter: Some(self.guard.data.iter()),
+            iter: self.guard.data.iter(),
         }
     }
 
@@ -173,9 +173,7 @@ where
     V: Eq + Hash,
     S: BuildHasher,
 {
-    iter: Option<
-        <&'rg crate::inner::MapImpl<K, Values<ManuallyDrop<V>, S>, S> as IntoIterator>::IntoIter,
-    >,
+    iter: <&'rg crate::inner::MapImpl<K, Values<ManuallyDrop<V>, S>, S> as IntoIterator>::IntoIter,
 }
 
 impl<'rg, K, V, S> Iterator for ReadGuardIter<'rg, K, V, S>
@@ -186,8 +184,6 @@ where
 {
     type Item = (&'rg K, &'rg Values<V, S>);
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter
-            .as_mut()
-            .and_then(|iter| iter.next().map(|(k, v)| (k, v.user_friendly())))
+        self.iter.next().map(|(k, v)| (k, v.user_friendly()))
     }
 }
