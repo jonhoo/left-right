@@ -594,6 +594,45 @@ fn map_into() {
 }
 
 #[test]
+fn keys() {
+    let (r, mut w) = evmap::new();
+    w.insert(1, "a");
+    w.insert(1, "b");
+    w.insert(2, "c");
+    w.refresh();
+    w.insert(1, "x");
+
+    let mut keys = r.read().unwrap().keys().copied().collect::<Vec<_>>();
+    keys.sort();
+
+    assert_eq!(keys, vec![1, 2]);
+}
+
+#[test]
+fn values() {
+    let (r, mut w) = evmap::new();
+    w.insert(1, "a");
+    w.insert(1, "b");
+    w.insert(2, "c");
+    w.refresh();
+    w.insert(1, "x");
+
+    let mut values = r
+        .read()
+        .unwrap()
+        .values()
+        .map(|value_bag| {
+            let mut inner_items = value_bag.iter().copied().collect::<Vec<_>>();
+            inner_items.sort();
+            inner_items
+        })
+        .collect::<Vec<Vec<_>>>();
+    values.sort_by_key(|value_vec| value_vec.len());
+
+    assert_eq!(values, vec![vec!["c"], vec!["a", "b"]]);
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn clone_churn() {
     use std::thread;
