@@ -63,8 +63,8 @@
 //! assert_eq!(book_reviews_r.get("Grimms' Fairy Tales").map(|rs| rs.len()), Some(2));
 //!
 //! // oops, this review has a lot of spelling mistakes, let's delete it.
-//! // empty deletes *all* reviews (though in this case, just one)
-//! book_reviews_w.empty("The Adventures of Sherlock Holmes");
+//! // remove_entry deletes *all* reviews (though in this case, just one)
+//! book_reviews_w.remove_entry("The Adventures of Sherlock Holmes");
 //! // but again, it's not visible to readers until we refresh
 //! assert_eq!(book_reviews_r.get("The Adventures of Sherlock Holmes").map(|rs| rs.len()), Some(1));
 //! book_reviews_w.refresh();
