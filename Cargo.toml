@@ -34,3 +34,6 @@ slab = "0.4"
 quickcheck = "0.9"
 quickcheck_macros = "0.9"
 rand = "0.7"
+
+[target.'cfg(loom)'.dependencies]
+loom = { git = "https://github.com/tokio-rs/loom" }
