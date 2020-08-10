@@ -1,15 +1,15 @@
 use crate::inner::Inner;
 use crate::values::Values;
 
+use crate::sync::{fence, Arc, AtomicPtr, AtomicUsize};
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::iter::FromIterator;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
-use std::sync::atomic;
-use std::sync::atomic::AtomicPtr;
-use std::sync::{self, Arc};
+// REMOVE THIS BEFORE REVIEWING
+use std::sync::atomic::Ordering;
 use std::{cell, fmt, mem};
 
 mod guard;
@@ -31,11 +31,11 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub(crate) inner: sync::Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
+    pub(crate) inner: Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
     pub(crate) epochs: crate::Epochs,
-    epoch: sync::Arc<sync::atomic::AtomicUsize>,
+    epoch: Arc<AtomicUsize>,
     epoch_i: usize,
-    my_epoch: sync::atomic::AtomicUsize,
+    my_epoch: AtomicUsize,
 
     // Since a `ReadHandle` keeps track of its own epoch, it is not safe for multiple threads to
     // call `with_handle` at the same time. We *could* keep it `Sync` and make `with_handle`
@@ -79,10 +79,7 @@ where
     S: BuildHasher,
 {
     fn clone(&self) -> Self {
-        ReadHandle::new(
-            sync::Arc::clone(&self.inner),
-            sync::Arc::clone(&self.epochs),
-        )
+        ReadHandle::new(Arc::clone(&self.inner), Arc::clone(&self.epochs))
     }
 }
 
@@ -95,7 +92,7 @@ where
     S: BuildHasher,
 {
     let store = Box::into_raw(Box::new(inner));
-    ReadHandle::new(sync::Arc::new(AtomicPtr::new(store)), epochs)
+    ReadHandle::new(Arc::new(AtomicPtr::new(store)), epochs)
 }
 
 impl<K, V, M, S> ReadHandle<K, V, M, S>
@@ -103,12 +100,9 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    fn new(
-        inner: sync::Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
-        epochs: crate::Epochs,
-    ) -> Self {
+    fn new(inner: Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>, epochs: crate::Epochs) -> Self {
         // tell writer about our epoch tracker
-        let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
+        let epoch = Arc::new(AtomicUsize::new(0));
         // okay to lock, since we're not holding up the epoch
         let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
 
@@ -116,7 +110,7 @@ where
             epochs,
             epoch,
             epoch_i,
-            my_epoch: atomic::AtomicUsize::new(0),
+            my_epoch: AtomicUsize::new(0),
             inner,
             _not_sync_no_feature: PhantomData,
         }
@@ -126,8 +120,8 @@ where
     /// threads.
     pub fn factory(&self) -> ReadHandleFactory<K, V, M, S> {
         ReadHandleFactory {
-            inner: sync::Arc::clone(&self.inner),
-            epochs: sync::Arc::clone(&self.epochs),
+            inner: Arc::clone(&self.inner),
+            epochs: Arc::clone(&self.epochs),
         }
     }
 }
@@ -168,14 +162,14 @@ where
         // in all cases, using a pointer we read *after* updating our epoch is safe.
 
         // so, update our epoch tracker.
-        let epoch = self.my_epoch.fetch_add(1, atomic::Ordering::Relaxed);
-        self.epoch.store(epoch + 1, atomic::Ordering::Release);
+        let epoch = self.my_epoch.fetch_add(1, Ordering::Relaxed);
+        self.epoch.store(epoch + 1, Ordering::Release);
 
         // ensure that the pointer read happens strictly after updating the epoch
-        atomic::fence(atomic::Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         // then, atomically read pointer, and use the map being pointed to
-        let r_handle = self.inner.load(atomic::Ordering::Acquire);
+        let r_handle = self.inner.load(Ordering::Acquire);
 
         // since we bumped our epoch, this pointer will remain valid until we bump it again
         let r_handle = unsafe { r_handle.as_ref() };
@@ -191,7 +185,7 @@ where
             // the map has not yet been initialized, so restore parity and return None
             self.epoch.store(
                 (epoch + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),
-                atomic::Ordering::Release,
+                Ordering::Release,
             );
             None
         }
@@ -201,7 +195,7 @@ where
     /// the returned reference.
     pub(crate) unsafe fn hasher(&self) -> &S {
         self.inner
-            .load(atomic::Ordering::Acquire)
+            .load(Ordering::Acquire)
             .as_ref()
             .unwrap()
             .data

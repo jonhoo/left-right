@@ -237,10 +237,13 @@
 )]
 #![allow(clippy::type_complexity)]
 
+mod sync;
+
+use crate::sync::{Arc, AtomicUsize, Mutex};
+
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
-use std::sync::{atomic, Arc, Mutex};
 
 mod inner;
 use crate::inner::Inner;
@@ -248,7 +251,7 @@ use crate::inner::Inner;
 mod values;
 pub use values::Values;
 
-pub(crate) type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicUsize>>>>;
+pub(crate) type Epochs = Arc<Mutex<slab::Slab<Arc<AtomicUsize>>>>;
 
 /// Unary predicate used to retain elements.
 ///

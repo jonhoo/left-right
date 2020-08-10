@@ -1,7 +1,8 @@
+use crate::sync::AtomicUsize;
 use crate::values::{Values, ValuesIter};
 use std::mem;
-use std::sync;
-use std::sync::atomic;
+// REMOVE THIS BEFORE REVIEWING
+use std::sync::atomic::Ordering;
 
 /// A guard wrapping a live reference into an evmap.
 ///
@@ -13,7 +14,7 @@ pub struct ReadGuard<'rh, T: ?Sized> {
     // the reference is valid until the guard is dropped.
     pub(super) t: &'rh T,
     pub(super) epoch: usize,
-    pub(super) handle: &'rh sync::atomic::AtomicUsize,
+    pub(super) handle: &'rh AtomicUsize,
 }
 
 impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
@@ -61,7 +62,7 @@ impl<'rh, T: ?Sized> Drop for ReadGuard<'rh, T> {
     fn drop(&mut self) {
         self.handle.store(
             (self.epoch + 1) | 1usize << (mem::size_of::<usize>() * 8 - 1),
-            atomic::Ordering::Release,
+            Ordering::Release,
         );
     }
 }

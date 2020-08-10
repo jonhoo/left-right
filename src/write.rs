@@ -1,14 +1,16 @@
 use super::{Operation, Predicate, ShallowCopy};
 use crate::inner::Inner;
 use crate::read::ReadHandle;
+use crate::sync::{fence, AtomicUsize};
 use crate::values::Values;
 
+use crate::sync::{Arc, MutexGuard};
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
-use std::sync::atomic;
-use std::sync::{Arc, MutexGuard};
 use std::{fmt, mem, thread};
+// REMOVE THIS BEFORE REVIEWING
+use std::sync::atomic::Ordering;
 
 #[cfg(feature = "indexed")]
 use indexmap::map::Entry;
@@ -137,10 +139,7 @@ where
         assert!(self.oplog.is_empty());
 
         // next, grab the read handle and set it to NULL
-        let r_handle = self
-            .r_handle
-            .inner
-            .swap(ptr::null_mut(), atomic::Ordering::Release);
+        let r_handle = self.r_handle.inner.swap(ptr::null_mut(), Ordering::Release);
 
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.epochs);
@@ -148,7 +147,7 @@ where
         self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         let w_handle = &mut self.w_handle.as_mut().unwrap().data;
 
@@ -174,7 +173,7 @@ where
     V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<atomic::AtomicUsize>>>) {
+    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>) {
         let mut iter = 0;
         let mut starti = 0;
         let high_bit = 1usize << (mem::size_of::<usize>() * 8 - 1);
@@ -193,7 +192,7 @@ where
                     continue;
                 }
 
-                let now = epoch.load(atomic::Ordering::Acquire);
+                let now = epoch.load(Ordering::Acquire);
                 if (now != self.last_epochs[ri]) | (now & high_bit != 0) | (now == 0) {
                     // reader must have seen last swap
                 } else {
@@ -252,7 +251,7 @@ where
                 let r_handle = unsafe {
                     self.r_handle
                         .inner
-                        .load(atomic::Ordering::Relaxed)
+                        .load(Ordering::Relaxed)
                         .as_mut()
                         .unwrap()
                 };
@@ -319,17 +318,14 @@ where
         let w_handle = Box::into_raw(w_handle);
 
         // swap in our w_handle, and get r_handle in return
-        let r_handle = self
-            .r_handle
-            .inner
-            .swap(w_handle, atomic::Ordering::Release);
+        let r_handle = self.r_handle.inner.swap(w_handle, Ordering::Release);
         let r_handle = unsafe { Box::from_raw(r_handle) };
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         for (ri, epoch) in epochs.iter() {
-            self.last_epochs[ri] = epoch.load(atomic::Ordering::Acquire);
+            self.last_epochs[ri] = epoch.load(Ordering::Acquire);
         }
 
         // NOTE: at this point, there are likely still readers using the w_handle we got
@@ -524,7 +520,7 @@ where
         // pending operations even after a refresh!
         self.refresh();
 
-        let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
+        let inner = self.r_handle.inner.load(Ordering::SeqCst);
         let inner: &'a _ = unsafe { &(*inner).data };
 
         // let's pick some (distinct) indices to evict!

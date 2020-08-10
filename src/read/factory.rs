@@ -1,11 +1,11 @@
 use super::ReadHandle;
 use crate::inner::Inner;
 
+use crate::sync::{Arc, AtomicPtr};
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
-use std::sync::atomic::AtomicPtr;
-use std::{fmt, sync};
 
 /// A type that is both `Sync` and `Send` and lets you produce new [`ReadHandle`] instances.
 ///
@@ -18,7 +18,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub(super) inner: sync::Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
+    pub(super) inner: Arc<AtomicPtr<Inner<K, ManuallyDrop<V>, M, S>>>,
     pub(super) epochs: crate::Epochs,
 }
 
@@ -41,8 +41,8 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            inner: sync::Arc::clone(&self.inner),
-            epochs: sync::Arc::clone(&self.epochs),
+            inner: Arc::clone(&self.inner),
+            epochs: Arc::clone(&self.epochs),
         }
     }
 }
@@ -54,9 +54,6 @@ where
 {
     /// Produce a new [`ReadHandle`] to the same map as this factory was originally produced from.
     pub fn handle(&self) -> ReadHandle<K, V, M, S> {
-        ReadHandle::new(
-            sync::Arc::clone(&self.inner),
-            sync::Arc::clone(&self.epochs),
-        )
+        ReadHandle::new(Arc::clone(&self.inner), Arc::clone(&self.epochs))
     }
 }
