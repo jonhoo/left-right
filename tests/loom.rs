@@ -1,32 +1,75 @@
 #[cfg(loom)]
 #[cfg(test)]
 mod loom_tests {
+    extern crate evmap;
+
     use loom::sync::atomic::AtomicUsize;
-    use loom::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-    use loom::sync::Arc;
     use loom::thread;
 
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::sync::Arc;
+
     #[test]
-    #[should_panic]
-    fn buggy_concurrent_inc() {
+    fn evmap_read_while_remove() {
         loom::model(|| {
-            let num = Arc::new(AtomicUsize::new(0));
+            let (r, mut w) = evmap::new();
+            w.insert(1, 2);
+            w.refresh();
 
-            let ths: Vec<_> = (0..2)
-                .map(|_| {
-                    let num = num.clone();
-                    thread::spawn(move || {
-                        let curr = num.load(Acquire);
-                        num.store(curr + 1, Release);
-                    })
-                })
-                .collect();
+            let val = Arc::new(AtomicUsize::new(0));
+            let val_copy = Arc::clone(&val);
 
-            for th in ths {
-                th.join().unwrap();
-            }
+            let read_thread = thread::spawn(move || {
+                val.store(*r.get_one(&1).as_deref().unwrap(), SeqCst);
+            });
 
-            assert_eq!(2, num.load(Relaxed));
+            w.remove_entry(1);
+
+            read_thread.join().unwrap();
+
+            assert_eq!(val_copy.load(SeqCst), 2);
+        });
+    }
+
+    #[test]
+    fn evmap_read_while_insert() {
+        loom::model(|| {
+            let (r, mut w) = evmap::new();
+
+            let val = Arc::new(AtomicUsize::new(0));
+            let val_copy = Arc::clone(&val);
+
+            let read_thread = thread::spawn(move || {
+                val.store(*r.get_one(&1).as_deref().unwrap_or(&1), SeqCst);
+            });
+
+            w.insert(1, 2);
+
+            read_thread.join().unwrap();
+
+            assert_eq!(val_copy.load(SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn evmap_read_while_purge() {
+        loom::model(|| {
+            let (r, mut w) = evmap::new();
+            w.insert(1, 2);
+            w.refresh();
+
+            let val = Arc::new(AtomicUsize::new(0));
+            let val_copy = Arc::clone(&val);
+
+            let read_thread = thread::spawn(move || {
+                val.store(*r.get_one(&1).as_deref().unwrap(), SeqCst);
+            });
+
+            w.purge();
+
+            read_thread.join().unwrap();
+
+            assert_eq!(val_copy.load(SeqCst), 2);
         });
     }
 }

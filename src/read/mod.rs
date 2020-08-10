@@ -163,7 +163,7 @@ where
 
         // so, update our epoch tracker.
         let epoch = self.my_epoch.fetch_add(1, Ordering::Relaxed);
-        self.epoch.store(epoch + 1, Ordering::Release);
+        // self.epoch.store(epoch + 1, Ordering::Release);
 
         // ensure that the pointer read happens strictly after updating the epoch
         fence(Ordering::SeqCst);
