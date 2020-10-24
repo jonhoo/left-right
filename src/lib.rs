@@ -211,6 +211,10 @@
 //! the other map. It then waits for the epochs of all current readers to change, and then replays
 //! the operational log to bring the stale map up to date.
 //!
+//! The design resembles this [left-right concurrency
+//! scheme](https://hal.archives-ouvertes.fr/hal-01207881/document) from 2015, though I am not
+//! aware of any follow-up to that work.
+//!
 //! Since the implementation uses regular `HashMap`s under the hood, table resizing is fully
 //! supported. It does, however, also mean that the memory usage of this implementation is
 //! approximately twice of that of a regular `HashMap`, and more if writes rarely refresh after
