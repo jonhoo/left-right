@@ -80,13 +80,13 @@ fn mapref() {
     // get a read ref to the map
     // scope to ensure it gets dropped and doesn't stall refresh
     {
-        assert!(r.read().is_none());
+        assert!(r.enter().is_none());
     }
 
     w.refresh();
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
         // after the first refresh, it is empty, but ready
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
@@ -98,7 +98,7 @@ fn mapref() {
     w.insert(x.0, x);
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
         // it is empty even after an add (we haven't refresh yet)
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
@@ -109,7 +109,7 @@ fn mapref() {
     w.refresh();
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
 
         // but after the swap, the record is there!
         assert!(!map.is_empty());
@@ -141,7 +141,7 @@ fn mapref() {
     w.refresh();
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
         assert!(map.get(&x.0).is_none());
@@ -150,7 +150,7 @@ fn mapref() {
 
     drop(w);
     {
-        let map = r.read();
+        let map = r.enter();
         assert!(map.is_none(), "the map should have been destroyed");
     }
 }
@@ -238,7 +238,7 @@ fn busybusybusy_inner(slow: bool) {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        let map = r.read().unwrap();
+                        let map = r.enter().unwrap();
                         let rs = map.get(&i);
                         if rs.is_some() && slow {
                             thread::sleep(time::Duration::from_millis(2));
@@ -287,7 +287,7 @@ fn busybusybusy_heap() {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        let map = r.read().unwrap();
+                        let map = r.enter().unwrap();
                         let rs = map.get(&i);
                         match rs {
                             Some(rs) => {
@@ -602,7 +602,7 @@ fn keys() {
     w.refresh();
     w.insert(1, "x");
 
-    let mut keys = r.read().unwrap().keys().copied().collect::<Vec<_>>();
+    let mut keys = r.enter().unwrap().keys().copied().collect::<Vec<_>>();
     keys.sort();
 
     assert_eq!(keys, vec![1, 2]);
@@ -618,7 +618,7 @@ fn values() {
     w.insert(1, "x");
 
     let mut values = r
-        .read()
+        .enter()
         .unwrap()
         .values()
         .map(|value_bag| {
@@ -661,7 +661,11 @@ fn bigbag() {
     let ndistinct = 32;
 
     let jh = thread::spawn(move || loop {
-        let map = if let Some(map) = r.read() { map } else { break };
+        let map = if let Some(map) = r.enter() {
+            map
+        } else {
+            break;
+        };
         if let Some(rs) = map.get(&1) {
             assert!(rs.len() <= ndistinct * (ndistinct - 1));
             let mut found = true;
@@ -712,7 +716,7 @@ fn foreach() {
     w.refresh();
     w.insert(1, "x");
 
-    let r = r.read().unwrap();
+    let r = r.enter().unwrap();
     for (k, vs) in &r {
         match k {
             1 => {

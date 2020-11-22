@@ -62,7 +62,7 @@ fn insert_empty(insert: Vec<u8>, remove: Vec<u8>) -> bool {
     w.refresh();
     let elements = &set(&insert) - &set(&remove);
     r.len() == elements.len()
-        && r.read().iter().map(|r| r.keys()).flatten().count() == elements.len()
+        && r.enter().iter().map(|r| r.keys()).flatten().count() == elements.len()
         && elements.iter().all(|k| r.get(k).is_some())
 }
 
@@ -137,14 +137,20 @@ where
     S: BuildHasher,
 {
     assert_eq!(a.len(), b.len());
-    for key in a.read().iter().map(|r| r.keys()).flatten() {
+    for key in a.enter().iter().map(|r| r.keys()).flatten() {
         assert!(b.contains_key(key), "b does not contain {:?}", key);
     }
     for key in b.keys() {
         assert!(a.get(key).is_some(), "a does not contain {:?}", key);
     }
-    for key in a.read().iter().map(|r| r.keys()).flatten() {
-        let mut ev_map_values: Vec<V> = a.get(key).unwrap().iter().copied().collect();
+    let guard = if let Some(guard) = a.enter() {
+        guard
+    } else {
+        // Reference was empty, ReadHandle was destroyed, so all is well. Maybe.
+        return true;
+    };
+    for key in guard.keys() {
+        let mut ev_map_values: Vec<V> = guard.get(key).unwrap().iter().copied().collect();
         ev_map_values.sort();
         let mut map_values = b[key].clone();
         map_values.sort();
@@ -237,7 +243,7 @@ fn keys_values(ops: Large<Vec<Op<i8, i8>>>) -> bool {
     let mut read_ref = HashMap::new();
     do_ops(&ops, &mut w, &mut write_ref, &mut read_ref);
 
-    if let Some(read_guard) = r.read() {
+    if let Some(read_guard) = r.enter() {
         let (r_visit, mut w_visit) = evmap::new();
         for (k, v_set) in read_guard.keys().zip(read_guard.values()) {
             assert!(read_guard[k].iter().all(|v| v_set.contains(v)));

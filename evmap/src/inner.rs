@@ -1,6 +1,5 @@
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
-use std::mem::ManuallyDrop;
 
 #[cfg(feature = "indexed")]
 pub(crate) use indexmap::IndexMap as MapImpl;
@@ -16,17 +15,7 @@ where
 {
     pub(crate) data: MapImpl<K, Values<V, S>, S>,
     pub(crate) meta: M,
-    ready: bool,
-}
-
-impl<K, V, M, S> Inner<K, ManuallyDrop<V>, M, S>
-where
-    K: Eq + Hash,
-    S: BuildHasher,
-{
-    pub(crate) unsafe fn do_drop(&mut self) -> &mut Inner<K, V, M, S> {
-        &mut *(self as *mut Self as *mut Inner<K, V, M, S>)
-    }
+    pub(crate) ready: bool,
 }
 
 impl<K, V, M, S> fmt::Debug for Inner<K, V, M, S>
@@ -64,7 +53,7 @@ where
     }
 }
 
-impl<K, V, M, S> Inner<K, ManuallyDrop<V>, M, S>
+impl<K, V, M, S> Inner<K, V, M, S>
 where
     K: Eq + Hash,
     S: BuildHasher,
@@ -83,19 +72,5 @@ where
             meta: m,
             ready: false,
         }
-    }
-}
-
-impl<K, V, M, S> Inner<K, V, M, S>
-where
-    K: Eq + Hash,
-    S: BuildHasher,
-{
-    pub fn mark_ready(&mut self) {
-        self.ready = true;
-    }
-
-    pub fn is_ready(&self) -> bool {
-        self.ready
     }
 }

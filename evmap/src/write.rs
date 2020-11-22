@@ -2,13 +2,12 @@ use super::{Operation, Predicate, ShallowCopy};
 use crate::inner::Inner;
 use crate::read::ReadHandle;
 use crate::values::Values;
+use left_right::Absorb;
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
-use std::sync::atomic;
-use std::sync::{Arc, MutexGuard};
-use std::{fmt, mem, thread};
+use std::{fmt, mem};
 
 #[cfg(feature = "indexed")]
 use indexmap::map::Entry;
@@ -55,17 +54,13 @@ where
     V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
-    epochs: crate::Epochs,
-    w_handle: Option<Box<Inner<K, ManuallyDrop<V>, M, S>>>,
-    oplog: Vec<Operation<K, V>>,
-    swap_index: usize,
+    handle: left_right::WriteHandle<Inner<K, V, M, S>, Operation<K, V, M>>,
     r_handle: ReadHandle<K, V, M, S>,
-    last_epochs: Vec<usize>,
-    meta: M,
-    first: bool,
-    second: bool,
-    #[cfg(test)]
-    refreshes: usize,
+
+    /// If Some, write directly to the write handle map, since no refresh has happened.
+    /// Some(false) indicates that the necessary `Operation::JustCloneRHandle` has not
+    /// yet been appended to the oplog for when a refresh does happen.
+    direct_write: Option<bool>,
 }
 
 impl<K, V, M, S> fmt::Debug for WriteHandle<K, V, M, S>
@@ -77,93 +72,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WriteHandle")
-            .field("epochs", &self.epochs)
-            .field("w_handle", &self.w_handle)
-            .field("oplog", &self.oplog)
-            .field("swap_index", &self.swap_index)
-            .field("r_handle", &self.r_handle)
-            .field("meta", &self.meta)
-            .field("first", &self.first)
-            .field("second", &self.second)
+            .field("handle", &self.handle)
+            .field("direct_write", &self.direct_write)
             .finish()
-    }
-}
-
-pub(crate) fn new<K, V, M, S>(
-    w_handle: Inner<K, ManuallyDrop<V>, M, S>,
-    epochs: crate::Epochs,
-    r_handle: ReadHandle<K, V, M, S>,
-) -> WriteHandle<K, V, M, S>
-where
-    K: Eq + Hash + Clone,
-    S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy,
-    M: 'static + Clone,
-{
-    let m = w_handle.meta.clone();
-    WriteHandle {
-        epochs,
-        w_handle: Some(Box::new(w_handle)),
-        oplog: Vec::new(),
-        swap_index: 0,
-        r_handle,
-        last_epochs: Vec::new(),
-        meta: m,
-        first: true,
-        second: false,
-        #[cfg(test)]
-        refreshes: 0,
-    }
-}
-
-impl<K, V, M, S> Drop for WriteHandle<K, V, M, S>
-where
-    K: Eq + Hash + Clone,
-    S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy,
-    M: 'static + Clone,
-{
-    fn drop(&mut self) {
-        use std::ptr;
-
-        // first, ensure both maps are up to date
-        // (otherwise safely dropping deduplicated rows is a pain)
-        if !self.oplog.is_empty() {
-            self.refresh();
-        }
-        if !self.oplog.is_empty() {
-            self.refresh();
-        }
-        assert!(self.oplog.is_empty());
-
-        // next, grab the read handle and set it to NULL
-        let r_handle = self
-            .r_handle
-            .inner
-            .swap(ptr::null_mut(), atomic::Ordering::Release);
-
-        // now, wait for all readers to depart
-        let epochs = Arc::clone(&self.epochs);
-        let mut epochs = epochs.lock().unwrap();
-        self.wait(&mut epochs);
-
-        // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
-
-        let w_handle = &mut self.w_handle.as_mut().unwrap().data;
-
-        // all readers have now observed the NULL, so we own both handles.
-        // all records are duplicated between w_handle and r_handle.
-        // since the two maps are exactly equal, we need to make sure that we *don't* call the
-        // destructors of any of the values that are in our map, as they'll all be called when the
-        // last read handle goes out of scope. to do so, we first clear w_handle, which won't drop
-        // any elements since its values are kept as ManuallyDrop:
-        w_handle.clear();
-
-        // then we transmute r_handle to remove the ManuallyDrop, and then drop it, which will free
-        // all the records. this is safe, since we know that no readers are using this pointer
-        // anymore (due to the .wait() following swapping the pointer with NULL).
-        drop(unsafe { Box::from_raw(r_handle as *mut Inner<K, V, M, S>) });
     }
 }
 
@@ -174,44 +85,14 @@ where
     V: Eq + Hash + ShallowCopy,
     M: 'static + Clone,
 {
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<atomic::AtomicUsize>>>) {
-        let mut iter = 0;
-        let mut starti = 0;
-        let high_bit = 1usize << (mem::size_of::<usize>() * 8 - 1);
-        // we're over-estimating here, but slab doesn't expose its max index
-        self.last_epochs.resize(epochs.capacity(), 0);
-        'retry: loop {
-            // read all and see if all have changed (which is likely)
-            for (ii, (ri, epoch)) in epochs.iter().enumerate().skip(starti) {
-                // note that `ri` _may_ have been re-used since we last read into last_epochs.
-                // this is okay though, as a change still implies that the new reader must have
-                // arrived _after_ we did the atomic swap, and thus must also have seen the new
-                // pointer.
-                if self.last_epochs[ri] & high_bit != 0 {
-                    // reader was not active right after last swap
-                    // and therefore *must* only see new pointer
-                    continue;
-                }
-
-                let now = epoch.load(atomic::Ordering::Acquire);
-                if (now != self.last_epochs[ri]) | (now & high_bit != 0) | (now == 0) {
-                    // reader must have seen last swap
-                } else {
-                    // reader may not have seen swap
-                    // continue from this reader's epoch
-                    starti = ii;
-
-                    // how eagerly should we retry?
-                    if iter != 20 {
-                        iter += 1;
-                    } else {
-                        thread::yield_now();
-                    }
-
-                    continue 'retry;
-                }
-            }
-            break;
+    pub(crate) fn new(
+        handle: left_right::WriteHandle<Inner<K, V, M, S>, Operation<K, V, M>>,
+    ) -> Self {
+        let r_handle = ReadHandle::new(left_right::ReadHandle::clone(&*handle));
+        Self {
+            handle,
+            r_handle,
+            direct_write: Some(false),
         }
     }
 
@@ -221,127 +102,8 @@ where
     /// the operational log onto the stale map copy the readers used to use. This can take some
     /// time, especially if readers are executing slow operations, or if there are many of them.
     pub fn refresh(&mut self) -> &mut Self {
-        // we need to wait until all epochs have changed since the swaps *or* until a "finished"
-        // flag has been observed to be on for two subsequent iterations (there still may be some
-        // readers present since we did the previous refresh)
-        //
-        // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
-        // only block on pre-existing readers, and they are never waiting to push onto epochs
-        // unless they have finished reading.
-        let epochs = Arc::clone(&self.epochs);
-        let mut epochs = epochs.lock().unwrap();
-
-        self.wait(&mut epochs);
-
-        {
-            // all the readers have left!
-            // we can safely bring the w_handle up to date.
-            let w_handle = self.w_handle.as_mut().unwrap();
-
-            if self.second {
-                // before the first refresh, all writes went directly to w_handle. then, at the
-                // first refresh, r_handle and w_handle were swapped. thus, the w_handle we
-                // have now is empty, *and* none of the writes in r_handle are in the oplog.
-                // we therefore have to first clone the entire state of the current r_handle
-                // and make that w_handle, and *then* replay the oplog (which holds writes
-                // following the first refresh).
-                //
-                // this may seem unnecessarily complex, but it has the major advantage that it
-                // is relatively efficient to do lots of writes to the evmap at startup to
-                // populate it, and then refresh().
-                let r_handle = unsafe {
-                    self.r_handle
-                        .inner
-                        .load(atomic::Ordering::Relaxed)
-                        .as_mut()
-                        .unwrap()
-                };
-
-                // XXX: it really is too bad that we can't just .clone() the data here and save
-                // ourselves a lot of re-hashing, re-bucketization, etc.
-                w_handle.data.extend(r_handle.data.iter().map(|(k, vs)| {
-                    (
-                        k.clone(),
-                        Values::from_iter(
-                            vs.iter().map(|v| unsafe { (&**v).shallow_copy() }),
-                            r_handle.data.hasher(),
-                        ),
-                    )
-                }));
-            }
-
-            // safety: we will not swap while we hold this reference
-            let r_hasher = unsafe { self.r_handle.hasher() };
-
-            // the w_handle map has not seen any of the writes in the oplog
-            // the r_handle map has not seen any of the writes following swap_index
-            if self.swap_index != 0 {
-                // we can drain out the operations that only the w_handle map needs
-                //
-                // NOTE: the if above is because drain(0..0) would remove 0
-                //
-                // NOTE: the distinction between apply_first and apply_second is the reason why our
-                // use of shallow_copy is safe. we apply each op in the oplog twice, first with
-                // apply_first, and then with apply_second. on apply_first, no destructors are
-                // called for removed values (since those values all still exist in the other map),
-                // and all new values are shallow copied in (since we need the original for the
-                // other map). on apply_second, we call the destructor for anything that's been
-                // removed (since those removals have already happened on the other map, and
-                // without calling their destructor).
-                for op in self.oplog.drain(0..self.swap_index) {
-                    // because we are applying second, we _do_ want to perform drops
-                    Self::apply_second(unsafe { w_handle.do_drop() }, op, r_hasher);
-                }
-            }
-            // the rest have to be cloned because they'll also be needed by the r_handle map
-            for op in self.oplog.iter_mut() {
-                Self::apply_first(w_handle, op, r_hasher);
-            }
-            // the w_handle map is about to become the r_handle, and can ignore the oplog
-            self.swap_index = self.oplog.len();
-            // ensure meta-information is up to date
-            w_handle.meta = self.meta.clone();
-            w_handle.mark_ready();
-
-            // w_handle (the old r_handle) is now fully up to date!
-        }
-
-        // at this point, we have exclusive access to w_handle, and it is up-to-date with all
-        // writes. the stale r_handle is accessed by readers through an Arc clone of atomic pointer
-        // inside the ReadHandle. oplog contains all the changes that are in w_handle, but not in
-        // r_handle.
-        //
-        // it's now time for us to swap the maps so that readers see up-to-date results from
-        // w_handle.
-
-        // prepare w_handle
-        let w_handle = self.w_handle.take().unwrap();
-        let w_handle = Box::into_raw(w_handle);
-
-        // swap in our w_handle, and get r_handle in return
-        let r_handle = self
-            .r_handle
-            .inner
-            .swap(w_handle, atomic::Ordering::Release);
-        let r_handle = unsafe { Box::from_raw(r_handle) };
-
-        // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
-
-        for (ri, epoch) in epochs.iter() {
-            self.last_epochs[ri] = epoch.load(atomic::Ordering::Acquire);
-        }
-
-        // NOTE: at this point, there are likely still readers using the w_handle we got
-        self.w_handle = Some(r_handle);
-        self.second = self.first;
-        self.first = false;
-
-        #[cfg(test)]
-        {
-            self.refreshes += 1;
-        }
-
+        self.handle.refresh();
+        self.direct_write = None;
         self
     }
 
@@ -350,31 +112,35 @@ where
     /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
     /// This method will only do so if there are pending operations.
     pub fn flush(&mut self) -> &mut Self {
-        if self.swap_index < self.oplog.len() {
-            self.refresh();
-        }
-
+        self.handle.flush();
         self
     }
 
     /// Set the metadata.
     ///
     /// Will only be visible to readers after the next call to `refresh()`.
-    pub fn set_meta(&mut self, mut meta: M) -> M {
-        mem::swap(&mut self.meta, &mut meta);
-        meta
+    pub fn set_meta(&mut self, meta: M) {
+        self.add_op(Operation::SetMeta(meta));
     }
 
-    fn add_op(&mut self, op: Operation<K, V>) -> &mut Self {
-        if !self.first {
-            self.oplog.push(op);
+    fn add_op(&mut self, op: Operation<K, V, M>) -> &mut Self {
+        if let Some(ref mut queued_clone) = self.direct_write {
+            {
+                // Safety: we know there are no outstanding w_handle readers, since we haven't
+                // refreshed ever before, so we can modify it directly!
+                let w_inner = unsafe { &mut *self.handle.raw_write_handle() };
+                let r_handle = self.handle.enter().expect("map has not yet been destroyed");
+                // because we are applying second, we _do_ want to perform drops
+                Absorb::absorb_second(w_inner, op, &*r_handle);
+            }
+
+            if !*queued_clone {
+                // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
+                self.handle.append_op(Operation::JustCloneRHandle);
+                *queued_clone = true;
+            }
         } else {
-            // we know there are no outstanding w_handle readers, so we can modify it directly!
-            let w_inner = self.w_handle.as_mut().unwrap();
-            let r_hasher = unsafe { self.r_handle.hasher() };
-            // because we are applying second, we _do_ want to perform drops
-            Self::apply_second(unsafe { w_inner.do_drop() }, op, r_hasher);
-            // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
+            self.handle.append_op(op);
         }
 
         self
@@ -542,13 +308,23 @@ where
             (k, vs.user_friendly())
         })
     }
+}
 
+unsafe impl<K, V, M, S> Absorb<Operation<K, V, M>> for Inner<K, V, M, S>
+where
+    K: Eq + Hash + Clone,
+    S: BuildHasher + Clone,
+    V: Eq + Hash + ShallowCopy,
+    M: 'static + Clone,
+{
     /// Apply ops in such a way that no values are dropped, only forgotten
-    fn apply_first(
-        inner: &mut Inner<K, ManuallyDrop<V>, M, S>,
-        op: &mut Operation<K, V>,
-        hasher: &S,
-    ) {
+    fn absorb_first(&mut self, op: &mut Operation<K, V, M>, other: &Self) {
+        // Make sure that no methods below drop values since we're only operating on the first
+        // shallow copy of each value.
+        //
+        // Safety: ManuallyDrop<T> has the same layout as T.
+        let inner: &mut Inner<K, ManuallyDrop<V>, M, S> = unsafe { mem::transmute(self) };
+        let hasher = other.data.hasher();
         match *op {
             Operation::Replace(ref key, ref mut value) => {
                 let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
@@ -628,11 +404,23 @@ where
                     entry.insert(Values::with_capacity_and_hasher(additional, hasher));
                 }
             },
+            Operation::MarkReady => {
+                inner.ready = true;
+            }
+            Operation::SetMeta(ref m) => {
+                inner.meta = m.clone();
+            }
+            Operation::JustCloneRHandle => {
+                // This is applying the operation to the original write handle,
+                // which we already applied the first batch of operations to.
+            }
         }
     }
 
     /// Apply operations while allowing dropping of values
-    fn apply_second(inner: &mut Inner<K, V, M, S>, op: Operation<K, V>, hasher: &S) {
+    fn absorb_second(&mut self, op: Operation<K, V, M>, other: &Self) {
+        let inner = self;
+        let hasher = other.data.hasher();
         match op {
             Operation::Replace(key, value) => {
                 let v = inner.data.entry(key).or_insert_with(Values::new);
@@ -705,7 +493,40 @@ where
                     entry.insert(Values::with_capacity_and_hasher(additional, hasher));
                 }
             },
+            Operation::MarkReady => {
+                inner.ready = true;
+            }
+            Operation::SetMeta(m) => {
+                inner.meta = m;
+            }
+            Operation::JustCloneRHandle => {
+                // This is applying the operation to the original read handle,
+                // which is empty, and needs to copy over all data from the
+                // write handle that we wrote to directly.
+
+                // XXX: it really is too bad that we can't just .clone() the data here and save
+                // ourselves a lot of re-hashing, re-bucketization, etc.
+                inner.data.extend(other.data.iter().map(|(k, vs)| {
+                    (
+                        k.clone(),
+                        Values::from_iter(
+                            vs.iter()
+                                .map(|v| unsafe { ManuallyDrop::into_inner((&*v).shallow_copy()) }),
+                            other.data.hasher(),
+                        ),
+                    )
+                }));
+            }
         }
+    }
+
+    fn drop_first(self: Box<Self>) {
+        // Make sure that we don't drop values since we're only dropping the first shallow copy of
+        // each value.
+        //
+        // Safety: ManuallyDrop<T> has the same layout as T.
+        let inner: Box<Inner<K, ManuallyDrop<V>, M, S>> = unsafe { mem::transmute(self) };
+        drop(inner);
     }
 }
 
@@ -735,64 +556,5 @@ where
     type Target = ReadHandle<K, V, M, S>;
     fn deref(&self) -> &Self::Target {
         &self.r_handle
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::new;
-
-    #[test]
-    fn flush_noblock() {
-        let x = ('x', 42);
-
-        let (r, mut w) = new();
-        w.insert(x.0, x);
-        w.refresh();
-        assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
-
-        // pin the epoch
-        let _map = r.read();
-        // refresh would hang here, but flush won't
-        assert!(w.oplog[w.swap_index..].is_empty());
-        w.flush();
-    }
-
-    #[test]
-    fn flush_no_refresh() {
-        let x = 'x';
-
-        let (_, mut w) = new();
-
-        // Until we refresh, writes are written directly instead of going to the
-        // oplog (because there can't be any readers on the w_handle table).
-        w.refresh();
-
-        assert_eq!(w.refreshes, 1);
-
-        w.flush();
-
-        // No refresh because there are no operations
-        assert_eq!(w.refreshes, 1);
-
-        w.insert(x, x);
-        w.flush();
-
-        // A refresh happened!
-        assert_eq!(w.refreshes, 2);
-
-        w.flush();
-
-        // Subsequent flushes don't refresh until there are more ops!
-        assert_eq!(w.refreshes, 2);
-
-        w.insert(x, x);
-        w.flush();
-
-        assert_eq!(w.refreshes, 3);
-
-        // Sanity check that a refresh would have been visible
-        w.refresh();
-        assert_eq!(w.refreshes, 4);
     }
 }

@@ -83,7 +83,7 @@
 //! }
 //!
 //! // iterate over everything.
-//! for (book, reviews) in &book_reviews_r.read().unwrap() {
+//! for (book, reviews) in &book_reviews_r.enter().unwrap() {
 //!     for review in reviews {
 //!         println!("{}: \"{}\"", book, review);
 //!     }
@@ -237,22 +237,19 @@
     missing_docs,
     rust_2018_idioms,
     missing_debug_implementations,
-    intra_doc_link_resolution_failure
+    broken_intra_doc_links
 )]
 #![allow(clippy::type_complexity)]
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
-use std::sync::{atomic, Arc, Mutex};
 
 mod inner;
 use crate::inner::Inner;
 
 mod values;
 pub use values::Values;
-
-pub(crate) type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicUsize>>>>;
 
 /// Unary predicate used to retain elements.
 ///
@@ -289,7 +286,7 @@ impl<V> fmt::Debug for Predicate<V> {
 /// A pending map operation.
 #[non_exhaustive]
 #[derive(PartialEq, Eq, Debug)]
-pub(crate) enum Operation<K, V> {
+pub(crate) enum Operation<K, V, M> {
     /// Replace the set of entries for this key with this value.
     Replace(K, V),
     /// Add this value to the set of entries for this key.
@@ -322,16 +319,24 @@ pub(crate) enum Operation<K, V> {
     ///
     /// This can improve performance by pre-allocating space for large bags of values.
     Reserve(K, usize),
+
+    MarkReady,
+
+    SetMeta(M),
+    JustCloneRHandle,
 }
 
 mod write;
 pub use crate::write::WriteHandle;
 
 mod read;
-pub use crate::read::{MapReadRef, ReadGuard, ReadGuardIter, ReadHandle, ReadHandleFactory};
+pub use crate::read::{MapReadRef, ReadGuardIter, ReadHandle};
+// TODO: ReadGuardFactory
 
 pub mod shallow_copy;
 pub use crate::shallow_copy::ShallowCopy;
+
+pub use left_right::ReadGuard;
 
 /// Options for how to initialize the map.
 ///
@@ -412,18 +417,16 @@ where
         V: Eq + Hash + ShallowCopy,
         M: 'static + Clone,
     {
-        let epochs = Default::default();
         let inner = if let Some(cap) = self.capacity {
             Inner::with_capacity_and_hasher(self.meta, cap, self.hasher)
         } else {
             Inner::with_hasher(self.meta, self.hasher)
         };
 
-        let mut w_handle = inner.clone();
-        w_handle.mark_ready();
-        let r = read::new(inner, Arc::clone(&epochs));
-        let w = write::new(w_handle, epochs, r.clone());
-        (r, w)
+        let (r, mut w) = left_right::new_from_empty(inner);
+        w.append_op(Operation::MarkReady);
+
+        (ReadHandle::new(r), WriteHandle::new(w))
     }
 }
 

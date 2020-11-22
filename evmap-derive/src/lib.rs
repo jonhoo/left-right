@@ -1,7 +1,7 @@
 //! This crate provides procedural derive macros to simplify the usage of `evmap`.
 //!
 //! Currently, only `#[derive(ShallowCopy)]` is supported; see below.
-#![warn(missing_docs, rust_2018_idioms, intra_doc_link_resolution_failure)]
+#![warn(missing_docs, rust_2018_idioms, broken_intra_doc_links)]
 
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
