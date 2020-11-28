@@ -1,6 +1,7 @@
 use super::Absorb;
 use crate::read::ReadHandle;
 
+use std::collections::VecDeque;
 use std::ptr::NonNull;
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
@@ -24,7 +25,7 @@ where
 {
     epochs: crate::Epochs,
     w_handle: NonNull<T>,
-    oplog: Vec<O>,
+    oplog: VecDeque<O>,
     swap_index: usize,
     r_handle: ReadHandle<T>,
     last_epochs: Vec<usize>,
@@ -116,7 +117,7 @@ where
             epochs,
             // safety: Box<T> is not null and covariant.
             w_handle: unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(w_handle))) },
-            oplog: Vec::new(),
+            oplog: VecDeque::new(),
             swap_index: 0,
             r_handle,
             last_epochs: Vec::new(),
@@ -264,6 +265,8 @@ where
     /// Returns true if there are operations in the operational log that have not yet been exposed
     /// to readers.
     pub fn has_pending_operations(&self) -> bool {
+        // NOTE: we don't use self.oplog.is_empty() here because it's not really that important if
+        // there are operations that have not yet been applied to the _write_ handle.
         self.swap_index < self.oplog.len()
     }
 
@@ -271,7 +274,7 @@ where
     ///
     /// Its effects will not be exposed to readers until you call [`publish`](Self::publish).
     pub fn append(&mut self, op: O) -> &mut Self {
-        self.oplog.push(op);
+        self.oplog.push_back(op);
         self
     }
 
@@ -389,7 +392,7 @@ mod tests {
         // pin the epoch
         let _count = r.enter();
         // refresh would hang here
-        assert!(w.oplog[w.swap_index..].is_empty());
+        assert_eq!(w.oplog.iter().skip(w.swap_index).count(), 0);
         assert!(!w.has_pending_operations());
     }
 
