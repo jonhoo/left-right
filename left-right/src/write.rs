@@ -32,7 +32,9 @@ where
     refreshes: usize,
 }
 
-// safety: write handle keeps no thread-local state.
+// safety: if a `WriteHandle` is sent across a thread boundary, we need to be able to take
+// ownership of both Ts and Os across that thread boundary. since `WriteHandle` holds a
+// `ReadHandle`, we also need to respect its Send requirements.
 unsafe impl<T, O> Send for WriteHandle<T, O>
 where
     T: Absorb<O>,
@@ -296,6 +298,80 @@ where
         &self.r_handle
     }
 }
+
+/// `WriteHandle` can be sent across thread boundaries:
+///
+/// ```
+/// use left_right::WriteHandle;
+///
+/// struct Data;
+/// impl left_right::Absorb<()> for Data {
+///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
+/// }
+///
+/// fn is_send<T: Send>() {
+///   // dummy function just used for its parameterized type bound
+/// }
+///
+/// is_send::<WriteHandle<Data, ()>>()
+/// ```
+///
+/// As long as the inner types allow that of course.
+/// Namely, the data type has to be `Send`:
+///
+/// ```compile_fail
+/// use left_right::WriteHandle;
+/// use std::rc::Rc;
+///
+/// struct Data(Rc<()>);
+/// impl left_right::Absorb<()> for Data {
+///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
+/// }
+///
+/// fn is_send<T: Send>() {
+///   // dummy function just used for its parameterized type bound
+/// }
+///
+/// is_send::<WriteHandle<Data, ()>>()
+/// ```
+///
+/// .. the operation type has to be `Send`:
+///
+/// ```compile_fail
+/// use left_right::WriteHandle;
+/// use std::rc::Rc;
+///
+/// struct Data;
+/// impl left_right::Absorb<Rc<()>> for Data {
+///     fn absorb_first(&mut self, _: &mut Rc<()>, _: &Self) {}
+/// }
+///
+/// fn is_send<T: Send>() {
+///   // dummy function just used for its parameterized type bound
+/// }
+///
+/// is_send::<WriteHandle<Data, Rc<()>>>()
+/// ```
+///
+/// .. and the data type has to be `Sync` so it's still okay to read through `ReadHandle`s:
+///
+/// ```compile_fail
+/// use left_right::WriteHandle;
+/// use std::cell::Cell;
+///
+/// struct Data(Cell<()>);
+/// impl left_right::Absorb<()> for Data {
+///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
+/// }
+///
+/// fn is_send<T: Send>() {
+///   // dummy function just used for its parameterized type bound
+/// }
+///
+/// is_send::<WriteHandle<Data, ()>>()
+/// ```
+#[allow(dead_code)]
+struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {

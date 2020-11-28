@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::marker::PhantomData;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
@@ -43,7 +44,14 @@ pub struct ReadHandle<T> {
     epoch_i: usize,
     my_epoch: Cell<u64>,
     enters: Cell<usize>,
+
+    // `ReadHandle` is _only_ Send if T is Sync. If T is !Sync, then it's not okay for us to expose
+    // references to it to other threads! Since negative impls are not available on stable, we pull
+    // this little hack to make the type not auto-impl Send, and then explicitly add the impl when
+    // appropriate.
+    _unimpl_send: PhantomData<*const T>,
 }
+unsafe impl<T> Send for ReadHandle<T> where T: Sync {}
 
 impl<T> Drop for ReadHandle<T> {
     fn drop(&mut self) {
@@ -94,6 +102,7 @@ impl<T> ReadHandle<T> {
             my_epoch: Cell::new(0),
             enters: Cell::new(0),
             inner,
+            _unimpl_send: PhantomData,
         }
     }
 }
@@ -194,7 +203,9 @@ impl<T> ReadHandle<T> {
     }
 }
 
-///```compile_fail
+/// `ReadHandle` cannot be shared across threads:
+///
+/// ```compile_fail
 /// use left_right::ReadHandle;
 ///
 /// fn is_sync<T: Sync>() {
@@ -204,8 +215,11 @@ impl<T> ReadHandle<T> {
 /// // the line below will not compile as ReadHandle does not implement Sync
 ///
 /// is_sync::<ReadHandle<u64>>()
-///```
-///```
+/// ```
+///
+/// But, it can be sent across threads:
+///
+/// ```
 /// use left_right::ReadHandle;
 ///
 /// fn is_send<T: Send>() {
@@ -213,6 +227,16 @@ impl<T> ReadHandle<T> {
 /// }
 ///
 /// is_send::<ReadHandle<u64>>()
-///```
+/// ```
+///
+/// As long as the wrapped type is `Sync` that is.
+///
+/// ```compile_fail
+/// use left_right::ReadHandle;
+///
+/// fn is_send<T: Send>() {}
+///
+/// is_send::<ReadHandle<std::cell::Cell<u64>>>()
+/// ```
 #[allow(dead_code)]
 struct CheckReadHandleSendNotSync;
