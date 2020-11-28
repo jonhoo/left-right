@@ -1,7 +1,6 @@
 use super::Absorb;
 use crate::read::ReadHandle;
 
-use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
@@ -24,13 +23,23 @@ where
     T: Absorb<O>,
 {
     epochs: crate::Epochs,
-    w_handle: Option<ManuallyDrop<Box<T>>>,
+    w_handle: NonNull<T>,
     oplog: Vec<O>,
     swap_index: usize,
     r_handle: ReadHandle<T>,
     last_epochs: Vec<u64>,
     #[cfg(test)]
     refreshes: usize,
+}
+
+// safety: write handle keeps no thread-local state.
+unsafe impl<T, O> Send for WriteHandle<T, O>
+where
+    T: Absorb<O>,
+    T: Send,
+    O: Send,
+    ReadHandle<T>: Send,
+{
 }
 
 impl<T, O> fmt::Debug for WriteHandle<T, O>
@@ -80,17 +89,19 @@ where
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         atomic::fence(atomic::Ordering::SeqCst);
 
-        let w_handle = self.w_handle.take().unwrap();
-
         // all readers have now observed the NULL, so we own both handles.
         // all operations have been applied to both w_handle and r_handle.
-        // give the underlying data structure an opportunity to handle the first copy differently:
-        Absorb::drop_first(ManuallyDrop::into_inner(w_handle));
+        // give the underlying data structure an opportunity to handle the one copy differently:
+        //
+        // safety: w_handle was initially crated from a `Box`, and is no longer aliased.
+        Absorb::drop_first(unsafe { Box::from_raw(self.w_handle.as_ptr()) });
 
-        // next we transmute r_handle to remove the ManuallyDrop, and then drop it.
+        // next we drop the r_handle.
         // this is safe, since we know that no readers are using this pointer
         // anymore (due to the .wait() following swapping the pointer with NULL).
-        drop(unsafe { Box::from_raw(r_handle as *mut T) });
+        //
+        // safety: w_handle was initially crated from a `Box`, and is no longer aliased.
+        drop(unsafe { Box::from_raw(r_handle) });
     }
 }
 
@@ -101,7 +112,8 @@ where
     pub(crate) fn new(w_handle: T, epochs: crate::Epochs, r_handle: ReadHandle<T>) -> Self {
         Self {
             epochs,
-            w_handle: Some(ManuallyDrop::new(Box::new(w_handle))),
+            // safety: Box<T> is not null and covariant.
+            w_handle: unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(w_handle))) },
             oplog: Vec::new(),
             swap_index: 0,
             r_handle,
@@ -179,8 +191,8 @@ where
 
         {
             // all the readers have left!
-            // we can safely bring the w_handle up to date.
-            let w_handle = self.w_handle.as_deref_mut().unwrap();
+            // safety: we haven't freed the Box, and no readers are accessing the w_handle
+            let w_handle = unsafe { self.w_handle.as_mut() };
 
             // safety: we will not swap while we hold this reference
             let r_handle = unsafe {
@@ -220,16 +232,15 @@ where
         // it's now time for us to swap the copies so that readers see up-to-date results from
         // w_handle.
 
-        // prepare w_handle
-        let w_handle = self.w_handle.take().unwrap();
-        let w_handle = Box::into_raw(ManuallyDrop::into_inner(w_handle));
-
         // swap in our w_handle, and get r_handle in return
         let r_handle = self
             .r_handle
             .inner
-            .swap(w_handle as *mut T, atomic::Ordering::Release);
-        let r_handle = ManuallyDrop::new(unsafe { Box::from_raw(r_handle as *mut T) });
+            .swap(self.w_handle.as_ptr(), atomic::Ordering::Release);
+
+        // NOTE: at this point, there are likely still readers using r_handle.
+        // safety: r_handle was also created from a Box, so it is not null and is covariant.
+        self.w_handle = unsafe { NonNull::new_unchecked(r_handle) };
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         atomic::fence(atomic::Ordering::SeqCst);
@@ -237,9 +248,6 @@ where
         for (ri, epoch) in epochs.iter() {
             self.last_epochs[ri] = epoch.load(atomic::Ordering::Acquire);
         }
-
-        // NOTE: at this point, there are likely still readers using the w_handle we got
-        self.w_handle = Some(r_handle);
 
         #[cfg(test)]
         {
@@ -273,12 +281,7 @@ where
     // TODO: Make this return `Option<&mut T>`,
     // and only `Some` if there are indeed to readers in the write copy.
     pub fn raw_write_handle(&mut self) -> NonNull<T> {
-        let ref_mut_t = &mut ***self
-            .w_handle
-            .as_mut()
-            .expect("write handle is only null after drop");
-        // Safety: Box is not null and covariant.
-        unsafe { NonNull::new_unchecked(ref_mut_t) }
+        self.w_handle
     }
 }
 

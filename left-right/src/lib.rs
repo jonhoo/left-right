@@ -234,25 +234,6 @@ pub trait Absorb<O> {
     fn drop_first(self: Box<Self>) {}
 }
 
-// This implementation is used internally to ensure that we can absorb without going through a
-// bunch of ugly `DerefMut`s when we place the data structure on the heap.
-impl<T, O> Absorb<O> for Box<T>
-where
-    T: Absorb<O>,
-{
-    fn absorb_first(&mut self, operation: &mut O, other: &Self) {
-        T::absorb_first(self, operation, other)
-    }
-
-    fn absorb_second(&mut self, operation: O, other: &Self) {
-        T::absorb_second(self, operation, other)
-    }
-
-    fn drop_first(self: Box<Self>) {
-        T::drop_first(*self)
-    }
-}
-
 /// Construct a new write and read handle pair from an empty data structure.
 ///
 /// The type must implement `Clone` so we can construct the second copy from the first.
