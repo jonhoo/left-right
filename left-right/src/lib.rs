@@ -172,7 +172,7 @@
 
 use std::sync::{atomic, Arc, Mutex};
 
-type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicU64>>>>;
+type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicUsize>>>>;
 
 mod write;
 pub use crate::write::WriteHandle;

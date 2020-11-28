@@ -4,7 +4,7 @@ use crate::read::ReadHandle;
 use std::ptr::NonNull;
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
-use std::{fmt, mem, thread};
+use std::{fmt, thread};
 
 /// A writer handle to a left-right guarded data structure.
 ///
@@ -27,7 +27,7 @@ where
     oplog: Vec<O>,
     swap_index: usize,
     r_handle: ReadHandle<T>,
-    last_epochs: Vec<u64>,
+    last_epochs: Vec<usize>,
     #[cfg(test)]
     refreshes: usize,
 }
@@ -125,34 +125,36 @@ where
         }
     }
 
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<atomic::AtomicU64>>>) {
+    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<atomic::AtomicUsize>>>) {
         let mut iter = 0;
         let mut starti = 0;
-
-        // We want a 1 in the type of the epochs, without naming that type here.
-        #[allow(unused_assignments)]
-        let mut epoch_unit = self.last_epochs.get(0).copied().unwrap_or(0);
-        epoch_unit = 1;
-        let high_bit = epoch_unit << (mem::size_of_val(&epoch_unit) * 8 - 1);
 
         // we're over-estimating here, but slab doesn't expose its max index
         self.last_epochs.resize(epochs.capacity(), 0);
         'retry: loop {
             // read all and see if all have changed (which is likely)
             for (ii, (ri, epoch)) in epochs.iter().enumerate().skip(starti) {
-                // note that `ri` _may_ have been re-used since we last read into last_epochs.
+                // if the reader's epoch was even last we read it (which was _after_ the swap),
+                // then they either do not have the pointer, or must have read the pointer strictly
+                // after the swap. in either case, they cannot be using the old pointer value (what
+                // is now w_handle).
+                //
+                // note that this holds even with wrap-around since std::u{N}::MAX == 2 ^ N - 1,
+                // which is odd, and std::u{N}::MAX + 1 == 0 is even.
+                //
+                // note also that `ri` _may_ have been re-used since we last read into last_epochs.
                 // this is okay though, as a change still implies that the new reader must have
                 // arrived _after_ we did the atomic swap, and thus must also have seen the new
                 // pointer.
-                if self.last_epochs[ri] & high_bit != 0 {
-                    // reader was not active right after last swap
-                    // and therefore *must* only see new pointer
+                if self.last_epochs[ri] % 2 == 0 {
                     continue;
                 }
 
                 let now = epoch.load(atomic::Ordering::Acquire);
-                if (now != self.last_epochs[ri]) | (now & high_bit != 0) | (now == 0) {
-                    // reader must have seen last swap
+                if now != self.last_epochs[ri] {
+                    // reader must have seen the last swap, since they have done at least one
+                    // operation since we last looked at their epoch, which _must_ mean that they
+                    // are no longer using the old pointer value.
                 } else {
                     // reader may not have seen swap
                     // continue from this reader's epoch

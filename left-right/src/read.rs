@@ -1,9 +1,9 @@
 use std::cell::Cell;
+use std::fmt;
 use std::marker::PhantomData;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
-use std::{fmt, mem};
 
 // To make [`WriteHandle`] and friends work.
 #[cfg(doc)]
@@ -40,9 +40,8 @@ pub use factory::ReadHandleFactory;
 pub struct ReadHandle<T> {
     pub(crate) inner: sync::Arc<AtomicPtr<T>>,
     pub(crate) epochs: crate::Epochs,
-    epoch: sync::Arc<sync::atomic::AtomicU64>,
+    epoch: sync::Arc<sync::atomic::AtomicUsize>,
     epoch_i: usize,
-    my_epoch: Cell<u64>,
     enters: Cell<usize>,
 
     // `ReadHandle` is _only_ Send if T is Sync. If T is !Sync, then it's not okay for us to expose
@@ -68,7 +67,6 @@ impl<T> fmt::Debug for ReadHandle<T> {
         f.debug_struct("ReadHandle")
             .field("epochs", &self.epochs)
             .field("epoch", &self.epoch)
-            .field("my_epoch", &self.my_epoch)
             .finish()
     }
 }
@@ -91,7 +89,7 @@ impl<T> ReadHandle<T> {
 
     fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: crate::Epochs) -> Self {
         // tell writer about our epoch tracker
-        let epoch = sync::Arc::new(atomic::AtomicU64::new(0));
+        let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
         // okay to lock, since we're not holding up the epoch
         let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
 
@@ -99,7 +97,6 @@ impl<T> ReadHandle<T> {
             epochs,
             epoch,
             epoch_i,
-            my_epoch: Cell::new(0),
             enters: Cell::new(0),
             inner,
             _unimpl_send: PhantomData,
@@ -128,7 +125,6 @@ impl<T> ReadHandle<T> {
                 self.enters.set(enters + 1);
                 Some(ReadGuard {
                     handle: guard::ReadHandleState::from(self),
-                    epoch: self.my_epoch.get(),
                     t: r_handle,
                 })
             } else {
@@ -164,9 +160,7 @@ impl<T> ReadHandle<T> {
         // in all cases, using a pointer we read *after* updating our epoch is safe.
 
         // so, update our epoch tracker.
-        let epoch = self.my_epoch.get() + 1;
-        self.my_epoch.set(epoch);
-        self.epoch.store(epoch, atomic::Ordering::Release);
+        self.epoch.fetch_add(1, atomic::Ordering::AcqRel);
 
         // ensure that the pointer read happens strictly after updating the epoch
         atomic::fence(atomic::Ordering::SeqCst);
@@ -183,16 +177,12 @@ impl<T> ReadHandle<T> {
             self.enters.set(enters);
             Some(ReadGuard {
                 handle: guard::ReadHandleState::from(self),
-                epoch,
                 t: r_handle,
             })
         } else {
             // the writehandle has been dropped, and so has both copies,
             // so restore parity and return None
-            self.epoch.store(
-                epoch | 1 << (mem::size_of_val(&self.my_epoch) * 8 - 1),
-                atomic::Ordering::Release,
-            );
+            self.epoch.fetch_add(1, atomic::Ordering::AcqRel);
             None
         }
     }

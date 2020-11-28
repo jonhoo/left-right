@@ -5,16 +5,14 @@ use std::sync::atomic;
 
 #[derive(Debug, Copy, Clone)]
 pub(super) struct ReadHandleState<'rh> {
-    pub(super) shared_epoch: &'rh sync::atomic::AtomicU64,
-    pub(super) own_epoch: &'rh Cell<u64>,
+    pub(super) epoch: &'rh sync::atomic::AtomicUsize,
     pub(super) enters: &'rh Cell<usize>,
 }
 
 impl<'rh, T> From<&'rh super::ReadHandle<T>> for ReadHandleState<'rh> {
     fn from(rh: &'rh super::ReadHandle<T>) -> Self {
         Self {
-            shared_epoch: &rh.epoch,
-            own_epoch: &rh.my_epoch,
+            epoch: &rh.epoch,
             enters: &rh.enters,
         }
     }
@@ -33,7 +31,6 @@ pub struct ReadGuard<'rh, T: ?Sized> {
     // NOTE: _technically_ this is more like &'self.
     // the reference is valid until the guard is dropped.
     pub(super) t: &'rh T,
-    pub(super) epoch: u64,
     pub(super) handle: ReadHandleState<'rh>,
 }
 
@@ -63,7 +60,6 @@ impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
     {
         let rg = ReadGuard {
             t: f(orig.t),
-            epoch: orig.epoch,
             handle: orig.handle,
         };
         mem::forget(orig);
@@ -99,7 +95,6 @@ impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
     {
         let rg = ReadGuard {
             t: f(orig.t)?,
-            epoch: orig.epoch,
             handle: orig.handle,
         };
         mem::forget(orig);
@@ -126,11 +121,7 @@ impl<'rh, T: ?Sized> Drop for ReadGuard<'rh, T> {
         self.handle.enters.set(enters);
         if enters == 0 {
             // We are the last guard to be dropped -- now release our epoch.
-            let epoch = self.handle.own_epoch.get();
-            self.handle.shared_epoch.store(
-                epoch | 1 << (mem::size_of_val(&epoch) * 8 - 1),
-                atomic::Ordering::Release,
-            );
+            self.handle.epoch.fetch_add(1, atomic::Ordering::AcqRel);
         }
     }
 }
