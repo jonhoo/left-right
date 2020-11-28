@@ -16,8 +16,8 @@ use std::collections::hash_map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
-/// Note that any changes made to the map will not be made visible to readers until `refresh()` is
-/// called.
+/// Note that any changes made to the map will not be made visible to readers until
+/// [`publish`](Self::publish) is called.
 ///
 /// When the `WriteHandle` is dropped, the map is immediately (but safely) taken away from all
 /// readers, causing all future lookups to return `None`.
@@ -26,22 +26,22 @@ use std::collections::hash_map::Entry;
 /// ```
 /// let x = ('x', 42);
 ///
-/// let (r, mut w) = evmap::new();
+/// let (mut w, r) = evmap::new();
 ///
 /// // the map is uninitialized, so all lookups should return None
 /// assert_eq!(r.get(&x.0).map(|rs| rs.len()), None);
 ///
-/// w.refresh();
+/// w.publish();
 ///
-/// // after the first refresh, it is empty, but ready
+/// // after the first publish, it is empty, but ready
 /// assert_eq!(r.get(&x.0).map(|rs| rs.len()), None);
 ///
 /// w.insert(x.0, x);
 ///
-/// // it is empty even after an add (we haven't refresh yet)
+/// // it is empty even after an add (we haven't publish yet)
 /// assert_eq!(r.get(&x.0).map(|rs| rs.len()), None);
 ///
-/// w.refresh();
+/// w.publish();
 ///
 /// // but after the swap, the record is there!
 /// assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
@@ -57,9 +57,9 @@ where
     handle: left_right::WriteHandle<Inner<K, V, M, S>, Operation<K, V, M>>,
     r_handle: ReadHandle<K, V, M, S>,
 
-    /// If Some, write directly to the write handle map, since no refresh has happened.
+    /// If Some, write directly to the write handle map, since no publish has happened.
     /// Some(false) indicates that the necessary `Operation::JustCloneRHandle` has not
-    /// yet been appended to the oplog for when a refresh does happen.
+    /// yet been appended to the oplog for when a publish does happen.
     direct_write: Option<bool>,
 }
 
@@ -96,29 +96,24 @@ where
         }
     }
 
-    /// Refresh the handle used by readers so that pending writes are made visible.
+    /// Publish all changes since the last call to `publish` to make them visible to readers.
     ///
-    /// This method needs to wait for all readers to move to the new handle so that it can replay
-    /// the operational log onto the stale map copy the readers used to use. This can take some
-    /// time, especially if readers are executing slow operations, or if there are many of them.
-    pub fn refresh(&mut self) -> &mut Self {
-        self.handle.refresh();
+    /// This can take some time, especially if readers are executing slow operations, or if there
+    /// are many of them.
+    pub fn publish(&mut self) -> &mut Self {
+        self.handle.publish();
         self.direct_write = None;
         self
     }
 
-    /// Refresh as necessary to ensure that all operations are visible to readers.
-    ///
-    /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
-    /// This method will only do so if there are pending operations.
-    pub fn flush(&mut self) -> &mut Self {
-        self.handle.flush();
-        self
+    /// Returns true if there are changes to the map that have not yet been exposed to readers.
+    pub fn has_pending(&self) -> bool {
+        self.handle.has_pending_operations()
     }
 
     /// Set the metadata.
     ///
-    /// Will only be visible to readers after the next call to `refresh()`.
+    /// Will only be visible to readers after the next call to [`publish`](Self::publish).
     pub fn set_meta(&mut self, meta: M) {
         self.add_op(Operation::SetMeta(meta));
     }
@@ -128,7 +123,8 @@ where
             {
                 // Safety: we know there are no outstanding w_handle readers, since we haven't
                 // refreshed ever before, so we can modify it directly!
-                let w_inner = unsafe { &mut *self.handle.raw_write_handle() };
+                let mut w_inner = self.handle.raw_write_handle();
+                let w_inner = unsafe { w_inner.as_mut() };
                 let r_handle = self.handle.enter().expect("map has not yet been destroyed");
                 // because we are applying second, we _do_ want to perform drops
                 Absorb::absorb_second(w_inner, op, &*r_handle);
@@ -136,11 +132,11 @@ where
 
             if !*queued_clone {
                 // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
-                self.handle.append_op(Operation::JustCloneRHandle);
+                self.handle.append(Operation::JustCloneRHandle);
                 *queued_clone = true;
             }
         } else {
-            self.handle.append_op(op);
+            self.handle.append(op);
         }
 
         self
@@ -148,7 +144,8 @@ where
 
     /// Add the given value to the value-bag of the given key.
     ///
-    /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
+    /// The updated value-bag will only be visible to readers after the next call to
+    /// [`publish`](Self::publish).
     pub fn insert(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::Add(k, v))
     }
@@ -161,7 +158,8 @@ where
     ///
     /// See [the doc section on this](./index.html#small-vector-optimization) for more information.
     ///
-    /// The new value will only be visible to readers after the next call to `refresh()`.
+    /// The new value will only be visible to readers after the next call to
+    /// [`publish`](Self::publish).
     pub fn update(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::Replace(k, v))
     }
@@ -172,14 +170,16 @@ where
     /// allocated memory intact for reuse, or if no associated value-bag exists
     /// an empty value-bag will be created for the given key.
     ///
-    /// The new value will only be visible to readers after the next call to `refresh()`.
+    /// The new value will only be visible to readers after the next call to
+    /// [`publish`](Self::publish).
     pub fn clear(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Clear(k))
     }
 
     /// Remove the given value from the value-bag of the given key.
     ///
-    /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
+    /// The updated value-bag will only be visible to readers after the next call to
+    /// [`publish`](Self::publish).
     #[deprecated(since = "11.0.0", note = "Renamed to remove_value")]
     pub fn remove(&mut self, k: K, v: V) -> &mut Self {
         self.remove_value(k, v)
@@ -187,14 +187,16 @@ where
 
     /// Remove the given value from the value-bag of the given key.
     ///
-    /// The updated value-bag will only be visible to readers after the next call to `refresh()`.
+    /// The updated value-bag will only be visible to readers after the next call to
+    /// [`publish`](Self::publish).
     pub fn remove_value(&mut self, k: K, v: V) -> &mut Self {
         self.add_op(Operation::RemoveValue(k, v))
     }
 
     /// Remove the value-bag for the given key.
     ///
-    /// The value-bag will only disappear from readers after the next call to `refresh()`.
+    /// The value-bag will only disappear from readers after the next call to
+    /// [`publish`](Self::publish).
     #[deprecated(since = "11.0.0", note = "Renamed to remove_entry")]
     pub fn empty(&mut self, k: K) -> &mut Self {
         self.remove_entry(k)
@@ -202,14 +204,16 @@ where
 
     /// Remove the value-bag for the given key.
     ///
-    /// The value-bag will only disappear from readers after the next call to `refresh()`.
+    /// The value-bag will only disappear from readers after the next call to
+    /// [`publish`](Self::publish).
     pub fn remove_entry(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::RemoveEntry(k))
     }
 
     /// Purge all value-bags from the map.
     ///
-    /// The map will only appear empty to readers after the next call to `refresh()`.
+    /// The map will only appear empty to readers after the next call to
+    /// [`publish`](Self::publish).
     ///
     /// Note that this will iterate once over all the keys internally.
     pub fn purge(&mut self) -> &mut Self {
@@ -218,7 +222,8 @@ where
 
     /// Retain elements for the given key using the provided predicate function.
     ///
-    /// The remaining value-bag will only be visible to readers after the next call to `refresh()`
+    /// The remaining value-bag will only be visible to readers after the next call to
+    /// [`publish`](Self::publish)
     ///
     /// # Safety
     ///
@@ -226,7 +231,7 @@ where
     /// on swap. It _must_ retain the same elements each time, otherwise a value may exist in one
     /// map, but not the other, leaving the two maps permanently out-of-sync. This is _really_ bad,
     /// as values are aliased between the maps, and are assumed safe to free when they leave the
-    /// map during a `refresh`. Returning `true` when `retain` is first called for a value, and
+    /// map during a `publish`. Returning `true` when `retain` is first called for a value, and
     /// `false` the second time would free the value, but leave an aliased pointer to it in the
     /// other side of the map.
     ///
@@ -249,14 +254,16 @@ where
     /// Shrinks a value-bag to it's minimum necessary size, freeing memory
     /// and potentially improving cache locality by switching to inline storage.
     ///
-    /// The optimized value-bag will only be visible to readers after the next call to `refresh()`
+    /// The optimized value-bag will only be visible to readers after the next call to
+    /// [`publish`](Self::publish)
     pub fn fit(&mut self, k: K) -> &mut Self {
         self.add_op(Operation::Fit(Some(k)))
     }
 
     /// Like [`WriteHandle::fit`](#method.fit), but shrinks <b>all</b> value-bags in the map.
     ///
-    /// The optimized value-bags will only be visible to readers after the next call to `refresh()`
+    /// The optimized value-bags will only be visible to readers after the next call to
+    /// [`publish`](Self::publish)
     pub fn fit_all(&mut self) -> &mut Self {
         self.add_op(Operation::Fit(None))
     }
@@ -274,21 +281,22 @@ where
     #[cfg(feature = "eviction")]
     /// Remove the value-bag for `n` randomly chosen keys.
     ///
-    /// This method immediately calls `refresh()` to ensure that the keys and values it returns
-    /// match the elements that will be emptied on the next call to `refresh()`. The value-bags
-    /// will only disappear from readers after the next call to `refresh()`.
+    /// This method immediately calls [`publish`](Self::publish) to ensure that the keys and values
+    /// it returns match the elements that will be emptied on the next call to
+    /// [`publish`](Self::publish). The value-bags will only disappear from readers after the next
+    /// call to [`publish`](Self::publish).
     pub fn empty_random<'a>(
         &'a mut self,
         rng: &mut impl rand::Rng,
         n: usize,
     ) -> impl ExactSizeIterator<Item = (&'a K, &'a Values<V, S>)> {
-        // force a refresh so that our view into self.r_handle matches the indices we choose.
+        // force a publish so that our view into self.r_handle matches the indices we choose.
         // if we didn't do this, the `i`th element of r_handle may be a completely different
         // element than the one that _will_ be evicted when `EmptyAt([.. i ..])` is applied.
         // this would be bad since we are telling the caller which elements we are evicting!
         // note also that we _must_ use `r_handle`, not `w_handle`, since `w_handle` may have
-        // pending operations even after a refresh!
-        self.refresh();
+        // pending operations even after a publish!
+        self.publish();
 
         let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
         let inner: &'a _ = unsafe { &(*inner).data };
@@ -310,7 +318,7 @@ where
     }
 }
 
-unsafe impl<K, V, M, S> Absorb<Operation<K, V, M>> for Inner<K, V, M, S>
+impl<K, V, M, S> Absorb<Operation<K, V, M>> for Inner<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
@@ -521,8 +529,10 @@ where
     }
 
     fn drop_first(self: Box<Self>) {
-        // Make sure that we don't drop values since we're only dropping the first shallow copy of
-        // each value.
+        // since the two copies are exactly equal, we need to make sure that we *don't* call the
+        // destructors of any of the values that are in our map, as they'll all be called when the
+        // last read handle goes out of scope. to do so, we first clear w_handle, which won't drop
+        // any elements since its values are kept as ManuallyDrop:
         //
         // Safety: ManuallyDrop<T> has the same layout as T.
         let inner: Box<Inner<K, ManuallyDrop<V>, M, S>> = unsafe { mem::transmute(self) };

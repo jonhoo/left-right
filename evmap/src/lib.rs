@@ -3,9 +3,10 @@
 //! This map implementation allows reads and writes to execute entirely in parallel, with no
 //! implicit synchronization overhead. Reads never take locks on their critical path, and neither
 //! do writes assuming there is a single writer (multi-writer is possible using a `Mutex`), which
-//! significantly improves performance under contention.
+//! significantly improves performance under contention. See the [`left-right` crate](left_right)
+//! for details on the underlying concurrency primitive.
 //!
-//! The trade-off exposed by this module is one of eventual consistency: writes are not visible to
+//! The trade-off exposed by this type is one of eventual consistency: writes are not visible to
 //! readers except following explicit synchronization. Specifically, readers only see the
 //! operations that preceeded the last call to `WriteHandle::refresh` by a writer. This lets
 //! writers decide how stale they are willing to let reads get. They can refresh the map after
@@ -35,7 +36,7 @@
 //! // new will use the default HashMap hasher, and a meta of ()
 //! // note that we get separate read and write handles
 //! // the read handle can be cloned to have more readers
-//! let (book_reviews_r, mut book_reviews_w) = evmap::new();
+//! let (mut book_reviews_w, book_reviews_r) = evmap::new();
 //!
 //! // review some books.
 //! book_reviews_w.insert("Adventures of Huckleberry Finn",    "My favorite book.");
@@ -46,7 +47,7 @@
 //! // at this point, reads from book_reviews_r will not see any of the reviews!
 //! assert_eq!(book_reviews_r.len(), 0);
 //! // we need to refresh first to make the writes visible
-//! book_reviews_w.refresh();
+//! book_reviews_w.publish();
 //! assert_eq!(book_reviews_r.len(), 4);
 //! // reads will now return Some() because the map has been initialized
 //! assert_eq!(book_reviews_r.get("Grimms' Fairy Tales").map(|rs| rs.len()), Some(1));
@@ -59,7 +60,7 @@
 //! assert_eq!(book_reviews_r.get("Grimms' Fairy Tales").map(|rs| rs.len()), Some(1));
 //!
 //! // we need to refresh first
-//! book_reviews_w.refresh();
+//! book_reviews_w.publish();
 //! assert_eq!(book_reviews_r.get("Grimms' Fairy Tales").map(|rs| rs.len()), Some(2));
 //!
 //! // oops, this review has a lot of spelling mistakes, let's delete it.
@@ -67,7 +68,7 @@
 //! book_reviews_w.remove_entry("The Adventures of Sherlock Holmes");
 //! // but again, it's not visible to readers until we refresh
 //! assert_eq!(book_reviews_r.get("The Adventures of Sherlock Holmes").map(|rs| rs.len()), Some(1));
-//! book_reviews_w.refresh();
+//! book_reviews_w.publish();
 //! assert_eq!(book_reviews_r.get("The Adventures of Sherlock Holmes").map(|rs| rs.len()), None);
 //!
 //! // look up the values associated with some keys.
@@ -94,7 +95,7 @@
 //!
 //! ```
 //! use std::thread;
-//! let (book_reviews_r, mut book_reviews_w) = evmap::new();
+//! let (mut book_reviews_w, book_reviews_r) = evmap::new();
 //!
 //! // start some readers
 //! let readers: Vec<_> = (0..4).map(|_| {
@@ -120,7 +121,7 @@
 //! book_reviews_w.insert("Pride and Prejudice",               "Very enjoyable.");
 //! book_reviews_w.insert("The Adventures of Sherlock Holmes", "Eye lyked it alot.");
 //! // expose the writes
-//! book_reviews_w.refresh();
+//! book_reviews_w.publish();
 //!
 //! // you can read through the write handle
 //! assert_eq!(book_reviews_w.len(), 4);
@@ -139,7 +140,7 @@
 //! ```
 //! use std::thread;
 //! use std::sync::{Arc, Mutex};
-//! let (book_reviews_r, mut book_reviews_w) = evmap::new();
+//! let (mut book_reviews_w, book_reviews_r) = evmap::new();
 //!
 //! // start some writers.
 //! // since evmap does not support concurrent writes, we need
@@ -150,7 +151,7 @@
 //!     thread::spawn(move || {
 //!         let mut w = w.lock().unwrap();
 //!         w.insert(i, true);
-//!         w.refresh();
+//!         w.publish();
 //!     })
 //! }).collect();
 //!
@@ -163,62 +164,18 @@
 //! }
 //! ```
 //!
-//! `ReadHandle` is not `Sync` as it is not safe to share a single instance
-//! amongst threads. A fresh `ReadHandle` needs to be created for each thread
-//! either by cloning a `ReadHandle` or from a `ReadHandleFactory`.
-//!
-//! The reason for this is that each `ReadHandle` assumes that only one
-//! thread operates on it at a time. For details, see the implementation
-//! comments on `ReadHandle`.
-//!
-//!```compile_fail
-//! use evmap::ReadHandle;
-//!
-//! fn is_sync<T: Sync>() {
-//!   // dummy function just used for its parameterized type bound
-//! }
-//!
-//! // the line below will not compile as ReadHandle does not implement Sync
-//!
-//! is_sync::<ReadHandle<u64, u64>>()
-//!```
-//!
-//! `ReadHandle` **is** `Send` though, since in order to send a `ReadHandle`,
-//! there must be no references to it, so no thread is operating on it.
-//!
-//!```
-//! use evmap::ReadHandle;
-//!
-//! fn is_send<T: Send>() {
-//!   // dummy function just used for its parameterized type bound
-//! }
-//!
-//! is_send::<ReadHandle<u64, u64>>()
-//!```
-//!
-//! For further explanation of `Sync` and `Send` [here](https://doc.rust-lang.org/nomicon/send-and-sync.html)
+//! [`ReadHandle`] is not `Sync` as sharing a single instance amongst threads would introduce a
+//! significant performance bottleneck. A fresh `ReadHandle` needs to be created for each thread
+//! either by cloning a [`ReadHandle`] or from a [`ReadHandleFactory`]. For further information,
+//! see [`left_right::ReadHandle`].
 //!
 //! # Implementation
 //!
-//! Under the hood, the map is implemented using two regular `HashMap`s, an operational log,
-//! epoch counting, and some pointer magic. There is a single pointer through which all readers
-//! go. It points to a `HashMap`, which the readers access in order to read data. Every time a read
-//! has accessed the pointer, they increment a local epoch counter, and they update it again when
-//! they have finished the read (see #3 for more information). When a write occurs, the writer
-//! updates the other `HashMap` (for which there are no readers), and also stores a copy of the
-//! change in a log (hence the need for `Clone` on the keys and values). When
-//! `WriteHandle::refresh` is called, the writer, atomically swaps the reader pointer to point to
-//! the other map. It then waits for the epochs of all current readers to change, and then replays
-//! the operational log to bring the stale map up to date.
-//!
-//! The design resembles this [left-right concurrency
-//! scheme](https://hal.archives-ouvertes.fr/hal-01207881/document) from 2015, though I am not
-//! aware of any follow-up to that work.
-//!
-//! Since the implementation uses regular `HashMap`s under the hood, table resizing is fully
-//! supported. It does, however, also mean that the memory usage of this implementation is
-//! approximately twice of that of a regular `HashMap`, and more if writes rarely refresh after
-//! writing.
+//! Under the hood, the map is implemented using two regular `HashMap`s and some magic. Take a look
+//! at [`left-right`](left_right) for a much more in-depth discussion. Since the implementation
+//! uses regular `HashMap`s under the hood, table resizing is fully supported. It does, however,
+//! also mean that the memory usage of this implementation is approximately twice of that of a
+//! regular `HashMap`, and more if writers rarely refresh after writing.
 //!
 //! # Value storage
 //!
@@ -250,6 +207,19 @@ use crate::inner::Inner;
 
 mod values;
 pub use values::Values;
+
+mod write;
+pub use crate::write::WriteHandle;
+
+mod read;
+pub use crate::read::{MapReadRef, ReadGuardIter, ReadHandle, ReadHandleFactory};
+
+pub mod shallow_copy;
+pub use crate::shallow_copy::ShallowCopy;
+
+// Expose `ReadGuard` since it has useful methods the user will likely care about.
+#[doc(inline)]
+pub use left_right::ReadGuard;
 
 /// Unary predicate used to retain elements.
 ///
@@ -319,24 +289,13 @@ pub(crate) enum Operation<K, V, M> {
     ///
     /// This can improve performance by pre-allocating space for large bags of values.
     Reserve(K, usize),
-
+    /// Mark the map as ready to be consumed for readers.
     MarkReady,
-
+    /// Set the value of the map meta.
     SetMeta(M),
+    /// Copy over the contents of the read map wholesale as the write map is empty.
     JustCloneRHandle,
 }
-
-mod write;
-pub use crate::write::WriteHandle;
-
-mod read;
-pub use crate::read::{MapReadRef, ReadGuardIter, ReadHandle};
-// TODO: ReadGuardFactory
-
-pub mod shallow_copy;
-pub use crate::shallow_copy::ShallowCopy;
-
-pub use left_right::ReadGuard;
 
 /// Options for how to initialize the map.
 ///
@@ -410,7 +369,7 @@ where
 
     /// Create the map, and construct the read and write handles used to access it.
     #[allow(clippy::type_complexity)]
-    pub fn construct<K, V>(self) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
+    pub fn construct<K, V>(self) -> (WriteHandle<K, V, M, S>, ReadHandle<K, V, M, S>)
     where
         K: Eq + Hash + Clone,
         S: BuildHasher + Clone,
@@ -423,10 +382,10 @@ where
             Inner::with_hasher(self.meta, self.hasher)
         };
 
-        let (r, mut w) = left_right::new_from_empty(inner);
-        w.append_op(Operation::MarkReady);
+        let (mut w, r) = left_right::new_from_empty(inner);
+        w.append(Operation::MarkReady);
 
-        (ReadHandle::new(r), WriteHandle::new(w))
+        (WriteHandle::new(w), ReadHandle::new(r))
     }
 }
 
@@ -435,8 +394,8 @@ where
 /// Use the [`Options`](./struct.Options.html) builder for more control over initialization.
 #[allow(clippy::type_complexity)]
 pub fn new<K, V>() -> (
-    ReadHandle<K, V, (), RandomState>,
     WriteHandle<K, V, (), RandomState>,
+    ReadHandle<K, V, (), RandomState>,
 )
 where
     K: Eq + Hash + Clone,
@@ -452,8 +411,8 @@ where
 pub fn with_meta<K, V, M>(
     meta: M,
 ) -> (
-    ReadHandle<K, V, M, RandomState>,
     WriteHandle<K, V, M, RandomState>,
+    ReadHandle<K, V, M, RandomState>,
 )
 where
     K: Eq + Hash + Clone,
@@ -470,7 +429,7 @@ where
 pub fn with_hasher<K, V, M, S>(
     meta: M,
     hasher: S,
-) -> (ReadHandle<K, V, M, S>, WriteHandle<K, V, M, S>)
+) -> (WriteHandle<K, V, M, S>, ReadHandle<K, V, M, S>)
 where
     K: Eq + Hash + Clone,
     V: Eq + Hash + ShallowCopy,

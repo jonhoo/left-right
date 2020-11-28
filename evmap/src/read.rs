@@ -11,11 +11,14 @@ use std::iter::FromIterator;
 mod read_ref;
 pub use read_ref::{MapReadRef, ReadGuardIter};
 
+mod factory;
+pub use factory::ReadHandleFactory;
+
 /// A handle that may be used to read from the eventually consistent map.
 ///
 /// Note that any changes made to the map will not be made visible until the writer calls
-/// `refresh()`. In other words, all operations performed on a `ReadHandle` will *only* see writes
-/// to the map that preceeded the last call to `refresh()`.
+/// [`publish`](crate::WriteHandle::publish). In other words, all operations performed on a
+/// `ReadHandle` will *only* see writes to the map that preceeded the last call to `publish`.
 pub struct ReadHandle<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash,
@@ -70,9 +73,9 @@ where
     ///
     /// This lets you perform more complex read operations on the map.
     ///
-    /// While the reference lives, the map cannot be refreshed.
+    /// While the reference lives, changes to the map cannot be published.
     ///
-    /// If no refresh has happened, or the map has been destroyed, this function returns `None`.
+    /// If no publish has happened, or the map has been destroyed, this function returns `None`.
     ///
     /// See [`MapReadRef`].
     pub fn enter(&self) -> Option<MapReadRef<'_, K, V, M, S>> {
@@ -114,13 +117,13 @@ where
 
     /// Returns a guarded reference to the values corresponding to the key.
     ///
-    /// While the guard lives, the map cannot be refreshed.
+    /// While the guard lives, changes to the map cannot be published.
     ///
     /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
     /// form must match those for the key type.
     ///
     /// Note that not all writes will be included with this read -- only those that have been
-    /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
+    /// published by the writer. If no publish has happened, or the map has been destroyed, this
     /// function returns `None`.
     #[inline]
     pub fn get<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, Values<V, S>>>
@@ -138,7 +141,7 @@ where
     /// If there are multiple values stored for this key, there are no guarantees to which element
     /// is returned.
     ///
-    /// While the guard lives, the map cannot be refreshed.
+    /// While the guard lives, changes to the map cannot be published.
     ///
     /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
     /// form must match those for the key type.
@@ -158,7 +161,7 @@ where
     /// Returns a guarded reference to the values corresponding to the key along with the map
     /// meta.
     ///
-    /// While the guard lives, the map cannot be refreshed.
+    /// While the guard lives, changes to the map cannot be published.
     ///
     /// The key may be any borrowed form of the map's key type, but `Hash` and `Eq` on the borrowed
     /// form *must* match those for the key type.
@@ -182,11 +185,9 @@ where
         Some((res, meta))
     }
 
-    /// Returns true if the writer has destroyed this map.
-    ///
-    /// See [`WriteHandle::destroy`].
-    pub fn is_destroyed(&self) -> bool {
-        self.handle.is_destroyed()
+    /// Returns true if the [`WriteHandle`](crate::WriteHandle) has been dropped.
+    pub fn was_dropped(&self) -> bool {
+        self.handle.was_dropped()
     }
 
     /// Returns true if the map contains any values for the specified key.
@@ -240,9 +241,9 @@ mod test {
         const MIN: usize = (1 << 4) + 1;
         const MAX: usize = 1 << 6;
 
-        let (r, mut w) = new();
+        let (mut w, r) = new();
 
-        w.reserve(0, MAX).refresh();
+        w.reserve(0, MAX).publish();
 
         assert!(r.get_raw(&0).unwrap().capacity() >= MAX);
 
@@ -250,7 +251,7 @@ mod test {
             w.insert(0, i);
         }
 
-        w.fit_all().refresh();
+        w.fit_all().publish();
 
         assert!(r.get_raw(&0).unwrap().capacity() < MAX);
     }

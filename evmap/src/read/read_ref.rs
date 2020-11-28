@@ -1,14 +1,17 @@
 use crate::{inner::Inner, values::Values};
 use left_right::ReadGuard;
-
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hash};
 
+// To make [`WriteHandle`] and friends work.
+#[cfg(doc)]
+use crate::WriteHandle;
+
 /// A live reference into the read half of an evmap.
 ///
-/// As long as this lives, the map being read cannot change, and if a writer attempts to
-/// call [`WriteHandle::refresh`], that call will block until this is dropped.
+/// As long as this lives, changes to the map being read cannot be published. If a writer attempts
+/// to call [`WriteHandle::publish`], that call will block until this is dropped.
 ///
 /// Since the map remains immutable while this lives, the methods on this type all give you
 /// unguarded references to types contained in the map.
@@ -31,7 +34,7 @@ where
     /// Iterate over all key + valuesets in the map.
     ///
     /// Be careful with this function! While the iteration is ongoing, any writer that tries to
-    /// refresh will block waiting on this reader to finish.
+    /// publish changes will block waiting on this reader to finish.
     pub fn iter(&self) -> ReadGuardIter<'_, K, V, S> {
         ReadGuardIter {
             iter: self.guard.data.iter(),
@@ -41,7 +44,7 @@ where
     /// Iterate over all keys in the map.
     ///
     /// Be careful with this function! While the iteration is ongoing, any writer that tries to
-    /// refresh will block waiting on this reader to finish.
+    /// publish changes will block waiting on this reader to finish.
     pub fn keys(&self) -> KeysIter<'_, K, V, S> {
         KeysIter {
             iter: self.guard.data.iter(),
@@ -51,7 +54,7 @@ where
     /// Iterate over all value sets in the map.
     ///
     /// Be careful with this function! While the iteration is ongoing, any writer that tries to
-    /// refresh will block waiting on this reader to finish.
+    /// publish changes will block waiting on this reader to finish.
     pub fn values(&self) -> ValuesIter<'_, K, V, S> {
         ValuesIter {
             iter: self.guard.data.iter(),
@@ -79,7 +82,7 @@ where
     /// form *must* match those for the key type.
     ///
     /// Note that not all writes will be included with this read -- only those that have been
-    /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
+    /// published by the writer. If no publish has happened, or the map has been destroyed, this
     /// function returns `None`.
     pub fn get<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a Values<V, S>>
     where
@@ -99,7 +102,7 @@ where
     /// form *must* match those for the key type.
     ///
     /// Note that not all writes will be included with this read -- only those that have been
-    /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
+    /// published by the writer. If no publish has happened, or the map has been destroyed, this
     /// function returns `None`.
     pub fn get_one<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a V>
     where
