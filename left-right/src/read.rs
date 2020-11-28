@@ -4,9 +4,38 @@ use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
 use std::{fmt, mem};
 
+// To make [`WriteHandle`] and friends work.
+#[cfg(doc)]
+use crate::WriteHandle;
+
 mod guard;
 pub use guard::ReadGuard;
 
+mod factory;
+pub use factory::ReadHandleFactory;
+
+/// A read handle to a left-right guarded data structure.
+///
+/// To use a handle, first call [`enter`](Self::enter) to acquire a [`ReadGuard`]. This is similar
+/// to acquiring a `Mutex`, except that no exclusive lock is taken. All reads of the underlying
+/// data structure can then happen through the [`ReadGuard`] (which implements `Deref<Target =
+/// T>`).
+///
+/// Reads through a `ReadHandle` only see the changes up until the last time
+/// [`WriteHandle::publish`] was called. That is, even if a writer performs a number of
+/// modifications to the underlying data, those changes are not visible to reads until the writer
+/// calls [`publish`](crate::WriteHandle::publish).
+///
+/// `ReadHandle` is not `Sync`, which means that you cannot share a `ReadHandle` across many
+/// threads. This is because the coordination necessary to do so would significantly hamper the
+/// scalability of reads. If you had many reads go through one `ReadHandle`, they would need to
+/// coordinate among themselves for every read, which would lead to core contention and poor
+/// multi-core performance. By having `ReadHandle` not be `Sync`, you are forced to keep a
+/// `ReadHandle` per reader, which guarantees that you do not accidentally ruin your performance.
+///
+/// You can create a new, independent `ReadHandle` either by cloning an existing handle or by using
+/// a [`ReadHandleFactory`]. Note, however, that creating a new handle through either of these
+/// mechanisms _does_ take a lock, and may therefore become a bottleneck if you do it frequently.
 pub struct ReadHandle<T> {
     pub(crate) inner: sync::Arc<AtomicPtr<T>>,
     pub(crate) epochs: crate::Epochs,
@@ -70,11 +99,12 @@ impl<T> ReadHandle<T> {
 }
 
 impl<T> ReadHandle<T> {
-    /// Take out a guarded live reference to the read side of the `T`.
+    /// Take out a guarded live reference to the read copy of the `T`.
     ///
-    /// While the reference lives, the `T` cannot be refreshed.
+    /// While the guard lives, the [`WriteHandle`] cannot proceed with a call to
+    /// [`WriteHandle::publish`], so no queued operations will become visible to _any_ reader.
     ///
-    /// If the `T` has been destroyed, this function returns `None`.
+    /// If the `WriteHandle` has been dropped, this function returns `None`.
     pub fn enter(&self) -> Option<ReadGuard<'_, T>> {
         let enters = self.enters.get();
         if enters != 0 {
@@ -132,7 +162,7 @@ impl<T> ReadHandle<T> {
         // ensure that the pointer read happens strictly after updating the epoch
         atomic::fence(atomic::Ordering::SeqCst);
 
-        // then, atomically read pointer, and use the map being pointed to
+        // then, atomically read pointer, and use the copy being pointed to
         let r_handle = self.inner.load(atomic::Ordering::Acquire);
 
         // since we bumped our epoch, this pointer will remain valid until we bump it again
@@ -148,7 +178,8 @@ impl<T> ReadHandle<T> {
                 t: r_handle,
             })
         } else {
-            // the map has been destroyed, so restore parity and return None
+            // the writehandle has been dropped, and so has both copies,
+            // so restore parity and return None
             self.epoch.store(
                 epoch | 1 << (mem::size_of_val(&self.my_epoch) * 8 - 1),
                 atomic::Ordering::Release,
@@ -157,10 +188,31 @@ impl<T> ReadHandle<T> {
         }
     }
 
-    /// Returns true if the writer has destroyed this `T`.
-    ///
-    /// See [`WriteHandle::destroy`].
-    pub fn is_destroyed(&self) -> bool {
+    /// Returns true if the [`WriteHandle`] has been dropped.
+    pub fn was_dropped(&self) -> bool {
         self.inner.load(atomic::Ordering::Acquire).is_null()
     }
 }
+
+///```compile_fail
+/// use left_right::ReadHandle;
+///
+/// fn is_sync<T: Sync>() {
+///   // dummy function just used for its parameterized type bound
+/// }
+///
+/// // the line below will not compile as ReadHandle does not implement Sync
+///
+/// is_sync::<ReadHandle<u64>>()
+///```
+///```
+/// use left_right::ReadHandle;
+///
+/// fn is_send<T: Send>() {
+///   // dummy function just used for its parameterized type bound
+/// }
+///
+/// is_send::<ReadHandle<u64>>()
+///```
+#[allow(dead_code)]
+struct CheckReadHandleSendNotSync;

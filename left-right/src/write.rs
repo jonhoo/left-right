@@ -2,10 +2,23 @@ use super::Absorb;
 use crate::read::ReadHandle;
 
 use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
 use std::sync::atomic;
 use std::sync::{Arc, MutexGuard};
 use std::{fmt, mem, thread};
 
+/// A writer handle to a left-right guarded data structure.
+///
+/// All operations on the underlying data should be enqueued as operations of type `O` using
+/// [`append`](Self::append). The effect of this operations are only exposed to readers once
+/// [`publish`](Self::publish) is called.
+///
+/// # Reading through a `WriteHandle`
+///
+/// `WriteHandle` allows access to a [`ReadHandle`] through `Deref<Target = ReadHandle>`. Note that
+/// since the reads go through a [`ReadHandle`], those reads are subject to the same visibility
+/// restrictions as reads that do not go through the `WriteHandle`: they only see the effects of
+/// operations prior to the last call to [`publish`](Self::publish).
 pub struct WriteHandle<T, O>
 where
     T: Absorb<O>,
@@ -43,13 +56,13 @@ where
     fn drop(&mut self) {
         use std::ptr;
 
-        // first, ensure both maps are up to date
-        // (otherwise safely dropping deduplicated rows is a pain)
+        // first, ensure both copies are up to date
+        // (otherwise safely dropping deduplicated data is a pain)
         if !self.oplog.is_empty() {
-            self.refresh();
+            self.publish();
         }
         if !self.oplog.is_empty() {
-            self.refresh();
+            self.publish();
         }
         assert!(self.oplog.is_empty());
 
@@ -70,15 +83,12 @@ where
         let w_handle = self.w_handle.take().unwrap();
 
         // all readers have now observed the NULL, so we own both handles.
-        // all records are duplicated between w_handle and r_handle.
-        // since the two maps are exactly equal, we need to make sure that we *don't* call the
-        // destructors of any of the values that are in our map, as they'll all be called when the
-        // last read handle goes out of scope. to do so, we first clear w_handle, which won't drop
-        // any elements since its values are kept as ManuallyDrop:
+        // all operations have been applied to both w_handle and r_handle.
+        // give the underlying data structure an opportunity to handle the first copy differently:
         Absorb::drop_first(ManuallyDrop::into_inner(w_handle));
 
-        // then we transmute r_handle to remove the ManuallyDrop, and then drop it, which will free
-        // all the records. this is safe, since we know that no readers are using this pointer
+        // next we transmute r_handle to remove the ManuallyDrop, and then drop it.
+        // this is safe, since we know that no readers are using this pointer
         // anymore (due to the .wait() following swapping the pointer with NULL).
         drop(unsafe { Box::from_raw(r_handle as *mut T) });
     }
@@ -148,7 +158,13 @@ where
         }
     }
 
-    pub fn refresh(&mut self) -> &mut Self {
+    /// Publish all operations append to the log to reads.
+    ///
+    /// This method needs to wait for all readers to move to the "other" copy of the data so that
+    /// it can replay the operational log onto the stale copy the readers used to use. This can
+    /// take some time, especially if readers are executing slow operations, or if there are many
+    /// of them.
+    pub fn publish(&mut self) -> &mut Self {
         // we need to wait until all epochs have changed since the swaps *or* until a "finished"
         // flag has been observed to be on for two subsequent iterations (there still may be some
         // readers present since we did the previous refresh)
@@ -175,31 +191,22 @@ where
                     .unwrap()
             };
 
-            // the w_handle map has not seen any of the writes in the oplog
-            // the r_handle map has not seen any of the writes following swap_index
+            // the w_handle copy has not seen any of the writes in the oplog
+            // the r_handle copy has not seen any of the writes following swap_index
             if self.swap_index != 0 {
-                // we can drain out the operations that only the w_handle map needs
+                // we can drain out the operations that only the w_handle copy needs
                 //
                 // NOTE: the if above is because drain(0..0) would remove 0
-                //
-                // NOTE: the distinction between apply_first and apply_second is the reason why our
-                // use of shallow_copy is safe. we apply each op in the oplog twice, first with
-                // apply_first, and then with apply_second. on apply_first, no destructors are
-                // called for removed values (since those values all still exist in the other map),
-                // and all new values are shallow copied in (since we need the original for the
-                // other map). on apply_second, we call the destructor for anything that's been
-                // removed (since those removals have already happened on the other map, and
-                // without calling their destructor).
                 for op in self.oplog.drain(0..self.swap_index) {
-                    // because we are applying second, we _do_ want to perform drops
                     T::absorb_second(w_handle, op, r_handle);
                 }
             }
-            // the rest have to be cloned because they'll also be needed by the r_handle map
+            // we cannot give owned operations to absorb_first
+            // since they'll also be needed by the r_handle copy
             for op in self.oplog.iter_mut() {
                 T::absorb_first(w_handle, op, r_handle);
             }
-            // the w_handle map is about to become the r_handle, and can ignore the oplog
+            // the w_handle copy is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
 
             // w_handle (the old r_handle) is now fully up to date!
@@ -210,7 +217,7 @@ where
         // inside the ReadHandle. oplog contains all the changes that are in w_handle, but not in
         // r_handle.
         //
-        // it's now time for us to swap the maps so that readers see up-to-date results from
+        // it's now time for us to swap the copies so that readers see up-to-date results from
         // w_handle.
 
         // prepare w_handle
@@ -242,28 +249,36 @@ where
         self
     }
 
-    /// Refresh as necessary to ensure that all operations are visible to readers.
-    ///
-    /// `WriteHandle::refresh` will *always* wait for old readers to depart and swap the maps.
-    /// This method will only do so if there are pending operations.
-    pub fn flush(&mut self) -> &mut Self {
-        if self.swap_index < self.oplog.len() {
-            self.refresh();
-        }
-
-        self
+    /// Returns true if there are operations in the operational log that have not yet been exposed
+    /// to readers.
+    pub fn has_pending_operations(&self) -> bool {
+        self.swap_index < self.oplog.len()
     }
 
-    pub fn append_op(&mut self, op: O) -> &mut Self {
+    /// Append the given operation to the operational log.
+    ///
+    /// Its effects will not be exposed to readers until you call [`publish`](Self::publish).
+    pub fn append(&mut self, op: O) -> &mut Self {
         self.oplog.push(op);
         self
     }
 
-    pub fn raw_write_handle(&mut self) -> *mut T {
-        &mut ***self
+    /// Returns a raw pointer to the write copy of the data (the one readers are _not_ accessing).
+    ///
+    /// Note that it is only safe to mutate through this pointer if you _know_ that there are no
+    /// readers still present in this copy. This is not normally something you know; even after
+    /// calling `publish`, readers may still be in the write copy for some time. In general, the
+    /// only time you know this is okay is before the first call to `publish` (since no readers
+    /// ever entered the write copy).
+    // TODO: Make this return `Option<&mut T>`,
+    // and only `Some` if there are indeed to readers in the write copy.
+    pub fn raw_write_handle(&mut self) -> NonNull<T> {
+        let ref_mut_t = &mut ***self
             .w_handle
             .as_mut()
-            .expect("write handle is only null after drop")
+            .expect("write handle is only null after drop");
+        // Safety: Box is not null and covariant.
+        unsafe { NonNull::new_unchecked(ref_mut_t) }
     }
 }
 
@@ -285,51 +300,44 @@ mod tests {
 
     #[test]
     fn flush_noblock() {
-        let (r, mut w) = crate::new::<i32, _>();
-        w.append_op(CounterAddOp(42));
-        w.refresh();
+        let (mut w, r) = crate::new::<i32, _>();
+        w.append(CounterAddOp(42));
+        w.publish();
         assert_eq!(*r.enter().unwrap(), 42);
 
         // pin the epoch
         let _count = r.enter();
-        // refresh would hang here, but flush won't
+        // refresh would hang here
         assert!(w.oplog[w.swap_index..].is_empty());
-        w.flush();
+        assert!(!w.has_pending_operations());
     }
 
     #[test]
     fn flush_no_refresh() {
-        let (_, mut w) = crate::new::<i32, _>();
+        let (mut w, _) = crate::new::<i32, _>();
 
         // Until we refresh, writes are written directly instead of going to the
         // oplog (because there can't be any readers on the w_handle table).
-        w.refresh();
-
+        assert!(!w.has_pending_operations());
+        w.publish();
+        assert!(!w.has_pending_operations());
         assert_eq!(w.refreshes, 1);
 
-        w.flush();
-
-        // No refresh because there are no operations
-        assert_eq!(w.refreshes, 1);
-
-        w.append_op(CounterAddOp(42));
-        w.flush();
-
-        // A refresh happened!
+        w.append(CounterAddOp(42));
+        assert!(w.has_pending_operations());
+        w.publish();
+        assert!(!w.has_pending_operations());
         assert_eq!(w.refreshes, 2);
 
-        w.flush();
-
-        // Subsequent flushes don't refresh until there are more ops!
-        assert_eq!(w.refreshes, 2);
-
-        w.append_op(CounterAddOp(42));
-        w.flush();
-
+        w.append(CounterAddOp(42));
+        assert!(w.has_pending_operations());
+        w.publish();
+        assert!(!w.has_pending_operations());
         assert_eq!(w.refreshes, 3);
 
         // Sanity check that a refresh would have been visible
-        w.refresh();
+        assert!(!w.has_pending_operations());
+        w.publish();
         assert_eq!(w.refreshes, 4);
     }
 }

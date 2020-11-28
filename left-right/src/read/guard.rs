@@ -20,10 +20,14 @@ impl<'rh, T> From<&'rh super::ReadHandle<T>> for ReadHandleState<'rh> {
     }
 }
 
-/// A guard wrapping a live reference into a [`LeftRight`].
+/// A guard wrapping a live reference into a left-right protected `T`.
 ///
-/// As long as this guard lives, the `T` being read cannot change, and if a writer attempts to
-/// call [`WriteHandle::refresh`], that call will block until this guard is dropped.
+/// As long as this guard lives, the `T` being read cannot change. If a writer attempts to call
+/// [`WriteHandle::publish`](crate::WriteHandle::publish), that call will block until this guard is
+/// dropped.
+///
+/// To scope the guard to a subset of the data in `T`, use [`map`](Self::map) and
+/// [`try_map`](Self::try_map).
 #[derive(Debug)]
 pub struct ReadGuard<'rh, T: ?Sized> {
     // NOTE: _technically_ this is more like &'self.
@@ -34,6 +38,25 @@ pub struct ReadGuard<'rh, T: ?Sized> {
 }
 
 impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
+    /// Makes a new `ReadGuard` for a component of the borrowed data.
+    ///
+    /// This is an associated function that needs to be used as `ReadGuard::map(...)`, since
+    /// a method would interfere with methods of the same name on the contents of a `Readguard`
+    /// used through `Deref`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use left_right::{ReadGuard, ReadHandle};
+    ///
+    /// fn get_str(handle: &ReadHandle<Vec<(String, i32)>>, i: usize) -> Option<ReadGuard<'_, str>> {
+    ///     handle.enter().map(|guard| {
+    ///         ReadGuard::map(guard, |t| {
+    ///             &*t[i].0
+    ///         })
+    ///     })
+    /// }
+    /// ```
     pub fn map<F, U: ?Sized>(orig: Self, f: F) -> ReadGuard<'rh, U>
     where
         F: for<'a> FnOnce(&'a T) -> &'a U,
@@ -47,6 +70,29 @@ impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
         rg
     }
 
+    /// Makes a new `ReadGuard` for a component of the borrowed data that may not exist.
+    ///
+    /// This method differs from [`map`](Self::map) in that it drops the guard if the closure maps
+    /// to `None`. This allows you to "lift" a `ReadGuard<Option<T>>` into an
+    /// `Option<ReadGuard<T>>`.
+    ///
+    /// This is an associated function that needs to be used as `ReadGuard::try_map(...)`, since
+    /// a method would interfere with methods of the same name on the contents of a `Readguard`
+    /// used through `Deref`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use left_right::{ReadGuard, ReadHandle};
+    ///
+    /// fn try_get_str(handle: &ReadHandle<Vec<(String, i32)>>, i: usize) -> Option<ReadGuard<'_, str>> {
+    ///     handle.enter().and_then(|guard| {
+    ///         ReadGuard::try_map(guard, |t| {
+    ///             t.get(i).map(|v| &*v.0)
+    ///         })
+    ///     })
+    /// }
+    /// ```
     pub fn try_map<F, U: ?Sized>(orig: Self, f: F) -> Option<ReadGuard<'rh, U>>
     where
         F: for<'a> FnOnce(&'a T) -> Option<&'a U>,
