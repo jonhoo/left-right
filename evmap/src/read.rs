@@ -224,7 +224,11 @@ where
         Map: FnMut(&K, &Values<V, S>) -> Target,
         Collector: FromIterator<Target>,
     {
-        Collector::from_iter(self.enter().iter().flatten().map(|(k, v)| f(k, v)))
+        self.enter()
+            .iter()
+            .flatten()
+            .map(|(k, v)| f(k, v))
+            .collect()
     }
 }
 

@@ -331,7 +331,9 @@ where
         // shallow copy of each value.
         //
         // Safety: ManuallyDrop<T> has the same layout as T.
-        let inner: &mut Inner<K, ManuallyDrop<V>, M, S> = unsafe { mem::transmute(self) };
+        let inner = unsafe {
+            &mut *(self as *mut Inner<K, V, M, S> as *mut Inner<K, ManuallyDrop<V>, M, S>)
+        };
         let hasher = other.data.hasher();
         match *op {
             Operation::Replace(ref key, ref mut value) => {
@@ -535,7 +537,8 @@ where
         // any elements since its values are kept as ManuallyDrop:
         //
         // Safety: ManuallyDrop<T> has the same layout as T.
-        let inner: Box<Inner<K, ManuallyDrop<V>, M, S>> = unsafe { mem::transmute(self) };
+        let inner =
+            unsafe { Box::from_raw(Box::into_raw(self) as *mut Inner<K, ManuallyDrop<V>, M, S>) };
         drop(inner);
     }
 }
