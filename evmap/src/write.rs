@@ -1,13 +1,13 @@
 use super::{Operation, Predicate, ShallowCopy};
 use crate::inner::Inner;
 use crate::read::ReadHandle;
+use crate::shallow_copy::MaybeShallowCopied;
 use crate::values::Values;
 use left_right::Absorb;
 
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
-use std::mem::ManuallyDrop;
 
 #[cfg(feature = "indexed")]
 use indexmap::map::Entry;
@@ -51,29 +51,25 @@ pub struct WriteHandle<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: ShallowCopy,
+    V::Target: Eq + Hash,
     M: 'static + Clone,
 {
     handle: left_right::WriteHandle<Inner<K, V, M, S>, Operation<K, V, M>>,
     r_handle: ReadHandle<K, V, M, S>,
-
-    /// If Some, write directly to the write handle map, since no publish has happened.
-    /// Some(false) indicates that the necessary `Operation::JustCloneRHandle` has not
-    /// yet been appended to the oplog for when a publish does happen.
-    direct_write: Option<bool>,
 }
 
 impl<K, V, M, S> fmt::Debug for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone + fmt::Debug,
     S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy + fmt::Debug,
+    V: ShallowCopy + fmt::Debug,
+    V::Target: Eq + Hash + fmt::Debug,
     M: 'static + Clone + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WriteHandle")
             .field("handle", &self.handle)
-            .field("direct_write", &self.direct_write)
             .finish()
     }
 }
@@ -82,18 +78,15 @@ impl<K, V, M, S> WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: ShallowCopy,
+    V::Target: Eq + Hash,
     M: 'static + Clone,
 {
     pub(crate) fn new(
         handle: left_right::WriteHandle<Inner<K, V, M, S>, Operation<K, V, M>>,
     ) -> Self {
         let r_handle = ReadHandle::new(left_right::ReadHandle::clone(&*handle));
-        Self {
-            handle,
-            r_handle,
-            direct_write: Some(false),
-        }
+        Self { handle, r_handle }
     }
 
     /// Publish all changes since the last call to `publish` to make them visible to readers.
@@ -102,7 +95,6 @@ where
     /// are many of them.
     pub fn publish(&mut self) -> &mut Self {
         self.handle.publish();
-        self.direct_write = None;
         self
     }
 
@@ -119,26 +111,7 @@ where
     }
 
     fn add_op(&mut self, op: Operation<K, V, M>) -> &mut Self {
-        if let Some(ref mut queued_clone) = self.direct_write {
-            {
-                // Safety: we know there are no outstanding w_handle readers, since we haven't
-                // refreshed ever before, so we can modify it directly!
-                let mut w_inner = self.handle.raw_write_handle();
-                let w_inner = unsafe { w_inner.as_mut() };
-                let r_handle = self.handle.enter().expect("map has not yet been destroyed");
-                // because we are applying second, we _do_ want to perform drops
-                Absorb::absorb_second(w_inner, op, &*r_handle);
-            }
-
-            if !*queued_clone {
-                // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
-                self.handle.append(Operation::JustCloneRHandle);
-                *queued_clone = true;
-            }
-        } else {
-            self.handle.append(op);
-        }
-
+        self.handle.append(op);
         self
     }
 
@@ -147,7 +120,7 @@ where
     /// The updated value-bag will only be visible to readers after the next call to
     /// [`publish`](Self::publish).
     pub fn insert(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Add(k, v))
+        self.add_op(Operation::Add(k, MaybeShallowCopied::Owned(v)))
     }
 
     /// Replace the value-bag of the given key with the given value.
@@ -161,7 +134,7 @@ where
     /// The new value will only be visible to readers after the next call to
     /// [`publish`](Self::publish).
     pub fn update(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Replace(k, v))
+        self.add_op(Operation::Replace(k, MaybeShallowCopied::Owned(v)))
     }
 
     /// Clear the value-bag of the given key, without removing it.
@@ -246,7 +219,7 @@ where
     /// at and beyond when the second argument is true.
     pub unsafe fn retain<F>(&mut self, k: K, f: F) -> &mut Self
     where
-        F: FnMut(&V, bool) -> bool + 'static + Send,
+        F: FnMut(&V::Target, bool) -> bool + 'static + Send,
     {
         self.add_op(Operation::Retain(k, Predicate(Box::new(f))))
     }
@@ -330,22 +303,16 @@ impl<K, V, M, S> Absorb<Operation<K, V, M>> for Inner<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: ShallowCopy,
+    V::Target: Eq + Hash,
     M: 'static + Clone,
 {
     /// Apply ops in such a way that no values are dropped, only forgotten
     fn absorb_first(&mut self, op: &mut Operation<K, V, M>, other: &Self) {
-        // Make sure that no methods below drop values since we're only operating on the first
-        // shallow copy of each value.
-        //
-        // Safety: ManuallyDrop<T> has the same layout as T.
-        let inner = unsafe {
-            &mut *(self as *mut Inner<K, V, M, S> as *mut Inner<K, ManuallyDrop<V>, M, S>)
-        };
         let hasher = other.data.hasher();
         match *op {
             Operation::Replace(ref key, ref mut value) => {
-                let vs = inner.data.entry(key.clone()).or_insert_with(Values::new);
+                let vs = self.data.entry(key.clone()).or_insert_with(Values::new);
 
                 // truncate vector
                 vs.clear();
@@ -354,46 +321,42 @@ where
                 // so it will switch back to inline allocation for the subsequent push.
                 vs.shrink_to_fit();
 
-                vs.push(unsafe { value.shallow_copy() }, hasher);
+                vs.push(unsafe { value.shallow_copy_first() }, hasher);
             }
             Operation::Clear(ref key) => {
-                inner
-                    .data
+                self.data
                     .entry(key.clone())
                     .or_insert_with(Values::new)
                     .clear();
             }
             Operation::Add(ref key, ref mut value) => {
-                inner
-                    .data
+                self.data
                     .entry(key.clone())
                     .or_insert_with(Values::new)
-                    .push(unsafe { value.shallow_copy() }, hasher);
+                    .push(unsafe { value.shallow_copy_first() }, hasher);
             }
             Operation::RemoveEntry(ref key) => {
                 #[cfg(not(feature = "indexed"))]
-                inner.data.remove(key);
+                self.data.remove(key);
                 #[cfg(feature = "indexed")]
-                inner.data.swap_remove(key);
+                self.data.swap_remove(key);
             }
             Operation::Purge => {
-                inner.data.clear();
+                self.data.clear();
             }
             #[cfg(feature = "eviction")]
             Operation::EmptyAt(ref indices) => {
                 for &index in indices.iter().rev() {
-                    inner.data.swap_remove_index(index);
+                    self.data.swap_remove_index(index);
                 }
             }
             Operation::RemoveValue(ref key, ref value) => {
-                if let Some(e) = inner.data.get_mut(key) {
-                    // remove a matching value from the value set
-                    // safety: this is fine
-                    e.swap_remove(unsafe { &*(value as *const _ as *const ManuallyDrop<V>) });
+                if let Some(e) = self.data.get_mut(key) {
+                    e.swap_remove(value.deref_self());
                 }
             }
             Operation::Retain(ref key, ref mut predicate) => {
-                if let Some(e) = inner.data.get_mut(key) {
+                if let Some(e) = self.data.get_mut(key) {
                     let mut first = true;
                     e.retain(move |v| {
                         let retain = predicate.eval(v, first);
@@ -404,17 +367,17 @@ where
             }
             Operation::Fit(ref key) => match key {
                 Some(ref key) => {
-                    if let Some(e) = inner.data.get_mut(key) {
+                    if let Some(e) = self.data.get_mut(key) {
                         e.shrink_to_fit();
                     }
                 }
                 None => {
-                    for value_set in inner.data.values_mut() {
+                    for value_set in self.data.values_mut() {
                         value_set.shrink_to_fit();
                     }
                 }
             },
-            Operation::Reserve(ref key, additional) => match inner.data.entry(key.clone()) {
+            Operation::Reserve(ref key, additional) => match self.data.entry(key.clone()) {
                 Entry::Occupied(mut entry) => {
                     entry.get_mut().reserve(additional, hasher);
                 }
@@ -423,69 +386,73 @@ where
                 }
             },
             Operation::MarkReady => {
-                inner.ready = true;
+                self.ready = true;
             }
             Operation::SetMeta(ref m) => {
-                inner.meta = m.clone();
-            }
-            Operation::JustCloneRHandle => {
-                // This is applying the operation to the original write handle,
-                // which we already applied the first batch of operations to.
+                self.meta = m.clone();
             }
         }
     }
 
     /// Apply operations while allowing dropping of values
     fn absorb_second(&mut self, op: Operation<K, V, M>, other: &Self) {
-        let inner = self;
+        struct DropGuard;
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                unsafe { crate::shallow_copy::drop_copies(false) };
+            }
+        }
+        let _guard = DropGuard;
+        unsafe { crate::shallow_copy::drop_copies(true) };
+        // TODO: shallow copy second?
+
         let hasher = other.data.hasher();
         match op {
             Operation::Replace(key, value) => {
-                let v = inner.data.entry(key).or_insert_with(Values::new);
+                let v = self.data.entry(key).or_insert_with(Values::new);
 
                 // we are going second, so we should drop!
                 v.clear();
 
                 v.shrink_to_fit();
 
-                v.push(value, hasher);
+                v.push(unsafe { value.shallow_copy_second() }, hasher);
             }
             Operation::Clear(key) => {
-                inner.data.entry(key).or_insert_with(Values::new).clear();
+                self.data.entry(key).or_insert_with(Values::new).clear();
             }
             Operation::Add(key, value) => {
-                inner
-                    .data
+                self.data
                     .entry(key)
                     .or_insert_with(Values::new)
-                    .push(value, hasher);
+                    .push(unsafe { value.shallow_copy_second() }, hasher);
             }
             Operation::RemoveEntry(key) => {
                 #[cfg(not(feature = "indexed"))]
-                inner.data.remove(&key);
+                self.data.remove(&key);
                 #[cfg(feature = "indexed")]
-                inner.data.swap_remove(&key);
+                self.data.swap_remove(&key);
             }
             Operation::Purge => {
-                inner.data.clear();
+                self.data.clear();
             }
             #[cfg(feature = "eviction")]
             Operation::EmptyAt(indices) => {
                 for &index in indices.iter().rev() {
-                    inner.data.swap_remove_index(index);
+                    self.data.swap_remove_index(index);
                 }
             }
             Operation::RemoveValue(key, value) => {
-                if let Some(e) = inner.data.get_mut(&key) {
+                if let Some(e) = self.data.get_mut(&key) {
                     // find the first entry that matches all fields
-                    e.swap_remove(&value);
+                    e.swap_remove(value.deref_self());
                 }
             }
             Operation::Retain(key, mut predicate) => {
-                if let Some(e) = inner.data.get_mut(&key) {
+                if let Some(e) = self.data.get_mut(&key) {
                     let mut first = true;
                     e.retain(move |v| {
-                        let retain = predicate.eval(v, first);
+                        let retain = predicate.eval(&*v, first);
                         first = false;
                         retain
                     });
@@ -493,17 +460,17 @@ where
             }
             Operation::Fit(key) => match key {
                 Some(ref key) => {
-                    if let Some(e) = inner.data.get_mut(key) {
+                    if let Some(e) = self.data.get_mut(key) {
                         e.shrink_to_fit();
                     }
                 }
                 None => {
-                    for value_set in inner.data.values_mut() {
+                    for value_set in self.data.values_mut() {
                         value_set.shrink_to_fit();
                     }
                 }
             },
-            Operation::Reserve(key, additional) => match inner.data.entry(key) {
+            Operation::Reserve(key, additional) => match self.data.entry(key) {
                 Entry::Occupied(mut entry) => {
                     entry.get_mut().reserve(additional, hasher);
                 }
@@ -512,28 +479,10 @@ where
                 }
             },
             Operation::MarkReady => {
-                inner.ready = true;
+                self.ready = true;
             }
             Operation::SetMeta(m) => {
-                inner.meta = m;
-            }
-            Operation::JustCloneRHandle => {
-                // This is applying the operation to the original read handle,
-                // which is empty, and needs to copy over all data from the
-                // write handle that we wrote to directly.
-
-                // XXX: it really is too bad that we can't just .clone() the data here and save
-                // ourselves a lot of re-hashing, re-bucketization, etc.
-                inner.data.extend(other.data.iter().map(|(k, vs)| {
-                    (
-                        k.clone(),
-                        Values::from_iter(
-                            vs.iter()
-                                .map(|v| unsafe { ManuallyDrop::into_inner((&*v).shallow_copy()) }),
-                            other.data.hasher(),
-                        ),
-                    )
-                }));
+                self.meta = m;
             }
         }
     }
@@ -541,13 +490,24 @@ where
     fn drop_first(self: Box<Self>) {
         // since the two copies are exactly equal, we need to make sure that we *don't* call the
         // destructors of any of the values that are in our map, as they'll all be called when the
-        // last read handle goes out of scope. to do so, we first clear w_handle, which won't drop
-        // any elements since its values are kept as ManuallyDrop:
-        //
-        // Safety: ManuallyDrop<T> has the same layout as T.
-        let inner =
-            unsafe { Box::from_raw(Box::into_raw(self) as *mut Inner<K, ManuallyDrop<V>, M, S>) };
-        drop(inner);
+        // last read handle goes out of scope. that's easy enough since none of them will be
+        // dropped by default.
+    }
+
+    fn drop_second(self: Box<Self>) {
+        // when the second copy is dropped is where we want to _actually_ drop all the values in
+        // the map. we do that by setting drop_copies to true. we do it with a guard though to make
+        // sure that if drop panics we unset the thread-local!
+
+        struct DropGuard;
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                unsafe { crate::shallow_copy::drop_copies(false) };
+            }
+        }
+        let _guard = DropGuard;
+        unsafe { crate::shallow_copy::drop_copies(true) };
+        drop(self);
     }
 }
 
@@ -555,7 +515,8 @@ impl<K, V, M, S> Extend<(K, V)> for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: ShallowCopy,
+    V::Target: Eq + Hash,
     M: 'static + Clone,
 {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
@@ -571,7 +532,8 @@ impl<K, V, M, S> Deref for WriteHandle<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: ShallowCopy,
+    V::Target: Eq + Hash,
     M: 'static + Clone,
 {
     type Target = ReadHandle<K, V, M, S>;

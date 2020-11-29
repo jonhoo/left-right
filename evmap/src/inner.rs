@@ -7,10 +7,12 @@ pub(crate) use indexmap::IndexMap as MapImpl;
 pub(crate) use std::collections::HashMap as MapImpl;
 
 use crate::values::Values;
+use crate::ShallowCopy;
 
 pub(crate) struct Inner<K, V, M, S>
 where
     K: Eq + Hash,
+    V: ShallowCopy,
     S: BuildHasher,
 {
     pub(crate) data: MapImpl<K, Values<V, S>, S>,
@@ -22,7 +24,8 @@ impl<K, V, M, S> fmt::Debug for Inner<K, V, M, S>
 where
     K: Eq + Hash + fmt::Debug,
     S: BuildHasher,
-    V: fmt::Debug,
+    V: ShallowCopy,
+    V::Target: fmt::Debug,
     M: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -38,6 +41,7 @@ impl<K, V, M, S> Clone for Inner<K, V, M, S>
 where
     K: Eq + Hash + Clone,
     S: BuildHasher + Clone,
+    V: ShallowCopy,
     M: Clone,
 {
     fn clone(&self) -> Self {
@@ -56,6 +60,7 @@ where
 impl<K, V, M, S> Inner<K, V, M, S>
 where
     K: Eq + Hash,
+    V: ShallowCopy,
     S: BuildHasher,
 {
     pub fn with_hasher(m: M, hash_builder: S) -> Self {
