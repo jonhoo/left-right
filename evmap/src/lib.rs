@@ -225,9 +225,9 @@ pub use left_right::ReadGuard;
 ///
 /// The predicate function is called once for each distinct value, and `true` if this is the
 /// _first_ call to the predicate on the _second_ application of the operation.
-pub struct Predicate<V>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send>);
+pub struct Predicate<V: ?Sized>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send>);
 
-impl<V> Predicate<V> {
+impl<V: ?Sized> Predicate<V> {
     /// Evaluate the predicate for the given element
     #[inline]
     pub fn eval(&mut self, value: &V, reset: bool) -> bool {
@@ -235,7 +235,7 @@ impl<V> Predicate<V> {
     }
 }
 
-impl<V> PartialEq for Predicate<V> {
+impl<V: ?Sized> PartialEq for Predicate<V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // only compare data, not vtable: https://stackoverflow.com/q/47489449/472927
@@ -243,9 +243,9 @@ impl<V> PartialEq for Predicate<V> {
     }
 }
 
-impl<V> Eq for Predicate<V> {}
+impl<V: ?Sized> Eq for Predicate<V> {}
 
-impl<V> fmt::Debug for Predicate<V> {
+impl<V: ?Sized> fmt::Debug for Predicate<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Predicate")
             .field(&format_args!("{:p}", &*self.0 as *const _))
