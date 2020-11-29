@@ -1,3 +1,4 @@
+use left_right::aliasing::{Aliased, DropBehavior};
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
@@ -7,7 +8,9 @@ const BAG_THRESHOLD: usize = 32;
 
 /// A bag of values for a given key in the evmap.
 #[repr(transparent)]
-pub struct Values<T, S = std::collections::hash_map::RandomState>(ValuesInner<T, S>);
+pub struct Values<T, S = std::collections::hash_map::RandomState>(
+    pub(crate) ValuesInner<T, S, crate::aliasing::NoDrop>,
+);
 
 impl<T, S> Default for Values<T, S> {
     fn default() -> Self {
@@ -21,13 +24,36 @@ where
     S: BuildHasher,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_set().entries(self.iter()).finish()
+        self.0.fmt(fmt)
     }
 }
 
-enum ValuesInner<T, S> {
-    Short(smallvec::SmallVec<[T; 1]>),
-    Long(hashbag::HashBag<T, S>),
+pub(crate) enum ValuesInner<T, S, D>
+where
+    D: DropBehavior,
+{
+    Short(smallvec::SmallVec<[Aliased<T, D>; 1]>),
+    Long(hashbag::HashBag<Aliased<T, D>, S>),
+}
+
+impl<T, S> Into<Values<T, S>> for ValuesInner<T, S, crate::aliasing::NoDrop> {
+    fn into(self) -> Values<T, S> {
+        Values(self)
+    }
+}
+
+impl<T, S, D> fmt::Debug for ValuesInner<T, S, D>
+where
+    D: DropBehavior,
+    T: fmt::Debug,
+    S: BuildHasher,
+{
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ValuesInner::Short(ref v) => fmt.debug_set().entries(v.iter()).finish(),
+            ValuesInner::Long(ref v) => fmt.debug_set().entries(v.iter()).finish(),
+        }
+    }
 }
 
 impl<T, S> Values<T, S> {
@@ -60,8 +86,8 @@ impl<T, S> Values<T, S> {
     /// The iterator element type is &'a T.
     pub fn iter(&self) -> ValuesIter<'_, T, S> {
         match self.0 {
-            ValuesInner::Short(ref v) => ValuesIter::Short(v.iter()),
-            ValuesInner::Long(ref v) => ValuesIter::Long(v.iter()),
+            ValuesInner::Short(ref v) => ValuesIter(ValuesIterInner::Short(v.iter())),
+            ValuesInner::Long(ref v) => ValuesIter(ValuesIterInner::Long(v.iter())),
         }
     }
 
@@ -72,8 +98,8 @@ impl<T, S> Values<T, S> {
     /// is returned.
     pub fn get_one(&self) -> Option<&T> {
         match self.0 {
-            ValuesInner::Short(ref v) => v.get(0),
-            ValuesInner::Long(ref v) => v.iter().next(),
+            ValuesInner::Short(ref v) => v.get(0).map(|v| &**v),
+            ValuesInner::Long(ref v) => v.iter().next().map(|v| &**v),
         }
     }
 
@@ -83,7 +109,7 @@ impl<T, S> Values<T, S> {
     /// *must* match those for the value type.
     pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
     where
-        T: Borrow<Q>,
+        Aliased<T, crate::aliasing::NoDrop>: Borrow<Q>,
         Q: Eq + Hash,
         T: Eq + Hash,
         S: BuildHasher,
@@ -108,12 +134,12 @@ impl<'a, T, S> IntoIterator for &'a Values<T, S> {
     }
 }
 
+pub struct ValuesIter<'a, T, S>(ValuesIterInner<'a, T, S>);
+
 #[non_exhaustive]
-pub enum ValuesIter<'a, T, S> {
-    #[doc(hidden)]
-    Short(<&'a smallvec::SmallVec<[T; 1]> as IntoIterator>::IntoIter),
-    #[doc(hidden)]
-    Long(<&'a hashbag::HashBag<T, S> as IntoIterator>::IntoIter),
+enum ValuesIterInner<'a, T, S> {
+    Short(<&'a smallvec::SmallVec<[Aliased<T, crate::aliasing::NoDrop>; 1]> as IntoIterator>::IntoIter),
+    Long(<&'a hashbag::HashBag<Aliased<T, crate::aliasing::NoDrop>, S> as IntoIterator>::IntoIter),
 }
 
 impl<'a, T, S> fmt::Debug for ValuesIter<'a, T, S>
@@ -121,9 +147,9 @@ where
     T: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            ValuesIter::Short(ref it) => f.debug_tuple("Short").field(it).finish(),
-            ValuesIter::Long(ref it) => f.debug_tuple("Long").field(it).finish(),
+        match self.0 {
+            ValuesIterInner::Short(ref it) => f.debug_tuple("Short").field(it).finish(),
+            ValuesIterInner::Long(ref it) => f.debug_tuple("Long").field(it).finish(),
         }
     }
 }
@@ -131,16 +157,16 @@ where
 impl<'a, T, S> Iterator for ValuesIter<'a, T, S> {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
-        match *self {
-            Self::Short(ref mut it) => it.next(),
-            Self::Long(ref mut it) => it.next(),
+        match self.0 {
+            ValuesIterInner::Short(ref mut it) => it.next().map(|v| &**v),
+            ValuesIterInner::Long(ref mut it) => it.next().map(|v| &**v),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Short(it) => it.size_hint(),
-            Self::Long(it) => it.size_hint(),
+        match self.0 {
+            ValuesIterInner::Short(ref it) => it.size_hint(),
+            ValuesIterInner::Long(ref it) => it.size_hint(),
         }
     }
 }
@@ -159,29 +185,29 @@ where
 {
 }
 
-impl<T, S> Values<T, S>
+impl<T, S, D> ValuesInner<T, S, D>
 where
+    D: DropBehavior,
     T: Eq + Hash,
     S: BuildHasher + Clone,
 {
     pub(crate) fn new() -> Self {
-        Self(ValuesInner::Short(smallvec::SmallVec::new()))
+        ValuesInner::Short(smallvec::SmallVec::new())
     }
 
     pub(crate) fn with_capacity_and_hasher(capacity: usize, hasher: &S) -> Self {
         if capacity > BAG_THRESHOLD {
-            Self(ValuesInner::Long(
-                hashbag::HashBag::with_capacity_and_hasher(capacity, hasher.clone()),
+            ValuesInner::Long(hashbag::HashBag::with_capacity_and_hasher(
+                capacity,
+                hasher.clone(),
             ))
         } else {
-            Self(ValuesInner::Short(smallvec::SmallVec::with_capacity(
-                capacity,
-            )))
+            ValuesInner::Short(smallvec::SmallVec::with_capacity(capacity))
         }
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {
-        match self.0 {
+        match self {
             ValuesInner::Short(ref mut v) => v.shrink_to_fit(),
             ValuesInner::Long(ref mut v) => {
                 // here, we actually want to be clever
@@ -191,9 +217,9 @@ where
                 // not move to a SmallVec. The reason is simple: if we did, we would need to
                 // duplicate those rows again. But, how would we do so safely? If we clone into
                 // both the left and the right map (that is, on both first and second apply), then
-                // we would only free one of them. If we shallow_copy the one we have in the
-                // hashbag, then once any instance gets remove from both sides, it'll be freed,
-                // which will invalidate the remaining references.
+                // we would only free one of them. If we alias the one we have in the hashbag, then
+                // once any instance gets remove from both sides, it'll be freed, which will
+                // invalidate the remaining references.
                 if v.len() < BAG_THRESHOLD && v.len() == v.set_len() {
                     let mut short = smallvec::SmallVec::with_capacity(v.len());
                     // NOTE: this drain _must_ have a deterministic iteration order.
@@ -201,7 +227,7 @@ where
                     // we are iterating on the left or right map. otherwise, this happens;
                     //
                     //   1. after shrink_to_fit, left value is AA*B*, right is B*AA*.
-                    //      X* elements are shallow copies of each other
+                    //      X* elements are aliased copies of each other
                     //   2. swap_remove B (1st); left is AA*B*, right is now A*A
                     //   3. swap_remove B (2nd); left drops B* and is now AA*, right is A*A
                     //   4. swap_remove A (1st); left is now A*, right is A*A
@@ -211,7 +237,7 @@ where
                         assert_eq!(n, 1);
                         short.push(row);
                     }
-                    self.0 = ValuesInner::Short(short);
+                    *self = ValuesInner::Short(short);
                 } else {
                     v.shrink_to_fit();
                 }
@@ -221,16 +247,16 @@ where
 
     pub(crate) fn clear(&mut self) {
         // NOTE: we do _not_ downgrade to Short here -- shrink is for that
-        match self.0 {
+        match self {
             ValuesInner::Short(ref mut v) => v.clear(),
             ValuesInner::Long(ref mut v) => v.clear(),
         }
     }
 
     pub(crate) fn swap_remove(&mut self, value: &T) {
-        match self.0 {
+        match self {
             ValuesInner::Short(ref mut v) => {
-                if let Some(i) = v.iter().position(|v| v == value) {
+                if let Some(i) = v.iter().position(|v| &**v == value) {
                     v.swap_remove(i);
                 }
             }
@@ -241,22 +267,22 @@ where
     }
 
     fn baggify(&mut self, capacity: usize, hasher: &S) {
-        if let ValuesInner::Short(ref mut v) = self.0 {
+        if let ValuesInner::Short(ref mut v) = self {
             let mut long = hashbag::HashBag::with_capacity_and_hasher(capacity, hasher.clone());
 
             // NOTE: this _may_ drop some values since the bag does not keep duplicates.
             // that should be fine -- if we drop for the first time, we're dropping
-            // ManuallyDrop, which won't actually drop the shallow copies. when we drop for
+            // ManuallyDrop, which won't actually drop the aliased values. when we drop for
             // the second time, we do the actual dropping. since second application has the
             // exact same original state, this change from short/long should occur exactly
             // the same.
             long.extend(v.drain(..));
-            self.0 = ValuesInner::Long(long);
+            *self = ValuesInner::Long(long);
         }
     }
 
     pub(crate) fn reserve(&mut self, additional: usize, hasher: &S) {
-        match self.0 {
+        match self {
             ValuesInner::Short(ref mut v) => {
                 let n = v.len() + additional;
                 if n >= BAG_THRESHOLD {
@@ -269,14 +295,14 @@ where
         }
     }
 
-    pub(crate) fn push(&mut self, value: T, hasher: &S) {
-        match self.0 {
+    pub(crate) fn push(&mut self, value: Aliased<T, D>, hasher: &S) {
+        match self {
             ValuesInner::Short(ref mut v) => {
                 // we may want to upgrade to a Long..
                 let n = v.len() + 1;
                 if n >= BAG_THRESHOLD {
                     self.baggify(n, hasher);
-                    if let ValuesInner::Long(ref mut v) = self.0 {
+                    if let ValuesInner::Long(ref mut v) = self {
                         v.insert(value);
                     } else {
                         unreachable!();
@@ -295,24 +321,41 @@ where
     where
         F: FnMut(&T) -> bool,
     {
-        match self.0 {
+        match self {
             ValuesInner::Short(ref mut v) => v.retain(|v| f(&*v)),
             ValuesInner::Long(ref mut v) => v.retain(|v, n| if f(v) { n } else { 0 }),
         }
     }
+}
 
-    pub(crate) fn from_iter<I>(iter: I, hasher: &S) -> Self
-    where
-        I: IntoIterator<Item = T>,
-    {
-        let iter = iter.into_iter();
-        if iter.size_hint().0 > BAG_THRESHOLD {
-            let mut long = hashbag::HashBag::with_hasher(hasher.clone());
-            long.extend(iter);
-            Self(ValuesInner::Long(long))
-        } else {
-            use std::iter::FromIterator;
-            Self(ValuesInner::Short(smallvec::SmallVec::from_iter(iter)))
+impl<T, S> AsRef<Values<T, S>> for ValuesInner<T, S, crate::aliasing::NoDrop> {
+    fn as_ref(&self) -> &Values<T, S> {
+        // safety: Values is #[repr(transparent)]
+        unsafe { &*(self as *const _ as *const Values<T, S>) }
+    }
+}
+
+impl<T, S> ValuesInner<T, S, crate::aliasing::DoDrop>
+where
+    T: Eq + Hash,
+    S: BuildHasher + Clone,
+{
+    pub(crate) unsafe fn alias(
+        other: &ValuesInner<T, S, crate::aliasing::NoDrop>,
+        hasher: &S,
+    ) -> Self {
+        match &other {
+            ValuesInner::Short(s) => {
+                use std::iter::FromIterator;
+                ValuesInner::Short(smallvec::SmallVec::from_iter(
+                    s.iter().map(|v| v.alias().change_drop()),
+                ))
+            }
+            ValuesInner::Long(l) => {
+                let mut long = hashbag::HashBag::with_hasher(hasher.clone());
+                long.extend(l.set_iter().map(|(v, n)| (v.alias().change_drop(), n)));
+                ValuesInner::Long(long)
+            }
         }
     }
 }
@@ -352,12 +395,12 @@ mod tests {
     #[test]
     fn short_values() {
         let hasher = RandomState::default();
-        let mut v = Values::new();
+        let mut v = Values(ValuesInner::new());
 
         let values = 0..BAG_THRESHOLD - 1;
         let len = values.clone().count();
         for i in values.clone() {
-            v.push(i, &hasher);
+            v.0.push(Aliased::from(i), &hasher);
         }
 
         for i in values.clone() {
@@ -367,7 +410,7 @@ mod tests {
         assert_len!(v, len);
         assert_eq!(v.get_one(), Some(&0));
 
-        v.clear();
+        v.0.clear();
 
         assert_empty!(v);
 
@@ -375,7 +418,7 @@ mod tests {
         assert!(v.capacity() > 1);
         assert!(v.is_short());
 
-        v.shrink_to_fit();
+        v.0.shrink_to_fit();
 
         assert_eq!(v.capacity(), 1);
     }
@@ -383,12 +426,12 @@ mod tests {
     #[test]
     fn long_values() {
         let hasher = RandomState::default();
-        let mut v = Values::new();
+        let mut v = Values(ValuesInner::new());
 
         let values = 0..BAG_THRESHOLD;
         let len = values.clone().count();
         for i in values.clone() {
-            v.push(i, &hasher);
+            v.0.push(Aliased::from(i), &hasher);
         }
 
         for i in values.clone() {
@@ -398,7 +441,7 @@ mod tests {
         assert_len!(v, len);
         assert!(values.contains(v.get_one().unwrap()));
 
-        v.clear();
+        v.0.clear();
 
         assert_empty!(v);
 
@@ -406,7 +449,7 @@ mod tests {
         assert!(v.capacity() > 1);
         assert!(!v.is_short());
 
-        v.shrink_to_fit();
+        v.0.shrink_to_fit();
 
         // Now we have short values!
         assert!(v.is_short());

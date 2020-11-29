@@ -1,4 +1,5 @@
-use crate::{inner::Inner, values::Values};
+use crate::values::ValuesInner;
+use crate::{inner::Inner, values::Values, Aliased};
 use left_right::ReadGuard;
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
@@ -105,7 +106,7 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.guard.data.get(key)
+        self.guard.data.get(key).map(AsRef::as_ref)
     }
 
     /// Returns a guarded reference to _one_ value corresponding to the key.
@@ -125,7 +126,10 @@ where
         K: Borrow<Q>,
         Q: Hash + Eq,
     {
-        self.guard.data.get(key).and_then(|values| values.get_one())
+        self.guard
+            .data
+            .get(key)
+            .and_then(|values| values.as_ref().get_one())
     }
 
     /// Returns true if the map contains any values for the specified key.
@@ -147,14 +151,14 @@ where
     pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
     where
         K: Borrow<Q>,
-        V: Borrow<W>,
+        Aliased<V, crate::aliasing::NoDrop>: Borrow<W>,
         Q: Hash + Eq,
         W: Hash + Eq,
     {
         self.guard
             .data
             .get(key)
-            .map_or(false, |values| values.contains(value))
+            .map_or(false, |values| values.as_ref().contains(value))
     }
 }
 
@@ -191,7 +195,7 @@ where
     V: Eq + Hash,
     S: BuildHasher,
 {
-    iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
+    iter: <&'rg crate::inner::MapImpl<K, ValuesInner<V, S, crate::aliasing::NoDrop>, S> as IntoIterator>::IntoIter,
 }
 
 impl<'rg, K, V, S> fmt::Debug for ReadGuardIter<'rg, K, V, S>
@@ -214,7 +218,7 @@ where
 {
     type Item = (&'rg K, &'rg Values<V, S>);
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|(k, v)| (k, v))
+        self.iter.next().map(|(k, v)| (k, v.as_ref()))
     }
 }
 
@@ -225,7 +229,7 @@ where
     V: Eq + Hash,
     S: BuildHasher,
 {
-    iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
+    iter: <&'rg crate::inner::MapImpl<K, ValuesInner<V, S, crate::aliasing::NoDrop>, S> as IntoIterator>::IntoIter,
 }
 
 impl<'rg, K, V, S> fmt::Debug for KeysIter<'rg, K, V, S>
@@ -259,7 +263,7 @@ where
     V: Eq + Hash,
     S: BuildHasher,
 {
-    iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
+    iter: <&'rg crate::inner::MapImpl<K, ValuesInner<V, S, crate::aliasing::NoDrop>, S> as IntoIterator>::IntoIter,
 }
 
 impl<'rg, K, V, S> fmt::Debug for ValuesIter<'rg, K, V, S>
@@ -282,6 +286,6 @@ where
 {
     type Item = &'rg Values<V, S>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|(_, v)| v)
+        self.iter.next().map(|(_, v)| v.as_ref())
     }
 }

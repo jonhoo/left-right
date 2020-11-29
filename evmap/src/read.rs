@@ -1,5 +1,4 @@
-use crate::inner::Inner;
-use crate::values::Values;
+use crate::{inner::Inner, values::Values, Aliased};
 use left_right::ReadGuard;
 
 use std::borrow::Borrow;
@@ -112,7 +111,7 @@ where
             return None;
         }
 
-        ReadGuard::try_map(inner, |inner| inner.data.get(key))
+        ReadGuard::try_map(inner, |inner| inner.data.get(key).map(AsRef::as_ref))
     }
 
     /// Returns a guarded reference to the values corresponding to the key.
@@ -181,7 +180,7 @@ where
             return None;
         }
         let meta = inner.meta.clone();
-        let res = ReadGuard::try_map(inner, |inner| inner.data.get(key));
+        let res = ReadGuard::try_map(inner, |inner| inner.data.get(key).map(AsRef::as_ref));
         Some((res, meta))
     }
 
@@ -209,9 +208,10 @@ where
     pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
     where
         K: Borrow<Q>,
-        V: Borrow<W>,
+        Aliased<V, crate::aliasing::NoDrop>: Borrow<W>,
         Q: Hash + Eq,
         W: Hash + Eq,
+        V: Hash + Eq,
     {
         self.get_raw(key.borrow())
             .map(|x| x.contains(value))
