@@ -3,6 +3,9 @@
 //! Currently, only `#[derive(ShallowCopy)]` is supported; see below.
 #![warn(missing_docs, rust_2018_idioms, broken_intra_doc_links)]
 
+#[allow(unused_extern_crates)]
+extern crate proc_macro;
+
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 use syn::spanned::Spanned;
