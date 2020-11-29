@@ -25,5 +25,5 @@ quote = "1.0.2"
 proc-macro2 = "1.0.9"
 
 [dev-dependencies]
-evmap = { path = "../evmap", version = "11.0.0-alpha.1" }
+evmap = { path = "../evmap", version = "11.0.0-alpha.2" }
 trybuild = "1.0.24"

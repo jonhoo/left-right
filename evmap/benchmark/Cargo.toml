@@ -9,7 +9,7 @@ edition = "2018"
 publish = false
 
 [dependencies]
-evmap = { version = "11.0.0-alpha.1", path = "../" }
+evmap = { version = "11.0.0-alpha.2", path = "../" }
 chashmap = "2.1.0"
 clap = "2.20.3"
 zipf = "6"
