@@ -3,6 +3,11 @@ jobs:
    parameters:
      minrust: 1.40.0
      codecov_token: $(CODECOV_TOKEN_SECRET)
+     dir: "evmap"
+ - template: default.yml@templates
+   parameters:
+     minrust: 1.40.0
+     dir: "left-right"
  - job: derive
    displayName: "Test evmap-derive"
    pool:
