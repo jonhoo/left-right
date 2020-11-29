@@ -129,7 +129,7 @@ fn main() {
 
     // finally, benchmark evmap
     {
-        let (r, w) = evmap::Options::default()
+        let (w, r) = evmap::Options::default()
             .with_capacity(5_000_000)
             .construct();
         let w = sync::Arc::new(parking_lot::Mutex::new((w, 0, refresh)));
@@ -235,7 +235,7 @@ impl Backend for EvHandle {
             w.1 += 1;
             if w.1 == w.2 {
                 w.1 = 0;
-                w.0.refresh();
+                w.0.publish();
             }
         } else {
             unreachable!();
