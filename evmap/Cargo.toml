@@ -5,7 +5,6 @@ authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 
-readme = "README.md"
 description = "A lock-free, eventually consistent, concurrent multi-value map."
 repository = "https://github.com/jonhoo/rust-evmap.git"
 
