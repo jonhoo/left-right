@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
-use std::mem::ManuallyDrop;
 
 /// This value determines when a value-set is promoted from a list to a HashBag.
 const BAG_THRESHOLD: usize = 32;
@@ -29,12 +28,6 @@ where
 enum ValuesInner<T, S> {
     Short(smallvec::SmallVec<[T; 1]>),
     Long(hashbag::HashBag<T, S>),
-}
-
-impl<T, S> Values<ManuallyDrop<T>, S> {
-    pub(crate) fn user_friendly(&self) -> &Values<T, S> {
-        unsafe { &*(self as *const Self as *const Values<T, S>) }
-    }
 }
 
 impl<T, S> Values<T, S> {

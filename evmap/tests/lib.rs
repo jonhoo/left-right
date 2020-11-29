@@ -15,12 +15,12 @@ macro_rules! assert_match {
 fn it_works() {
     let x = ('x', 42);
 
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
 
     // the map is uninitialized, so all lookups should return None
     assert_match!(r.get(&x.0), None);
 
-    w.refresh();
+    w.publish();
 
     // after the first refresh, it is empty, but ready
     assert_match!(r.get(&x.0), None);
@@ -33,7 +33,7 @@ fn it_works() {
     assert_match!(r.get(&x.0), None);
     assert_match!(r.meta_get(&x.0), Some((None, ())));
 
-    w.refresh();
+    w.publish();
 
     // but after the swap, the record is there!
     assert_match!(r.get(&x.0).map(|rs| rs.len()), Some(1));
@@ -63,7 +63,7 @@ fn it_works() {
     );
 
     // but once we refresh, things will be empty
-    w.refresh();
+    w.publish();
     assert_match!(r.get(&x.0).map(|rs| rs.len()), None);
     assert_match!(
         r.meta_get(&x.0).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
@@ -75,18 +75,18 @@ fn it_works() {
 fn mapref() {
     let x = ('x', 42);
 
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
 
     // get a read ref to the map
     // scope to ensure it gets dropped and doesn't stall refresh
     {
-        assert!(r.read().is_none());
+        assert!(r.enter().is_none());
     }
 
-    w.refresh();
+    w.publish();
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
         // after the first refresh, it is empty, but ready
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
@@ -98,7 +98,7 @@ fn mapref() {
     w.insert(x.0, x);
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
         // it is empty even after an add (we haven't refresh yet)
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
@@ -106,10 +106,10 @@ fn mapref() {
         assert_eq!(map.meta(), &());
     }
 
-    w.refresh();
+    w.publish();
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
 
         // but after the swap, the record is there!
         assert!(!map.is_empty());
@@ -138,10 +138,10 @@ fn mapref() {
     }
 
     // but once we refresh, things will be empty
-    w.refresh();
+    w.publish();
 
     {
-        let map = r.read().unwrap();
+        let map = r.enter().unwrap();
         assert!(map.is_empty());
         assert!(!map.contains_key(&x.0));
         assert!(map.get(&x.0).is_none());
@@ -150,7 +150,7 @@ fn mapref() {
 
     drop(w);
     {
-        let map = r.read();
+        let map = r.enter();
         assert!(map.is_none(), "the map should have been destroyed");
     }
 }
@@ -159,9 +159,9 @@ fn mapref() {
 #[cfg_attr(miri, ignore)]
 // https://github.com/rust-lang/miri/issues/658
 fn paniced_reader_doesnt_block_writer() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
-    w.refresh();
+    w.publish();
 
     // reader panics
     let r = std::panic::catch_unwind(move || r.get(&1).map(|_| panic!()));
@@ -169,17 +169,17 @@ fn paniced_reader_doesnt_block_writer() {
 
     // writer should still be able to continue
     w.insert(1, "b");
-    w.refresh();
-    w.refresh();
+    w.publish();
+    w.publish();
 }
 
 #[test]
 fn read_after_drop() {
     let x = ('x', 42);
 
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(x.0, x);
-    w.refresh();
+    w.publish();
     assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
 
     // once we drop the writer, the readers should see empty maps
@@ -195,9 +195,9 @@ fn read_after_drop() {
 fn clone_types() {
     let x = evmap::shallow_copy::CopyValue::from(b"xyz");
 
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(&*x, x);
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&*x).map(|rs| rs.len()), Some(1));
     assert_eq!(
@@ -227,8 +227,8 @@ fn busybusybusy_inner(slow: bool) {
     if !slow {
         n *= 100;
     }
-    let (r, mut w) = evmap::new();
-    w.refresh();
+    let (mut w, r) = evmap::new();
+    w.publish();
 
     let rs: Vec<_> = (0..threads)
         .map(|_| {
@@ -238,7 +238,7 @@ fn busybusybusy_inner(slow: bool) {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        let map = r.read().unwrap();
+                        let map = r.enter().unwrap();
                         let rs = map.get(&i);
                         if rs.is_some() && slow {
                             thread::sleep(time::Duration::from_millis(2));
@@ -262,7 +262,7 @@ fn busybusybusy_inner(slow: bool) {
 
     for i in 0..n {
         w.insert(i, i);
-        w.refresh();
+        w.publish();
     }
 
     for r in rs {
@@ -277,8 +277,8 @@ fn busybusybusy_heap() {
 
     let threads = 2;
     let n = 1000;
-    let (r, mut w) = evmap::new::<_, Vec<_>>();
-    w.refresh();
+    let (mut w, r) = evmap::new::<_, Vec<_>>();
+    w.publish();
 
     let rs: Vec<_> = (0..threads)
         .map(|_| {
@@ -287,7 +287,7 @@ fn busybusybusy_heap() {
                 for i in 0..n {
                     let i = i.into();
                     loop {
-                        let map = r.read().unwrap();
+                        let map = r.enter().unwrap();
                         let rs = map.get(&i);
                         match rs {
                             Some(rs) => {
@@ -307,7 +307,7 @@ fn busybusybusy_heap() {
 
     for i in 0..n {
         w.insert(i, (0..i).collect());
-        w.refresh();
+        w.publish();
     }
 
     for r in rs {
@@ -317,9 +317,9 @@ fn busybusybusy_heap() {
 
 #[test]
 fn minimal_query() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
-    w.refresh();
+    w.publish();
     w.insert(1, "b");
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
@@ -328,29 +328,29 @@ fn minimal_query() {
 
 #[test]
 fn clear_vs_empty() {
-    let (r, mut w) = evmap::new::<_, ()>();
-    w.refresh();
+    let (mut w, r) = evmap::new::<_, ()>();
+    w.publish();
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     w.clear(1);
-    w.refresh();
+    w.publish();
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
     w.remove_entry(1);
-    w.refresh();
+    w.publish();
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     // and again to test both apply_first and apply_second
     w.clear(1);
-    w.refresh();
+    w.publish();
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
     w.remove_entry(1);
-    w.refresh();
+    w.publish();
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
 }
 
 #[test]
 fn non_copy_values() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a".to_string());
-    w.refresh();
+    w.publish();
     w.insert(1, "b".to_string());
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
@@ -359,10 +359,10 @@ fn non_copy_values() {
 
 #[test]
 fn non_minimal_query() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
-    w.refresh();
+    w.publish();
     w.insert(1, "c");
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(2));
@@ -372,11 +372,11 @@ fn non_minimal_query() {
 
 #[test]
 fn absorb_negative_immediate() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.remove_value(1, "a");
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
@@ -384,12 +384,12 @@ fn absorb_negative_immediate() {
 
 #[test]
 fn absorb_negative_later() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
-    w.refresh();
+    w.publish();
     w.remove_value(1, "a");
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
@@ -397,9 +397,9 @@ fn absorb_negative_later() {
 
 #[test]
 fn absorb_multi() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.extend(vec![(1, "a"), (1, "b")]);
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(2));
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
@@ -408,7 +408,7 @@ fn absorb_multi() {
     w.remove_value(1, "a");
     w.insert(1, "c");
     w.remove_value(1, "c");
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
@@ -416,12 +416,12 @@ fn absorb_multi() {
 
 #[test]
 fn empty() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
     w.remove_entry(1);
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
@@ -431,14 +431,14 @@ fn empty() {
 #[test]
 #[cfg(feature = "eviction")]
 fn empty_random() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
 
     let mut rng = rand::thread_rng();
     let removed: Vec<_> = w.empty_random(&mut rng, 1).map(|(&k, _)| k).collect();
-    w.refresh();
+    w.publish();
 
     // should only have one value set left
     assert_eq!(removed.len(), 1);
@@ -450,7 +450,7 @@ fn empty_random() {
 
     // remove the other one
     let removed: Vec<_> = w.empty_random(&mut rng, 100).map(|(&k, _)| k).collect();
-    w.refresh();
+    w.publish();
 
     assert_eq!(removed.len(), 1);
     assert_eq!(removed[0], kept);
@@ -460,7 +460,7 @@ fn empty_random() {
 #[test]
 #[cfg(feature = "eviction")]
 fn empty_random_multiple() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
@@ -468,7 +468,7 @@ fn empty_random_multiple() {
     let mut rng = rand::thread_rng();
     let removed1: Vec<_> = w.empty_random(&mut rng, 1).map(|(&k, _)| k).collect();
     let removed2: Vec<_> = w.empty_random(&mut rng, 1).map(|(&k, _)| k).collect();
-    w.refresh();
+    w.publish();
 
     assert_eq!(removed1.len(), 1);
     assert_eq!(removed2.len(), 1);
@@ -478,13 +478,13 @@ fn empty_random_multiple() {
 
 #[test]
 fn empty_post_refresh() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.refresh();
+    w.publish();
     w.remove_entry(1);
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
@@ -493,24 +493,24 @@ fn empty_post_refresh() {
 
 #[test]
 fn clear() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
     w.clear(1);
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
 
     w.clear(2);
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(0));
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(0));
 
     w.remove_entry(1);
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(0));
@@ -518,12 +518,12 @@ fn clear() {
 
 #[test]
 fn replace() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
     w.update(1, "x");
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"x")).unwrap());
@@ -533,13 +533,13 @@ fn replace() {
 
 #[test]
 fn replace_post_refresh() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.refresh();
+    w.publish();
     w.update(1, "x");
-    w.refresh();
+    w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
     assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"x")).unwrap());
@@ -549,12 +549,12 @@ fn replace_post_refresh() {
 
 #[test]
 fn with_meta() {
-    let (r, mut w) = evmap::with_meta::<usize, usize, _>(42);
+    let (mut w, r) = evmap::with_meta::<usize, usize, _>(42);
     assert_eq!(
         r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
         None
     );
-    w.refresh();
+    w.publish();
     assert_eq!(
         r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
         Some((None, 42))
@@ -564,7 +564,7 @@ fn with_meta() {
         r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
         Some((None, 42))
     );
-    w.refresh();
+    w.publish();
     assert_eq!(
         r.meta_get(&1).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
         Some((None, 43))
@@ -573,11 +573,11 @@ fn with_meta() {
 
 #[test]
 fn map_into() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.refresh();
+    w.publish();
     w.insert(1, "x");
 
     use std::collections::HashMap;
@@ -595,14 +595,14 @@ fn map_into() {
 
 #[test]
 fn keys() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.refresh();
+    w.publish();
     w.insert(1, "x");
 
-    let mut keys = r.read().unwrap().keys().copied().collect::<Vec<_>>();
+    let mut keys = r.enter().unwrap().keys().copied().collect::<Vec<_>>();
     keys.sort();
 
     assert_eq!(keys, vec![1, 2]);
@@ -610,15 +610,15 @@ fn keys() {
 
 #[test]
 fn values() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.refresh();
+    w.publish();
     w.insert(1, "x");
 
     let mut values = r
-        .read()
+        .enter()
         .unwrap()
         .values()
         .map(|value_bag| {
@@ -636,7 +636,7 @@ fn values() {
 #[cfg_attr(miri, ignore)]
 fn clone_churn() {
     use std::thread;
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
 
     thread::spawn(move || loop {
         let r = r.clone();
@@ -647,7 +647,7 @@ fn clone_churn() {
 
     for i in 0..1000 {
         w.insert(1, i);
-        w.refresh();
+        w.publish();
     }
 }
 
@@ -655,13 +655,17 @@ fn clone_churn() {
 #[cfg_attr(miri, ignore)]
 fn bigbag() {
     use std::thread;
-    let (r, mut w) = evmap::new();
-    w.refresh();
+    let (mut w, r) = evmap::new();
+    w.publish();
 
     let ndistinct = 32;
 
     let jh = thread::spawn(move || loop {
-        let map = if let Some(map) = r.read() { map } else { break };
+        let map = if let Some(map) = r.enter() {
+            map
+        } else {
+            break;
+        };
         if let Some(rs) = map.get(&1) {
             assert!(rs.len() <= ndistinct * (ndistinct - 1));
             let mut found = true;
@@ -686,14 +690,14 @@ fn bigbag() {
             // total:
             for _ in 0..i {
                 w.insert(1, vec![i]);
-                w.refresh();
+                w.publish();
             }
         }
         for i in (1..ndistinct).rev() {
             for _ in 0..i {
                 w.remove_value(1, vec![i]);
                 w.fit(1);
-                w.refresh();
+                w.publish();
             }
         }
         w.remove_entry(1);
@@ -705,14 +709,14 @@ fn bigbag() {
 
 #[test]
 fn foreach() {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     w.insert(1, "a");
     w.insert(1, "b");
     w.insert(2, "c");
-    w.refresh();
+    w.publish();
     w.insert(1, "x");
 
-    let r = r.read().unwrap();
+    let r = r.enter().unwrap();
     for (k, vs) in &r {
         match k {
             1 => {
@@ -734,7 +738,7 @@ fn retain() {
     // do same operations on a plain vector
     // to verify retain implementation
     let mut v = Vec::new();
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
 
     for i in 0..50 {
         w.insert(0, i);
@@ -745,7 +749,7 @@ fn retain() {
         num % 2 == 0
     }
 
-    unsafe { w.retain(0, is_even) }.refresh();
+    unsafe { w.retain(0, is_even) }.publish();
     v.retain(|i| is_even(i, false));
 
     let mut vs = r
@@ -760,14 +764,14 @@ fn retain() {
 fn get_one() {
     let x = ('x', 42);
 
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
 
     w.insert(x.0, x);
     w.insert(x.0, x);
 
     assert_match!(r.get_one(&x.0), None);
 
-    w.refresh();
+    w.publish();
 
     assert_match!(r.get_one(&x.0).as_deref(), Some(('x', 42)));
 }
@@ -776,12 +780,12 @@ fn get_one() {
 fn insert_remove_value() {
     let x = 'x';
 
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
 
     w.insert(x, x);
 
     w.remove_value(x, x);
-    w.refresh();
+    w.publish();
 
     // There are no more values associated with this key
     assert!(r.get(&x).is_some());
@@ -796,12 +800,12 @@ fn insert_remove_value() {
 fn insert_remove_entry() {
     let x = 'x';
 
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
 
     w.insert(x, x);
 
     w.remove_entry(x);
-    w.refresh();
+    w.publish();
 
     assert!(r.is_empty());
     assert!(r.get(&x).is_none());

@@ -28,22 +28,22 @@ where
 
 #[quickcheck]
 fn contains(insert: Vec<u32>) -> bool {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     for &key in &insert {
         w.insert(key, ());
     }
-    w.refresh();
+    w.publish();
 
     insert.iter().all(|&key| r.get(&key).is_some())
 }
 
 #[quickcheck]
 fn contains_not(insert: Vec<u8>, not: Vec<u8>) -> bool {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     for &key in &insert {
         w.insert(key, ());
     }
-    w.refresh();
+    w.publish();
 
     let nots = &set(&not) - &set(&insert);
     nots.iter().all(|&key| r.get(&key).is_none())
@@ -51,18 +51,18 @@ fn contains_not(insert: Vec<u8>, not: Vec<u8>) -> bool {
 
 #[quickcheck]
 fn insert_empty(insert: Vec<u8>, remove: Vec<u8>) -> bool {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     for &key in &insert {
         w.insert(key, ());
     }
-    w.refresh();
+    w.publish();
     for &key in &remove {
         w.remove_entry(key);
     }
-    w.refresh();
+    w.publish();
     let elements = &set(&insert) - &set(&remove);
     r.len() == elements.len()
-        && r.read().iter().map(|r| r.keys()).flatten().count() == elements.len()
+        && r.enter().iter().map(|r| r.keys()).flatten().count() == elements.len()
         && elements.iter().all(|k| r.get(k).is_some())
 }
 
@@ -123,7 +123,7 @@ fn do_ops<K, V, S>(
                 });
             }
             Refresh => {
-                evmap.refresh();
+                evmap.publish();
                 *read_ref = write_ref.clone();
             }
         }
@@ -137,14 +137,20 @@ where
     S: BuildHasher,
 {
     assert_eq!(a.len(), b.len());
-    for key in a.read().iter().map(|r| r.keys()).flatten() {
+    for key in a.enter().iter().map(|r| r.keys()).flatten() {
         assert!(b.contains_key(key), "b does not contain {:?}", key);
     }
     for key in b.keys() {
         assert!(a.get(key).is_some(), "a does not contain {:?}", key);
     }
-    for key in a.read().iter().map(|r| r.keys()).flatten() {
-        let mut ev_map_values: Vec<V> = a.get(key).unwrap().iter().copied().collect();
+    let guard = if let Some(guard) = a.enter() {
+        guard
+    } else {
+        // Reference was empty, ReadHandle was destroyed, so all is well. Maybe.
+        return true;
+    };
+    for key in guard.keys() {
+        let mut ev_map_values: Vec<V> = guard.get(key).unwrap().iter().copied().collect();
         ev_map_values.sort();
         let mut map_values = b[key].clone();
         map_values.sort();
@@ -208,37 +214,37 @@ impl Arbitrary for Alphabet {
 
 #[quickcheck]
 fn operations_i8(ops: Large<Vec<Op<i8, i8>>>) -> bool {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     let mut write_ref = HashMap::new();
     let mut read_ref = HashMap::new();
     do_ops(&ops, &mut w, &mut write_ref, &mut read_ref);
     assert_maps_equivalent(&r, &read_ref);
 
-    w.refresh();
+    w.publish();
     assert_maps_equivalent(&r, &write_ref)
 }
 
 #[quickcheck]
 fn operations_string(ops: Vec<Op<Alphabet, i8>>) -> bool {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     let mut write_ref = HashMap::new();
     let mut read_ref = HashMap::new();
     do_ops(&ops, &mut w, &mut write_ref, &mut read_ref);
     assert_maps_equivalent(&r, &read_ref);
 
-    w.refresh();
+    w.publish();
     assert_maps_equivalent(&r, &write_ref)
 }
 
 #[quickcheck]
 fn keys_values(ops: Large<Vec<Op<i8, i8>>>) -> bool {
-    let (r, mut w) = evmap::new();
+    let (mut w, r) = evmap::new();
     let mut write_ref = HashMap::new();
     let mut read_ref = HashMap::new();
     do_ops(&ops, &mut w, &mut write_ref, &mut read_ref);
 
-    if let Some(read_guard) = r.read() {
-        let (r_visit, mut w_visit) = evmap::new();
+    if let Some(read_guard) = r.enter() {
+        let (mut w_visit, r_visit) = evmap::new();
         for (k, v_set) in read_guard.keys().zip(read_guard.values()) {
             assert!(read_guard[k].iter().all(|v| v_set.contains(v)));
             assert!(v_set.iter().all(|v| read_guard[k].contains(v)));
@@ -256,7 +262,7 @@ fn keys_values(ops: Large<Vec<Op<i8, i8>>>) -> bool {
                     w_visit.insert(*k, *value);
                 }
             }
-            w_visit.refresh();
+            w_visit.publish();
         }
         assert_eq!(r_visit.len(), read_ref.len());
     }

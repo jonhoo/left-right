@@ -1,40 +1,29 @@
-# evmap
+This crate holds the implementation of the `left-right` concurrency
+primitive, and its primary user `evmap`. See the documentation for each
+crate for details.
+
+Left-right is a concurrency primitive for high concurrency reads over a
+single-writer data structure. The primitive keeps two copies of the
+backing data structure, one that is accessed by readers, and one that is
+access by the (single) writer. This enables all reads to proceed in
+parallel with minimal coordination, and shifts the coordination overhead
+to the writer. In the absence of writes, reads scale linearly with the
+number of cores.
+
+[![Crates.io](https://img.shields.io/crates/v/left-right.svg)](https://crates.io/crates/left-right)
+[![Documentation](https://docs.rs/left-right/badge.svg)](https://docs.rs/left-right/)
 
 [![Crates.io](https://img.shields.io/crates/v/evmap.svg)](https://crates.io/crates/evmap)
 [![Documentation](https://docs.rs/evmap/badge.svg)](https://docs.rs/evmap/)
+
 [![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/evmap?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=8&branchName=master)
 [![Codecov](https://codecov.io/github/jonhoo/rust-evmap/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/rust-evmap)
 
-A lock-free, eventually consistent, concurrent multi-value map.
-
-This map implementation allows reads and writes to execute entirely in parallel, with no
-implicit synchronization overhead. Reads never take locks on their critical path, and neither
-do writes assuming there is a single writer (multi-writer is possible using a `Mutex`), which
-significantly improves performance under contention.
-
-The trade-off exposed by this module is one of eventual consistency: writes are not visible to
-readers except following explicit synchronization. Specifically, readers only see the
-operations that preceeded the last call to `WriteHandle::refresh` by a writer. This lets
-writers decide how stale they are willing to let reads get. They can refresh the map after
-every write to emulate a regular concurrent `HashMap`, or they can refresh only occasionally to
-reduce the synchronization overhead at the cost of stale reads.
-
-For read-heavy workloads, the scheme used by this module is particularly useful. Writers can
-afford to refresh after every write, which provides up-to-date reads, and readers remain fast
-as they do not need to ever take locks.
-
-The map is multi-value, meaning that every key maps to a *collection* of values. This
-introduces some memory cost by adding a layer of indirection through a `Vec` for each value,
-but enables more advanced use. This choice was made as it would not be possible to emulate such
-functionality on top of the semantics of this map (think about it -- what would the operational
-log contain?).
-
-To faciliate more advanced use-cases, each of the two maps also carry some customizeable
-meta-information. The writers may update this at will, and when a refresh happens, the current
-meta will also be made visible to readers. This could be useful, for example, to indicate what
-time the refresh happened.
-
 ## Performance
+
+**These benchmarks are outdated at this point, but communicate the right
+point. Hopefully I'll have a chance to update them again some time
+soon.**
 
 I've run some benchmarks of evmap against a standard Rust `HashMap` protected
 by a [reader-writer
