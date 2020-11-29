@@ -3,6 +3,13 @@ name = "left-right"
 version = "0.9.0"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+
+description = "A concurrency primitive for high concurrency reads over a single-writer data structure."
+repository = "https://github.com/jonhoo/rust-evmap.git"
+
+keywords = ["concurrency","lock-free"]
+categories = ["concurrency"]
 
 [dependencies]
 slab = "0.4"
