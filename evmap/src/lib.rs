@@ -310,6 +310,8 @@ where
                 f.debug_tuple("RemoveValue").field(a).field(b).finish()
             }
             Operation::RemoveEntry(ref a) => f.debug_tuple("RemoveEntry").field(a).finish(),
+            #[cfg(feature = "eviction")]
+            Operation::EmptyAt(ref a) => f.debug_tuple("EmptyAt").field(a).finish(),
             Operation::Clear(ref a) => f.debug_tuple("Clear").field(a).finish(),
             Operation::Purge => f.debug_tuple("Purge").finish(),
             Operation::Retain(ref a, ref b) => f.debug_tuple("Retain").field(a).field(b).finish(),
