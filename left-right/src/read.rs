@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
+use std::ptr::NonNull;
 use std::sync::atomic;
 use std::sync::atomic::AtomicPtr;
 use std::sync::{self, Arc};
@@ -190,6 +191,15 @@ impl<T> ReadHandle<T> {
     /// Returns true if the [`WriteHandle`] has been dropped.
     pub fn was_dropped(&self) -> bool {
         self.inner.load(atomic::Ordering::Acquire).is_null()
+    }
+
+    /// Returns a raw pointer to the read copy of the data.
+    ///
+    /// Note that it is only safe to read through this pointer if you _know_ that the writer will
+    /// not start writing into it. This is most likely only the case if you are calling this method
+    /// from inside a method that holds `&mut WriteHandle`.
+    pub fn raw_handle(&mut self) -> Option<NonNull<T>> {
+        NonNull::new(self.inner.load(atomic::Ordering::Acquire))
     }
 }
 

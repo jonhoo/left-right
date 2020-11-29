@@ -5,9 +5,9 @@ use crate::values::Values;
 use left_right::Absorb;
 
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::{BuildHasher, Hash};
 use std::mem::ManuallyDrop;
-use std::{fmt, mem};
 
 #[cfg(feature = "indexed")]
 use indexmap::map::Entry;
@@ -298,8 +298,16 @@ where
         // pending operations even after a publish!
         self.publish();
 
-        let inner = self.r_handle.inner.load(atomic::Ordering::SeqCst);
-        let inner: &'a _ = unsafe { &(*inner).data };
+        let inner = self
+            .r_handle
+            .handle
+            .raw_handle()
+            .expect("WriteHandle has not been dropped");
+        // safety: the writer cannot publish until 'a ends, so we know that reading from the read
+        // map is safe for the duration of 'a.
+        let inner: &'a Inner<K, V, M, S> =
+            unsafe { std::mem::transmute::<&Inner<K, V, M, S>, _>(inner.as_ref()) };
+        let inner = &inner.data;
 
         // let's pick some (distinct) indices to evict!
         let n = n.min(inner.len());
@@ -313,7 +321,7 @@ where
 
         indices.into_iter().map(move |i| {
             let (k, vs) = inner.get_index(i).expect("in-range");
-            (k, vs.user_friendly())
+            (k, vs)
         })
     }
 }
