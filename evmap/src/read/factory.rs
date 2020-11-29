@@ -1,6 +1,5 @@
 use super::ReadHandle;
 use crate::inner::Inner;
-use crate::ShallowCopy;
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
@@ -14,7 +13,6 @@ use std::hash::{BuildHasher, Hash};
 pub struct ReadHandleFactory<K, V, M, S = RandomState>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
     S: BuildHasher,
 {
     pub(super) factory: left_right::ReadHandleFactory<Inner<K, V, M, S>>,
@@ -23,7 +21,6 @@ where
 impl<K, V, M, S> fmt::Debug for ReadHandleFactory<K, V, M, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
     S: BuildHasher,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -36,7 +33,6 @@ where
 impl<K, V, M, S> Clone for ReadHandleFactory<K, V, M, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
     S: BuildHasher,
 {
     fn clone(&self) -> Self {
@@ -49,7 +45,6 @@ where
 impl<K, V, M, S> ReadHandleFactory<K, V, M, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
     S: BuildHasher,
 {
     /// Produce a new [`ReadHandle`] to the same left-right data structure as this factory was

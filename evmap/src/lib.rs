@@ -214,9 +214,8 @@ pub use crate::write::WriteHandle;
 mod read;
 pub use crate::read::{MapReadRef, ReadGuardIter, ReadHandle, ReadHandleFactory};
 
-pub mod shallow_copy;
-pub use crate::shallow_copy::ShallowCopy;
-use shallow_copy::MaybeShallowCopied;
+mod shallow_copy;
+use shallow_copy::ForwardThroughAliased;
 
 // Expose `ReadGuard` since it has useful methods the user will likely care about.
 #[doc(inline)]
@@ -256,14 +255,11 @@ impl<V: ?Sized> fmt::Debug for Predicate<V> {
 
 /// A pending map operation.
 #[non_exhaustive]
-pub(crate) enum Operation<K, V, M>
-where
-    V: ShallowCopy,
-{
+pub(crate) enum Operation<K, V, M> {
     /// Replace the set of entries for this key with this value.
-    Replace(K, MaybeShallowCopied<V>),
+    Replace(K, ForwardThroughAliased<V>),
     /// Add this value to the set of entries for this key.
-    Add(K, MaybeShallowCopied<V>),
+    Add(K, ForwardThroughAliased<V>),
     /// Remove this value from the set of entries for this key.
     RemoveValue(K, V),
     /// Remove the value set for this key.
@@ -280,15 +276,15 @@ where
     /// Note that this will iterate once over all the keys internally.
     Purge,
     /// Retains all values matching the given predicate.
-    Retain(K, Predicate<V::Target>),
-    /// Shrinks [`MaybeShallowCopied<V>alues`] to their minimum necessary size, freeing memory
+    Retain(K, Predicate<V>),
+    /// Shrinks [`Values`] to their minimum necessary size, freeing memory
     /// and potentially improving cache locality.
     ///
-    /// If no key is given, all `MaybeShallowCopied<V>alues` will shrink to fit.
+    /// If no key is given, all `Values` will shrink to fit.
     Fit(Option<K>),
-    /// Reserves capacity for some number of additional elements in [`MaybeShallowCopied<V>alues`]
+    /// Reserves capacity for some number of additional elements in [`Values`]
     /// for the given key. If the given key does not exist, allocate an empty
-    /// `MaybeShallowCopied<V>alues` with the given capacity.
+    /// `Values` with the given capacity.
     ///
     /// This can improve performance by pre-allocating space for large bags of values.
     Reserve(K, usize),
@@ -296,13 +292,14 @@ where
     MarkReady,
     /// Set the value of the map meta.
     SetMeta(M),
+    /// Copy over the contents of the read map wholesale as the write map is empty.
+    JustCloneRHandle,
 }
 
 impl<K, V, M> fmt::Debug for Operation<K, V, M>
 where
     K: fmt::Debug,
-    V: ShallowCopy + fmt::Debug,
-    V::Target: fmt::Debug,
+    V: fmt::Debug,
     M: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -320,6 +317,7 @@ where
             Operation::Reserve(ref a, ref b) => f.debug_tuple("Reserve").field(a).field(b).finish(),
             Operation::MarkReady => f.debug_tuple("MarkReady").finish(),
             Operation::SetMeta(ref a) => f.debug_tuple("SetMeta").field(a).finish(),
+            Operation::JustCloneRHandle => f.debug_tuple("JustCloneRHandle").finish(),
         }
     }
 }
@@ -400,8 +398,7 @@ where
     where
         K: Eq + Hash + Clone,
         S: BuildHasher + Clone,
-        V: ShallowCopy,
-        V::Target: Eq + Hash,
+        V: Eq + Hash,
         M: 'static + Clone,
     {
         let inner = if let Some(cap) = self.capacity {
@@ -427,8 +424,7 @@ pub fn new<K, V>() -> (
 )
 where
     K: Eq + Hash + Clone,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
 {
     Options::default().construct()
 }
@@ -445,8 +441,7 @@ pub fn with_meta<K, V, M>(
 )
 where
     K: Eq + Hash + Clone,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     M: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
@@ -462,8 +457,7 @@ pub fn with_hasher<K, V, M, S>(
 ) -> (WriteHandle<K, V, M, S>, ReadHandle<K, V, M, S>)
 where
     K: Eq + Hash + Clone,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     M: 'static + Clone,
     S: BuildHasher + Clone,
 {

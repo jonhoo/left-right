@@ -1,6 +1,6 @@
 use crate::inner::Inner;
+use crate::shallow_copy::ForwardThroughAliased;
 use crate::values::Values;
-use crate::ShallowCopy;
 use left_right::ReadGuard;
 
 use std::borrow::Borrow;
@@ -23,7 +23,6 @@ pub use factory::ReadHandleFactory;
 pub struct ReadHandle<K, V, M = (), S = RandomState>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
     S: BuildHasher,
 {
     pub(crate) handle: left_right::ReadHandle<Inner<K, V, M, S>>,
@@ -32,7 +31,6 @@ where
 impl<K, V, M, S> fmt::Debug for ReadHandle<K, V, M, S>
 where
     K: Eq + Hash + fmt::Debug,
-    V: ShallowCopy,
     S: BuildHasher,
     M: fmt::Debug,
 {
@@ -46,7 +44,6 @@ where
 impl<K, V, M, S> Clone for ReadHandle<K, V, M, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
     S: BuildHasher,
 {
     fn clone(&self) -> Self {
@@ -59,7 +56,6 @@ where
 impl<K, V, M, S> ReadHandle<K, V, M, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
     S: BuildHasher,
 {
     pub(crate) fn new(handle: left_right::ReadHandle<Inner<K, V, M, S>>) -> Self {
@@ -70,8 +66,7 @@ where
 impl<K, V, M, S> ReadHandle<K, V, M, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
     M: Clone,
 {
@@ -156,7 +151,7 @@ where
     /// refreshed by the writer. If no refresh has happened, or the map has been destroyed, this
     /// function returns `None`.
     #[inline]
-    pub fn get_one<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, V::Target>>
+    pub fn get_one<'rh, Q: ?Sized>(&'rh self, key: &'_ Q) -> Option<ReadGuard<'rh, V>>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -210,12 +205,15 @@ where
 
     /// Returns true if the map contains the specified value for the specified key.
     ///
-    /// The key may be any borrowed form of the map's key type, but `Hash` and
+    /// The key and value may be any borrowed form of the map's respective types, but `Hash` and
     /// `Eq` on the borrowed form *must* match.
-    pub fn contains_value<Q: ?Sized>(&self, key: &Q, value: &V::Target) -> bool
+    pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
     where
         K: Borrow<Q>,
+        ForwardThroughAliased<V>: Borrow<W>,
         Q: Hash + Eq,
+        W: Hash + Eq,
+        V: Hash + Eq,
     {
         self.get_raw(key.borrow())
             .map(|x| x.contains(value))

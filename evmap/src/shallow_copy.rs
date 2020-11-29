@@ -1,160 +1,9 @@
 //! Types that can be cheaply aliased.
 
 use std::cell::Cell;
-use std::mem;
-use std::ops::{Deref, DerefMut};
-
-/// Types that implement this trait can be cheaply copied by (potentially) aliasing the data they
-/// contain. Only the _last_ shallow copy will be dropped -- all others will be silently leaked
-/// (with `mem::forget`).
-///
-/// To implement this trait for your own `Copy` type, write:
-///
-/// ```rust
-/// # use evmap::ShallowCopy;
-/// use std::mem::ManuallyDrop;
-///
-/// #[derive(Copy, Clone)]
-/// struct T;
-///
-/// impl ShallowCopy for T {
-///     unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
-///         ManuallyDrop::new(*self)
-///     }
-/// }
-/// ```
-///
-/// If you have a non-`Copy` type, the value returned by `shallow_copy` should point to the same
-/// data as the `&mut self`, and it should be safe to `mem::forget` either of the copies as long as
-/// the other is dropped normally afterwards.
-///
-/// For complex, non-`Copy` types, you can place the type behind a wrapper that implements
-/// `ShallowCopy` such as `Arc`.
-/// Alternatively, if your type is made up of types that all implement `ShallowCopy`, consider
-/// using the `evmap-derive` crate, which contains a derive macro for `ShallowCopy`.
-/// See that crate's documentation for details.
-///
-/// Send + Sync + Hash + Eq etc. must translate (think Borrow)
-pub trait ShallowCopy {
-    type SplitType;
-    type Target: ?Sized;
-
-    /// Perform an aliasing copy of this value.
-    ///
-    /// # Safety
-    ///
-    /// The use of this method is *only* safe if the values involved are never mutated, and only
-    /// one of the copies is dropped; the remaining copies must be forgotten with `mem::forget`.
-    fn split(self) -> (Self::SplitType, Self::SplitType);
-
-    fn deref_self(&self) -> &Self::Target;
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target;
-
-    unsafe fn drop(split: &mut Self::SplitType);
-}
-
-pub(crate) enum MaybeShallowCopied<T>
-where
-    T: ShallowCopy,
-{
-    Owned(T),
-    Copied(T::SplitType),
-    Swapping,
-}
-
-impl<T> MaybeShallowCopied<T>
-where
-    T: ShallowCopy,
-{
-    // unsafe because shallow copy must remain dereferencable for lifetime of return value.
-    pub(crate) unsafe fn shallow_copy_first(&mut self) -> ForwardThroughShallowCopy<T> {
-        match mem::replace(self, MaybeShallowCopied::Swapping) {
-            MaybeShallowCopied::Owned(t) => {
-                let (a, b) = t.split();
-                *self = MaybeShallowCopied::Copied(a);
-                ForwardThroughShallowCopy::Split(b)
-            }
-            MaybeShallowCopied::Copied(_) => unreachable!(),
-            MaybeShallowCopied::Swapping => unreachable!(),
-        }
-    }
-
-    // unsafe because shallow copy must remain dereferencable for lifetime of return value.
-    pub(crate) unsafe fn shallow_copy_second(self) -> ForwardThroughShallowCopy<T> {
-        match self {
-            MaybeShallowCopied::Copied(split) => ForwardThroughShallowCopy::Split(split),
-            MaybeShallowCopied::Owned(_) => unreachable!(),
-            MaybeShallowCopied::Swapping => unreachable!(),
-        }
-    }
-}
-
-impl<T> fmt::Debug for MaybeShallowCopied<T>
-where
-    T: ShallowCopy + fmt::Debug,
-    T::Target: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            MaybeShallowCopied::Owned(ref t) => t.fmt(f),
-            MaybeShallowCopied::Copied(ref split) => unsafe { T::deref(split) }.fmt(f),
-            MaybeShallowCopied::Swapping => unreachable!(),
-        }
-    }
-}
-
-use std::sync::Arc;
-impl<T> ShallowCopy for Arc<T>
-where
-    T: ?Sized,
-{
-    type SplitType = *const T;
-    type Target = T;
-
-    fn split(self) -> (Self::SplitType, Self::SplitType) {
-        let ptr = Arc::into_raw(self);
-        (ptr, ptr)
-    }
-
-    fn deref_self(&self) -> &Self::Target {
-        &*self
-    }
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-        &**split
-    }
-
-    unsafe fn drop(split: &mut Self::SplitType) {
-        Arc::from_raw(*split);
-    }
-}
-
-use std::rc::Rc;
-impl<T> ShallowCopy for Rc<T>
-where
-    T: ?Sized,
-{
-    type SplitType = *const T;
-    type Target = T;
-
-    fn split(self) -> (Self::SplitType, Self::SplitType) {
-        let ptr = Rc::into_raw(self);
-        (ptr, ptr)
-    }
-
-    fn deref_self(&self) -> &Self::Target {
-        &*self
-    }
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-        &**split
-    }
-
-    unsafe fn drop(split: &mut Self::SplitType) {
-        Rc::from_raw(*split);
-    }
-}
+use std::marker::PhantomData;
+use std::mem::MaybeUninit;
+use std::ops::Deref;
 
 // Aliasing Box<T> is not okay:
 // https://github.com/rust-lang/unsafe-code-guidelines/issues/258
@@ -162,298 +11,108 @@ where
 //
 // Also, this cases from a non-mutable pointer to a mutable one, which is never okay.
 
-impl<T> ShallowCopy for Box<T>
-where
-    T: ?Sized,
-{
-    type SplitType = *mut T;
-    type Target = T;
-
-    fn split(self) -> (Self::SplitType, Self::SplitType) {
-        let ptr = Box::into_raw(self);
-        (ptr, ptr)
-    }
-
-    fn deref_self(&self) -> &Self::Target {
-        &*self
-    }
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-        &**split
-    }
-
-    unsafe fn drop(split: &mut Self::SplitType) {
-        Box::from_raw(split);
-    }
-}
-
-// We need GAT for Option to implement ShallowCopy. Bleh...
-// The reason is that we need Target to be Target<'a> where the 'a is assigned in deref.
-// Otherwise, Option's deref has to return &Option<T::Target>, which it obviously cannot.
-//
-// impl<T> ShallowCopy for Option<T>
-// where
-//     T: ShallowCopy,
-//     T::Target: Sized,
-// {
-//     type SplitType = Option<T::SplitType>;
-//     type Target = Option<T::Target>;
-//
-//     fn split(self) -> (Self::SplitType, Self::SplitType) {
-//         if let Some(this) = self {
-//             let (a, b) = this.split();
-//             (Some(a), Some(b))
-//         } else {
-//             (None, None)
-//         }
-//     }
-//
-//     unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-//         split.map(|st| unsafe { T::deref(st) })
-//     }
-//
-//     unsafe fn drop(split: &mut Self::SplitType) {
-//         split.map(|st| unsafe { T::drop(st) });
-//     }
-// }
-
-impl ShallowCopy for String {
-    type SplitType = (*mut u8, usize, usize);
-    type Target = str;
-
-    fn split(mut self) -> (Self::SplitType, Self::SplitType) {
-        let len = self.len();
-        let cap = self.capacity();
-        // safety: safe because we will not mutate the string.
-        let buf = unsafe { self.as_bytes_mut() }.as_mut_ptr();
-        let split = (buf, len, cap);
-        (split, split)
-    }
-
-    fn deref_self(&self) -> &Self::Target {
-        &*self
-    }
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-        let u8s = std::slice::from_raw_parts(split.0, split.1);
-        std::str::from_utf8_unchecked(u8s)
-    }
-
-    unsafe fn drop(split: &mut Self::SplitType) {
-        String::from_raw_parts(split.0, split.1, split.2);
-    }
-}
-
-impl<T> ShallowCopy for Vec<T> {
-    type SplitType = (*mut T, usize, usize);
-    type Target = [T];
-
-    fn split(mut self) -> (Self::SplitType, Self::SplitType) {
-        let buf = self.as_mut_ptr();
-        let len = self.len();
-        let cap = self.capacity();
-        let split = (buf, len, cap);
-        (split, split)
-    }
-
-    fn deref_self(&self) -> &Self::Target {
-        &*self
-    }
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-        std::slice::from_raw_parts(split.0, split.1)
-    }
-
-    unsafe fn drop(split: &mut Self::SplitType) {
-        Vec::from_raw_parts(split.0, split.1, split.2);
-    }
-}
-
-#[cfg(feature = "bytes")]
-impl ShallowCopy for bytes::Bytes {
-    unsafe fn shallow_copy(&self) -> ManuallyDrop<Self> {
-        let len = self.len();
-        let buf: &'static [u8] = std::slice::from_raw_parts(self.as_ptr(), len);
-        ManuallyDrop::new(bytes::Bytes::from_static(buf))
-    }
-}
-
-impl<'a, T> ShallowCopy for &'a T
-where
-    T: ?Sized,
-{
-    type SplitType = *const T;
-    type Target = T;
-
-    fn split(self) -> (Self::SplitType, Self::SplitType) {
-        let ptr: Self::SplitType = self;
-        (ptr, ptr)
-    }
-
-    fn deref_self(&self) -> &Self::Target {
-        &*self
-    }
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-        &**split
-    }
-
-    unsafe fn drop(_: &mut Self::SplitType) {}
-}
-
-/// If you are willing to have your values be copied between the two views of the `evmap`,
-/// wrap them in this type.
-///
-/// This is effectively a way to bypass the `ShallowCopy` optimization.
-/// Note that you do not need this wrapper for most `Copy` primitives.
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd, Default)]
-#[repr(transparent)]
-pub struct CopyValue<T>(T);
-
-impl<T: Copy> From<T> for CopyValue<T> {
-    fn from(t: T) -> Self {
-        CopyValue(t)
-    }
-}
-
-impl<T> Deref for CopyValue<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for CopyValue<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl<T> ShallowCopy for CopyValue<T>
-where
-    T: Copy,
-{
-    type SplitType = T;
-    type Target = T;
-
-    fn split(self) -> (Self::SplitType, Self::SplitType) {
-        (self.0, self.0)
-    }
-
-    fn deref_self(&self) -> &Self::Target {
-        &*self
-    }
-
-    unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-        split
-    }
-
-    unsafe fn drop(_: &mut Self::SplitType) {}
-}
-
-macro_rules! impl_shallow_copy_for_copy_primitives {
-    ($($t:ty)*) => ($(
-        impl ShallowCopy for $t {
-            type SplitType = $t;
-            type Target = $t;
-
-            fn split(self) -> (Self::SplitType, Self::SplitType) {
-                (self, self)
-            }
-
-            fn deref_self(&self) -> &Self::Target {
-                &*self
-            }
-
-            unsafe fn deref(split: &Self::SplitType) -> &Self::Target {
-                split
-            }
-
-            unsafe fn drop(_: &mut Self::SplitType) {}
-        }
-    )*)
-}
-
-impl_shallow_copy_for_copy_primitives!(() bool char usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 f32 f64);
-
 // Only public since it appears in the (doc-hidden) variants of `values::ValuesIter`.
 #[doc(hidden)]
-pub enum ForwardThroughShallowCopy<T>
-where
-    T: ShallowCopy,
-{
-    Split(T::SplitType),
-    Ref(*const T::Target),
+pub struct ForwardThroughAliased<T> {
+    aliased: MaybeUninit<T>,
+
+    // We cannot implement Send just because T is Send since we're aliasing it.
+    _no_auto_send: PhantomData<*const T>,
 }
 
-// safety: ShallowCopy requires that the split preserves Send + Sync.
-// since we only ever give out &T, it is okay to Send+Sync us as long as T is Sync
-unsafe impl<T> Send for ForwardThroughShallowCopy<T> where T: ShallowCopy + Sync {}
-unsafe impl<T> Sync for ForwardThroughShallowCopy<T> where T: ShallowCopy + Sync {}
-
-impl<T> ForwardThroughShallowCopy<T>
-where
-    T: ShallowCopy,
-{
-    // unsafe because return value must not be used after the lifetime of the reference ends.
-    pub(crate) unsafe fn from_ref(t: &T::Target) -> Self {
-        ForwardThroughShallowCopy::Ref(t)
+impl<T> From<T> for ForwardThroughAliased<T> {
+    fn from(t: T) -> Self {
+        Self {
+            aliased: MaybeUninit::new(t),
+            _no_auto_send: PhantomData,
+        }
     }
 }
 
+impl<T> ForwardThroughAliased<T> {
+    pub(crate) fn alias(&self) -> Self {
+        // safety:
+        //   We are aliasing T here, but it is okay because:
+        //    a) the T is behind a MaybeUninit, and so will cannot be accessed safely; and
+        //    b) we only expose _either_ &T while aliased, or &mut after the aliasing ends.
+        ForwardThroughAliased {
+            aliased: unsafe { std::ptr::read(&self.aliased) },
+            _no_auto_send: PhantomData,
+        }
+    }
+}
+
+// ForwardThroughAliased gives &T across threads if shared or sent across thread boundaries.
+// ForwardThroughAliased gives &mut T across threads (for drop) if sent across thread boundaries.
+// This implies that we are only Send if T is Send+Sync, and Sync if T is Sync.
+//
+// Note that these bounds are stricter than what the compiler would auto-generate for the type.
+unsafe impl<T> Send for ForwardThroughAliased<T> where T: Send + Sync {}
+unsafe impl<T> Sync for ForwardThroughAliased<T> where T: Sync {}
+
+// XXX: Is this a problem if people start nesting evmaps?
+// I feel like the answer is yes.
 thread_local! {
     static DROP_FOR_REAL: Cell<bool> = Cell::new(false);
 }
 
-pub(crate) unsafe fn drop_copies(yes: bool) {
-    DROP_FOR_REAL.with(|dfr| dfr.set(yes))
+/// Make any dropped `ForwardThroughAliased` actually drop their inner `T`.
+///
+/// When the return value is dropped, dropping `ForwardThroughAliased` will have no effect again.
+///
+/// # Safety
+///
+/// Only set this when any following `ForwardThroughAliased` that are dropped are no longer
+/// aliased.
+pub(crate) unsafe fn drop_copies() -> impl Drop {
+    struct DropGuard;
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            DROP_FOR_REAL.with(|dfr| dfr.set(false));
+        }
+    }
+    let guard = DropGuard;
+    DROP_FOR_REAL.with(|dfr| dfr.set(true));
+    guard
 }
 
-impl<T> Drop for ForwardThroughShallowCopy<T>
-where
-    T: ShallowCopy,
-{
+impl<T> Drop for ForwardThroughAliased<T> {
     fn drop(&mut self) {
         DROP_FOR_REAL.with(move |drop_for_real| {
             if drop_for_real.get() {
-                if let ForwardThroughShallowCopy::Split(s) = self {
-                    unsafe { T::drop(s) };
-                }
+                // safety:
+                //   MaybeUninit<T> was created from a valid T.
+                //   That T has not been dropped (drop_copies is unsafe).
+                //   T is no longer aliased (drop_copies is unsafe),
+                //   so we are allowed to re-take ownership of the T.
+                unsafe { std::ptr::drop_in_place(self.aliased.as_mut_ptr()) }
             }
         })
     }
 }
 
-impl<T> Deref for ForwardThroughShallowCopy<T>
-where
-    T: ShallowCopy,
-{
-    type Target = T::Target;
-    fn deref(&self) -> &Self::Target {
-        match self {
-            ForwardThroughShallowCopy::Split(s) => unsafe { T::deref(s) },
-            ForwardThroughShallowCopy::Ref(r) => unsafe { &**r },
-        }
+impl<T> AsRef<T> for ForwardThroughAliased<T> {
+    fn as_ref(&self) -> &T {
+        // safety:
+        //   MaybeUninit<T> was created from a valid T.
+        //   That T has not been dropped (drop_copies is unsafe).
+        //   All we have done to T is alias it. But, since we only give out &T
+        //   (which should be legal anyway), we're fine.
+        unsafe { &*self.aliased.as_ptr() }
     }
 }
 
-impl<T> AsRef<T::Target> for ForwardThroughShallowCopy<T>
-where
-    T: ShallowCopy,
-{
-    fn as_ref(&self) -> &T::Target {
-        match self {
-            ForwardThroughShallowCopy::Split(s) => unsafe { T::deref(s) },
-            ForwardThroughShallowCopy::Ref(r) => unsafe { &**r },
-        }
+impl<T> Deref for ForwardThroughAliased<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
     }
 }
 
 use std::hash::{Hash, Hasher};
-impl<T> Hash for ForwardThroughShallowCopy<T>
+impl<T> Hash for ForwardThroughAliased<T>
 where
-    T: ShallowCopy,
-    T::Target: Hash,
+    T: Hash,
 {
     fn hash<H>(&self, state: &mut H)
     where
@@ -464,20 +123,18 @@ where
 }
 
 use std::fmt;
-impl<T> fmt::Debug for ForwardThroughShallowCopy<T>
+impl<T> fmt::Debug for ForwardThroughAliased<T>
 where
-    T: ShallowCopy,
-    T::Target: fmt::Debug,
+    T: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_ref().fmt(f)
     }
 }
 
-impl<T> PartialEq for ForwardThroughShallowCopy<T>
+impl<T> PartialEq for ForwardThroughAliased<T>
 where
-    T: ShallowCopy,
-    T::Target: PartialEq,
+    T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         self.as_ref().eq(other.as_ref())
@@ -488,17 +145,11 @@ where
     }
 }
 
-impl<T> Eq for ForwardThroughShallowCopy<T>
-where
-    T: ShallowCopy,
-    T::Target: Eq,
-{
-}
+impl<T> Eq for ForwardThroughAliased<T> where T: Eq {}
 
-impl<T> PartialOrd for ForwardThroughShallowCopy<T>
+impl<T> PartialOrd for ForwardThroughAliased<T>
 where
-    T: ShallowCopy,
-    T::Target: PartialOrd,
+    T: PartialOrd,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         self.as_ref().partial_cmp(other.as_ref())
@@ -521,12 +172,71 @@ where
     }
 }
 
-impl<T> Ord for ForwardThroughShallowCopy<T>
+impl<T> Ord for ForwardThroughAliased<T>
 where
-    T: ShallowCopy,
-    T::Target: Ord,
+    T: Ord,
 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.as_ref().cmp(other.as_ref())
+    }
+}
+
+use std::borrow::Borrow;
+impl<T> Borrow<T> for ForwardThroughAliased<T> {
+    fn borrow(&self) -> &T {
+        self.as_ref()
+    }
+}
+// What we _really_ want here is:
+// ```
+// impl<T, U> Borrow<U> for ForwardThroughAliased<T>
+// where
+//     T: Borrow<U>,
+// {
+//     fn borrow(&self) -> &U {
+//         self.as_ref().borrow()
+//     }
+// }
+// ```
+// But unfortunately that won't work due to trait coherence.
+// Instead, we manually write the nice Borrow impls from std.
+// This won't help with custom Borrow impls, but gets you pretty far.
+impl Borrow<str> for ForwardThroughAliased<String> {
+    fn borrow(&self) -> &str {
+        self.as_ref()
+    }
+}
+impl Borrow<std::path::Path> for ForwardThroughAliased<std::path::PathBuf> {
+    fn borrow(&self) -> &std::path::Path {
+        self.as_ref()
+    }
+}
+impl<T> Borrow<[T]> for ForwardThroughAliased<Vec<T>> {
+    fn borrow(&self) -> &[T] {
+        self.as_ref()
+    }
+}
+impl<T> Borrow<T> for ForwardThroughAliased<Box<T>>
+where
+    T: ?Sized,
+{
+    fn borrow(&self) -> &T {
+        self.as_ref()
+    }
+}
+impl<T> Borrow<T> for ForwardThroughAliased<std::sync::Arc<T>>
+where
+    T: ?Sized,
+{
+    fn borrow(&self) -> &T {
+        self.as_ref()
+    }
+}
+impl<T> Borrow<T> for ForwardThroughAliased<std::rc::Rc<T>>
+where
+    T: ?Sized,
+{
+    fn borrow(&self) -> &T {
+        self.as_ref()
     }
 }

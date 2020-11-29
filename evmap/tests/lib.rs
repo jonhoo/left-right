@@ -27,7 +27,7 @@ fn it_works() {
     // since we're not using `meta`, we get ()
     assert_match!(r.meta_get(&x.0), Some((None, ())));
 
-    w.insert(x.0, x.1);
+    w.insert(x.0, x);
 
     // it is empty even after an add (we haven't refresh yet)
     assert_match!(r.get(&x.0), None);
@@ -42,7 +42,8 @@ fn it_works() {
         Some((Some(1), ()))
     );
     assert_match!(
-        r.get(&x.0).map(|rs| rs.iter().any(|&v| v == x.1)),
+        r.get(&x.0)
+            .map(|rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
         Some(true)
     );
 
@@ -56,7 +57,8 @@ fn it_works() {
     // if we purge, the readers still see the values
     w.purge();
     assert_match!(
-        r.get(&x.0).map(|rs| rs.iter().any(|&v| v == x.1)),
+        r.get(&x.0)
+            .map(|rs| rs.iter().any(|v| v.0 == x.0 && v.1 == x.1)),
         Some(true)
     );
 
@@ -93,7 +95,7 @@ fn mapref() {
         assert_eq!(map.meta(), &());
     }
 
-    w.insert(x.0, x.1);
+    w.insert(x.0, x);
 
     {
         let map = r.enter().unwrap();
@@ -115,7 +117,11 @@ fn mapref() {
         assert_eq!(map.get(&x.0).unwrap().len(), 1);
         assert_eq!(map[&x.0].len(), 1);
         assert_eq!(map.meta(), &());
-        assert!(map.get(&x.0).unwrap().iter().any(|&v| v == x.1));
+        assert!(map
+            .get(&x.0)
+            .unwrap()
+            .iter()
+            .any(|v| v.0 == x.0 && v.1 == x.1));
 
         // non-existing records return None
         assert!(map.get(&'y').is_none());
@@ -124,7 +130,11 @@ fn mapref() {
         // if we purge, the readers still see the values
         w.purge();
 
-        assert!(map.get(&x.0).unwrap().iter().any(|&v| v == x.1));
+        assert!(map
+            .get(&x.0)
+            .unwrap()
+            .iter()
+            .any(|v| v.0 == x.0 && v.1 == x.1));
     }
 
     // but once we refresh, things will be empty
@@ -168,7 +178,7 @@ fn read_after_drop() {
     let x = ('x', 42);
 
     let (mut w, r) = evmap::new();
-    w.insert(x.0, x.1);
+    w.insert(x.0, x);
     w.publish();
     assert_eq!(r.get(&x.0).map(|rs| rs.len()), Some(1));
 
@@ -183,7 +193,7 @@ fn read_after_drop() {
 
 #[test]
 fn clone_types() {
-    let x = evmap::shallow_copy::CopyValue::from(b"xyz");
+    let x = b"xyz";
 
     let (mut w, r) = evmap::new();
     w.insert(&*x, x);
@@ -194,7 +204,7 @@ fn clone_types() {
         r.meta_get(&*x).map(|(rs, m)| (rs.map(|rs| rs.len()), m)),
         Some((Some(1), ()))
     );
-    assert_eq!(r.get(&*x).map(|rs| rs.iter().any(|v| *v == *x)), Some(true));
+    assert_eq!(r.get(&*x).map(|rs| rs.iter().any(|v| *v == x)), Some(true));
 }
 
 #[test]
@@ -313,7 +323,7 @@ fn minimal_query() {
     w.insert(1, "b");
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "a")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
 }
 
 #[test]
@@ -340,11 +350,28 @@ fn clear_vs_empty() {
 fn non_copy_values() {
     let (mut w, r) = evmap::new();
     w.insert(1, "a".to_string());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
+
     w.publish();
-    w.insert(1, "b".to_string());
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "a")).unwrap());
+    assert!(r
+        .get(&1)
+        .map(|rs| {
+            eprintln!("{:?}", rs);
+            rs.iter().any(|r| r == "a")
+        })
+        .unwrap());
+
+    w.insert(1, "b".to_string());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r
+        .get(&1)
+        .map(|rs| {
+            eprintln!("{:?}", rs);
+            rs.iter().any(|r| r == "a")
+        })
+        .unwrap());
 }
 
 #[test]
@@ -356,8 +383,8 @@ fn non_minimal_query() {
     w.insert(1, "c");
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(2));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "a")).unwrap());
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "b")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -369,7 +396,7 @@ fn absorb_negative_immediate() {
     w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "b")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -382,7 +409,7 @@ fn absorb_negative_later() {
     w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "b")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -392,8 +419,8 @@ fn absorb_multi() {
     w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(2));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "a")).unwrap());
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "b")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"a")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 
     w.remove_value(1, "a");
     w.insert(1, "c");
@@ -401,7 +428,7 @@ fn absorb_multi() {
     w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "b")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"b")).unwrap());
 }
 
 #[test]
@@ -415,7 +442,7 @@ fn empty() {
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == "c")).unwrap());
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
@@ -478,7 +505,7 @@ fn empty_post_refresh() {
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), None);
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == "c")).unwrap());
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
@@ -516,9 +543,9 @@ fn replace() {
     w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "x")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"x")).unwrap());
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == "c")).unwrap());
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
@@ -532,9 +559,9 @@ fn replace_post_refresh() {
     w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "x")).unwrap());
+    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == &"x")).unwrap());
     assert_eq!(r.get(&2).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == "c")).unwrap());
+    assert!(r.get(&2).map(|rs| rs.iter().any(|r| r == &"c")).unwrap());
 }
 
 #[test]
@@ -571,7 +598,7 @@ fn map_into() {
     w.insert(1, "x");
 
     use std::collections::HashMap;
-    let copy: HashMap<_, Vec<&'static str>> = r.map_into(|&k, vs| (k, Vec::from_iter(vs.iter())));
+    let copy: HashMap<_, Vec<_>> = r.map_into(|&k, vs| (k, Vec::from_iter(vs.iter().cloned())));
 
     assert_eq!(copy.len(), 2);
     assert!(copy.contains_key(&1));
@@ -612,7 +639,7 @@ fn values() {
         .unwrap()
         .values()
         .map(|value_bag| {
-            let mut inner_items = Vec::from_iter(value_bag.into_iter());
+            let mut inner_items = value_bag.iter().copied().collect::<Vec<_>>();
             inner_items.sort();
             inner_items
         })
@@ -643,6 +670,7 @@ fn clone_churn() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+#[ignore]
 fn bigbag() {
     use std::thread;
     let (mut w, r) = evmap::new();
@@ -756,14 +784,14 @@ fn get_one() {
 
     let (mut w, r) = evmap::new();
 
-    w.insert(x.0, x.1);
-    w.insert(x.0, x.1);
+    w.insert(x.0, x);
+    w.insert(x.0, x);
 
     assert_match!(r.get_one(&x.0), None);
 
     w.publish();
 
-    assert_match!(r.get_one(&x.0).as_deref(), Some(x));
+    assert_match!(r.get_one(&x.0).as_deref(), Some(('x', 42)));
 }
 
 #[test]

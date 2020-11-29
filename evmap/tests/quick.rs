@@ -93,11 +93,11 @@ where
 fn do_ops<K, V, S>(
     ops: &[Op<K, V>],
     evmap: &mut WriteHandle<K, V, (), S>,
-    write_ref: &mut HashMap<K, Vec<V::Target>>,
-    read_ref: &mut HashMap<K, Vec<V::Target>>,
+    write_ref: &mut HashMap<K, Vec<V>>,
+    read_ref: &mut HashMap<K, Vec<V>>,
 ) where
     K: Hash + Eq + Clone,
-    V: evmap::ShallowCopy<Target = V> + Clone + Eq + Hash,
+    V: Clone + Eq + Hash,
     S: BuildHasher + Clone,
 {
     for op in ops {
@@ -130,13 +130,10 @@ fn do_ops<K, V, S>(
     }
 }
 
-fn assert_maps_equivalent<K, V, S>(
-    a: &ReadHandle<K, V, (), S>,
-    b: &HashMap<K, Vec<V::Target>>,
-) -> bool
+fn assert_maps_equivalent<K, V, S>(a: &ReadHandle<K, V, (), S>, b: &HashMap<K, Vec<V>>) -> bool
 where
     K: Clone + Hash + Eq + Debug,
-    V: evmap::ShallowCopy<Target = V> + Hash + Eq + Debug + Ord + Copy,
+    V: Hash + Eq + Debug + Ord + Copy,
     S: BuildHasher,
 {
     assert_eq!(a.len(), b.len());
@@ -153,7 +150,7 @@ where
         return true;
     };
     for key in guard.keys() {
-        let mut ev_map_values: Vec<V::Target> = guard.get(key).unwrap().iter().copied().collect();
+        let mut ev_map_values: Vec<V> = guard.get(key).unwrap().iter().copied().collect();
         ev_map_values.sort();
         let mut map_values = b[key].clone();
         map_values.sort();

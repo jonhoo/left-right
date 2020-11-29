@@ -1,4 +1,4 @@
-use crate::ShallowCopy;
+use crate::shallow_copy::ForwardThroughAliased;
 use crate::{inner::Inner, values::Values};
 use left_right::ReadGuard;
 use std::borrow::Borrow;
@@ -20,8 +20,7 @@ use crate::WriteHandle;
 pub struct MapReadRef<'rh, K, V, M = (), S = RandomState>
 where
     K: Hash + Eq,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     pub(super) guard: ReadGuard<'rh, Inner<K, V, M, S>>,
@@ -30,12 +29,11 @@ where
 impl<'rh, K, V, M, S> fmt::Debug for MapReadRef<'rh, K, V, M, S>
 where
     K: Hash + Eq,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
     K: fmt::Debug,
     M: fmt::Debug,
-    V::Target: fmt::Debug,
+    V: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MapReadRef")
@@ -47,8 +45,7 @@ where
 impl<'rh, K, V, M, S> MapReadRef<'rh, K, V, M, S>
 where
     K: Hash + Eq,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     /// Iterate over all key + valuesets in the map.
@@ -124,7 +121,7 @@ where
     /// Note that not all writes will be included with this read -- only those that have been
     /// published by the writer. If no publish has happened, or the map has been destroyed, this
     /// function returns `None`.
-    pub fn get_one<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a V::Target>
+    pub fn get_one<'a, Q: ?Sized>(&'a self, key: &'_ Q) -> Option<&'a V>
     where
         K: Borrow<Q>,
         Q: Hash + Eq,
@@ -146,16 +143,15 @@ where
 
     /// Returns true if the map contains the specified value for the specified key.
     ///
-    /// The key may be any borrowed form of the map's key type, but `Hash` and
+    /// The key and value may be any borrowed form of the map's respective types, but `Hash` and
     /// `Eq` on the borrowed form *must* match.
-    pub fn contains_value<Q: ?Sized>(&self, key: &Q, value: &V::Target) -> bool
+    pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
     where
         K: Borrow<Q>,
+        ForwardThroughAliased<V>: Borrow<W>,
         Q: Hash + Eq,
+        W: Hash + Eq,
     {
-        // NOTE: It would be really nice to support the V::Target: Borrow<Q> interface here,
-        // but unfortunately we can't do that since we cannot implement Borrow for
-        // ForwardThroughShallowCopy.
         self.guard
             .data
             .get(key)
@@ -166,8 +162,7 @@ where
 impl<'rh, K, Q, V, M, S> std::ops::Index<&'_ Q> for MapReadRef<'rh, K, V, M, S>
 where
     K: Eq + Hash + Borrow<Q>,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     Q: Eq + Hash + ?Sized,
     S: BuildHasher,
 {
@@ -180,8 +175,7 @@ where
 impl<'rg, 'rh, K, V, M, S> IntoIterator for &'rg MapReadRef<'rh, K, V, M, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     type Item = (&'rg K, &'rg Values<V, S>);
@@ -195,8 +189,7 @@ where
 pub struct ReadGuardIter<'rg, K, V, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
@@ -205,10 +198,9 @@ where
 impl<'rg, K, V, S> fmt::Debug for ReadGuardIter<'rg, K, V, S>
 where
     K: Eq + Hash + fmt::Debug,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
-    V::Target: fmt::Debug,
+    V: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("ReadGuardIter").field(&self.iter).finish()
@@ -218,8 +210,7 @@ where
 impl<'rg, K, V, S> Iterator for ReadGuardIter<'rg, K, V, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     type Item = (&'rg K, &'rg Values<V, S>);
@@ -232,8 +223,7 @@ where
 pub struct KeysIter<'rg, K, V, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
@@ -242,10 +232,9 @@ where
 impl<'rg, K, V, S> fmt::Debug for KeysIter<'rg, K, V, S>
 where
     K: Eq + Hash + fmt::Debug,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
-    V::Target: fmt::Debug,
+    V: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("KeysIter").field(&self.iter).finish()
@@ -255,8 +244,7 @@ where
 impl<'rg, K, V, S> Iterator for KeysIter<'rg, K, V, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     type Item = &'rg K;
@@ -269,8 +257,7 @@ where
 pub struct ValuesIter<'rg, K, V, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
@@ -279,10 +266,9 @@ where
 impl<'rg, K, V, S> fmt::Debug for ValuesIter<'rg, K, V, S>
 where
     K: Eq + Hash + fmt::Debug,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
-    V::Target: fmt::Debug,
+    V: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("ValuesIter").field(&self.iter).finish()
@@ -292,8 +278,7 @@ where
 impl<'rg, K, V, S> Iterator for ValuesIter<'rg, K, V, S>
 where
     K: Eq + Hash,
-    V: ShallowCopy,
-    V::Target: Eq + Hash,
+    V: Eq + Hash,
     S: BuildHasher,
 {
     type Item = &'rg Values<V, S>;
