@@ -103,8 +103,8 @@ where
         // this is safe, since we know that no readers are using this pointer
         // anymore (due to the .wait() following swapping the pointer with NULL).
         //
-        // safety: w_handle was initially crated from a `Box`, and is no longer aliased.
-        drop(unsafe { Box::from_raw(r_handle) });
+        // safety: r_handle was initially crated from a `Box`, and is no longer aliased.
+        Absorb::drop_second(unsafe { Box::from_raw(r_handle) });
     }
 }
 
