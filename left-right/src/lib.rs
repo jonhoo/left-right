@@ -232,6 +232,11 @@ pub trait Absorb<O> {
     ///
     /// Defaults to calling `Self::drop`.
     fn drop_first(self: Box<Self>) {}
+
+    /// Drop the second of the two copies.
+    ///
+    /// Defaults to calling `Self::drop`.
+    fn drop_second(self: Box<Self>) {}
 }
 
 /// Construct a new write and read handle pair from an empty data structure.

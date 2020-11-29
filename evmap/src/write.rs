@@ -542,13 +542,18 @@ where
     fn drop_first(self: Box<Self>) {
         // since the two copies are exactly equal, we need to make sure that we *don't* call the
         // destructors of any of the values that are in our map, as they'll all be called when the
-        // last read handle goes out of scope. to do so, we first clear w_handle, which won't drop
-        // any elements since its values are kept as ManuallyDrop:
+        // last read handle goes out of scope.
         //
         // Safety: ManuallyDrop<T> has the same layout as T.
         let inner =
             unsafe { Box::from_raw(Box::into_raw(self) as *mut Inner<K, ManuallyDrop<V>, M, S>) };
         drop(inner);
+    }
+
+    fn drop_second(self: Box<Self>) {
+        // when the second copy is dropped is where we want to _actually_ drop all the values in
+        // the map. this happens automatically.
+        drop(self);
     }
 }
 
