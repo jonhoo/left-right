@@ -1,3 +1,2 @@
 [workspace]
 members = ["evmap", "left-right"]
-exclude = ["evmap-derive"]
