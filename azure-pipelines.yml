@@ -20,14 +20,16 @@ stages:
         - template: install-rust.yml@templates
         - script: cargo test
           displayName: cargo test
+          workingDirectory: "evmap-derive"
     - job: benchmark
       displayName: "Check that benchmark compiles"
       pool:
         vmImage: ubuntu-latest
       steps:
         - template: install-rust.yml@templates
-        - bash: cd benchmark && cargo check
+        - script: cargo check
           displayName: cargo check benchmark/
+          workingDirectory: "evmap/benchmark"
     - job: miri
       displayName: "Run miri on test suite"
       pool:
@@ -43,8 +45,10 @@ stages:
               - miri
         - script: cargo miri setup
           displayName: cargo miri setup
+          workingDirectory: "evmap"
         - script: cargo miri test
           displayName: cargo miri test
+          workingDirectory: "evmap"
           env:
             QUICKCHECK_TESTS: 500
     - job: asan
@@ -62,6 +66,7 @@ stages:
         - script: |
               env ASAN_OPTIONS="detect_odr_violation=0" RUSTFLAGS="-Z sanitizer=address" cargo test --lib --tests --target x86_64-unknown-linux-gnu
           displayName: cargo -Z sanitizer=address test
+          workingDirectory: "evmap"
     - job: lsan
       displayName: "Run leak sanitizer on test suite"
       pool:
@@ -79,6 +84,7 @@ stages:
         - script: |
               env RUSTFLAGS="-Z sanitizer=leak" cargo test --target x86_64-unknown-linux-gnu
           displayName: cargo -Z sanitizer=leak test
+          workingDirectory: "evmap"
 
 resources:
   repositories:
