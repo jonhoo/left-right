@@ -355,23 +355,11 @@ fn non_copy_values() {
     w.publish();
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r
-        .get(&1)
-        .map(|rs| {
-            eprintln!("{:?}", rs);
-            rs.iter().any(|r| r == "a")
-        })
-        .unwrap());
+    assert!(r.get(&1).map(|rs| { rs.iter().any(|r| r == "a") }).unwrap());
 
     w.insert(1, "b".to_string());
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r
-        .get(&1)
-        .map(|rs| {
-            eprintln!("{:?}", rs);
-            rs.iter().any(|r| r == "a")
-        })
-        .unwrap());
+    assert!(r.get(&1).map(|rs| { rs.iter().any(|r| r == "a") }).unwrap());
 }
 
 #[test]
@@ -670,7 +658,6 @@ fn clone_churn() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[ignore]
 fn bigbag() {
     use std::thread;
     let (mut w, r) = evmap::new();
