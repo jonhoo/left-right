@@ -350,11 +350,16 @@ fn clear_vs_empty() {
 fn non_copy_values() {
     let (mut w, r) = evmap::new();
     w.insert(1, "a".to_string());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), None);
+
     w.publish();
-    w.insert(1, "b".to_string());
 
     assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
-    assert!(r.get(&1).map(|rs| rs.iter().any(|r| r == "a")).unwrap());
+    assert!(r.get(&1).map(|rs| { rs.iter().any(|r| r == "a") }).unwrap());
+
+    w.insert(1, "b".to_string());
+    assert_eq!(r.get(&1).map(|rs| rs.len()), Some(1));
+    assert!(r.get(&1).map(|rs| { rs.iter().any(|r| r == "a") }).unwrap());
 }
 
 #[test]
