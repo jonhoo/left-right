@@ -2,6 +2,7 @@ use crate::{inner::Inner, values::Values};
 use left_right::ReadGuard;
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
 // To make [`WriteHandle`] and friends work.
@@ -15,7 +16,6 @@ use crate::WriteHandle;
 ///
 /// Since the map remains immutable while this lives, the methods on this type all give you
 /// unguarded references to types contained in the map.
-#[derive(Debug)]
 pub struct MapReadRef<'rh, K, V, M = (), S = RandomState>
 where
     K: Hash + Eq,
@@ -23,6 +23,22 @@ where
     S: BuildHasher,
 {
     pub(super) guard: ReadGuard<'rh, Inner<K, V, M, S>>,
+}
+
+impl<'rh, K, V, M, S> fmt::Debug for MapReadRef<'rh, K, V, M, S>
+where
+    K: Hash + Eq,
+    V: Eq + Hash,
+    S: BuildHasher,
+    K: fmt::Debug,
+    M: fmt::Debug,
+    V: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MapReadRef")
+            .field("guard", &self.guard)
+            .finish()
+    }
 }
 
 impl<'rh, K, V, M, S> MapReadRef<'rh, K, V, M, S>
@@ -169,7 +185,6 @@ where
 }
 
 /// An [`Iterator`] over keys and values in the evmap.
-#[derive(Debug)]
 pub struct ReadGuardIter<'rg, K, V, S>
 where
     K: Eq + Hash,
@@ -177,6 +192,18 @@ where
     S: BuildHasher,
 {
     iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
+}
+
+impl<'rg, K, V, S> fmt::Debug for ReadGuardIter<'rg, K, V, S>
+where
+    K: Eq + Hash + fmt::Debug,
+    V: Eq + Hash,
+    S: BuildHasher,
+    V: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ReadGuardIter").field(&self.iter).finish()
+    }
 }
 
 impl<'rg, K, V, S> Iterator for ReadGuardIter<'rg, K, V, S>
@@ -192,7 +219,6 @@ where
 }
 
 /// An [`Iterator`] over keys.
-#[derive(Debug)]
 pub struct KeysIter<'rg, K, V, S>
 where
     K: Eq + Hash,
@@ -200,6 +226,18 @@ where
     S: BuildHasher,
 {
     iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
+}
+
+impl<'rg, K, V, S> fmt::Debug for KeysIter<'rg, K, V, S>
+where
+    K: Eq + Hash + fmt::Debug,
+    V: Eq + Hash,
+    S: BuildHasher,
+    V: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("KeysIter").field(&self.iter).finish()
+    }
 }
 
 impl<'rg, K, V, S> Iterator for KeysIter<'rg, K, V, S>
@@ -215,7 +253,6 @@ where
 }
 
 /// An [`Iterator`] over value sets.
-#[derive(Debug)]
 pub struct ValuesIter<'rg, K, V, S>
 where
     K: Eq + Hash,
@@ -223,6 +260,18 @@ where
     S: BuildHasher,
 {
     iter: <&'rg crate::inner::MapImpl<K, Values<V, S>, S> as IntoIterator>::IntoIter,
+}
+
+impl<'rg, K, V, S> fmt::Debug for ValuesIter<'rg, K, V, S>
+where
+    K: Eq + Hash + fmt::Debug,
+    V: Eq + Hash,
+    S: BuildHasher,
+    V: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ValuesIter").field(&self.iter).finish()
+    }
 }
 
 impl<'rg, K, V, S> Iterator for ValuesIter<'rg, K, V, S>

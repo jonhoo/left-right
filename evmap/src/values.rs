@@ -108,12 +108,23 @@ impl<'a, T, S> IntoIterator for &'a Values<T, S> {
     }
 }
 
-#[derive(Debug)]
 pub enum ValuesIter<'a, T, S> {
     #[doc(hidden)]
     Short(<&'a smallvec::SmallVec<[T; 1]> as IntoIterator>::IntoIter),
     #[doc(hidden)]
     Long(<&'a hashbag::HashBag<T, S> as IntoIterator>::IntoIter),
+}
+
+impl<'a, T, S> fmt::Debug for ValuesIter<'a, T, S>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ValuesIter::Short(ref it) => f.debug_tuple("Short").field(it).finish(),
+            ValuesIter::Long(ref it) => f.debug_tuple("Long").field(it).finish(),
+        }
+    }
 }
 
 impl<'a, T, S> Iterator for ValuesIter<'a, T, S> {

@@ -255,7 +255,6 @@ impl<V: ?Sized> fmt::Debug for Predicate<V> {
 
 /// A pending map operation.
 #[non_exhaustive]
-#[derive(PartialEq, Eq, Debug)]
 pub(crate) enum Operation<K, V, M> {
     /// Replace the set of entries for this key with this value.
     Replace(K, V),
@@ -295,6 +294,34 @@ pub(crate) enum Operation<K, V, M> {
     SetMeta(M),
     /// Copy over the contents of the read map wholesale as the write map is empty.
     JustCloneRHandle,
+}
+
+impl<K, V, M> fmt::Debug for Operation<K, V, M>
+where
+    K: fmt::Debug,
+    V: fmt::Debug,
+    M: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Operation::Replace(ref a, ref b) => f.debug_tuple("Replace").field(a).field(b).finish(),
+            Operation::Add(ref a, ref b) => f.debug_tuple("Add").field(a).field(b).finish(),
+            Operation::RemoveValue(ref a, ref b) => {
+                f.debug_tuple("RemoveValue").field(a).field(b).finish()
+            }
+            Operation::RemoveEntry(ref a) => f.debug_tuple("RemoveEntry").field(a).finish(),
+            #[cfg(feature = "eviction")]
+            Operation::EmptyAt(ref a) => f.debug_tuple("EmptyAt").field(a).finish(),
+            Operation::Clear(ref a) => f.debug_tuple("Clear").field(a).finish(),
+            Operation::Purge => f.debug_tuple("Purge").finish(),
+            Operation::Retain(ref a, ref b) => f.debug_tuple("Retain").field(a).field(b).finish(),
+            Operation::Fit(ref a) => f.debug_tuple("Fit").field(a).finish(),
+            Operation::Reserve(ref a, ref b) => f.debug_tuple("Reserve").field(a).field(b).finish(),
+            Operation::MarkReady => f.debug_tuple("MarkReady").finish(),
+            Operation::SetMeta(ref a) => f.debug_tuple("SetMeta").field(a).finish(),
+            Operation::JustCloneRHandle => f.debug_tuple("JustCloneRHandle").finish(),
+        }
+    }
 }
 
 /// Options for how to initialize the map.
