@@ -18,6 +18,9 @@ stages:
         vmImage: ubuntu-latest
       steps:
         - template: install-rust.yml@templates
+          parameters:
+            components:
+              - rust-src
         - script: cargo test
           displayName: cargo test
           workingDirectory: "evmap-derive"
