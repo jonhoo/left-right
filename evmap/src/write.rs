@@ -126,7 +126,8 @@ where
                 let mut w_inner = self.handle.raw_write_handle();
                 let w_inner = unsafe { w_inner.as_mut() };
                 let r_handle = self.handle.enter().expect("map has not yet been destroyed");
-                // because we are applying second, we _do_ want to perform drops
+                // Because we are operating directly on the map, and nothing is aliased, we do want
+                // to perform drops, so we invoke absorb_second.
                 Absorb::absorb_second(w_inner, op, &*r_handle);
             }
 
