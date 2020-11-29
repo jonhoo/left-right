@@ -1,6 +1,4 @@
-use crate::inner::Inner;
-use crate::shallow_copy::ForwardThroughAliased;
-use crate::values::Values;
+use crate::{inner::Inner, Aliased, Values};
 use left_right::ReadGuard;
 
 use std::borrow::Borrow;
@@ -210,7 +208,7 @@ where
     pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
     where
         K: Borrow<Q>,
-        ForwardThroughAliased<V>: Borrow<W>,
+        Aliased<V>: Borrow<W>,
         Q: Hash + Eq,
         W: Hash + Eq,
         V: Hash + Eq,

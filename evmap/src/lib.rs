@@ -214,8 +214,8 @@ pub use crate::write::WriteHandle;
 mod read;
 pub use crate::read::{MapReadRef, ReadGuardIter, ReadHandle, ReadHandleFactory};
 
-mod shallow_copy;
-use shallow_copy::ForwardThroughAliased;
+mod aliasing;
+pub use aliasing::Aliased;
 
 // Expose `ReadGuard` since it has useful methods the user will likely care about.
 #[doc(inline)]
@@ -257,9 +257,9 @@ impl<V: ?Sized> fmt::Debug for Predicate<V> {
 #[non_exhaustive]
 pub(crate) enum Operation<K, V, M> {
     /// Replace the set of entries for this key with this value.
-    Replace(K, ForwardThroughAliased<V>),
+    Replace(K, Aliased<V>),
     /// Add this value to the set of entries for this key.
-    Add(K, ForwardThroughAliased<V>),
+    Add(K, Aliased<V>),
     /// Remove this value from the set of entries for this key.
     RemoveValue(K, V),
     /// Remove the value set for this key.

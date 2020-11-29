@@ -1,4 +1,4 @@
-use crate::shallow_copy::ForwardThroughAliased;
+use crate::Aliased;
 use std::borrow::Borrow;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
@@ -27,8 +27,8 @@ where
 }
 
 enum ValuesInner<T, S> {
-    Short(smallvec::SmallVec<[ForwardThroughAliased<T>; 1]>),
-    Long(hashbag::HashBag<ForwardThroughAliased<T>, S>),
+    Short(smallvec::SmallVec<[Aliased<T>; 1]>),
+    Long(hashbag::HashBag<Aliased<T>, S>),
 }
 
 impl<T, S> Values<T, S> {
@@ -84,7 +84,7 @@ impl<T, S> Values<T, S> {
     /// *must* match those for the value type.
     pub fn contains<Q: ?Sized>(&self, value: &Q) -> bool
     where
-        ForwardThroughAliased<T>: Borrow<Q>,
+        Aliased<T>: Borrow<Q>,
         Q: Eq + Hash,
         T: Eq + Hash,
         S: BuildHasher,
@@ -111,9 +111,9 @@ impl<'a, T, S> IntoIterator for &'a Values<T, S> {
 
 pub enum ValuesIter<'a, T, S> {
     #[doc(hidden)]
-    Short(<&'a smallvec::SmallVec<[ForwardThroughAliased<T>; 1]> as IntoIterator>::IntoIter),
+    Short(<&'a smallvec::SmallVec<[Aliased<T>; 1]> as IntoIterator>::IntoIter),
     #[doc(hidden)]
-    Long(<&'a hashbag::HashBag<ForwardThroughAliased<T>, S> as IntoIterator>::IntoIter),
+    Long(<&'a hashbag::HashBag<Aliased<T>, S> as IntoIterator>::IntoIter),
 }
 
 impl<'a, T, S> fmt::Debug for ValuesIter<'a, T, S>
@@ -269,7 +269,7 @@ where
         }
     }
 
-    pub(crate) fn push(&mut self, value: ForwardThroughAliased<T>, hasher: &S) {
+    pub(crate) fn push(&mut self, value: Aliased<T>, hasher: &S) {
         match self.0 {
             ValuesInner::Short(ref mut v) => {
                 // we may want to upgrade to a Long..
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn short_values() {
-        let _guard = unsafe { crate::shallow_copy::drop_copies() };
+        let _guard = unsafe { crate::aliasing::drop_copies() };
 
         let hasher = RandomState::default();
         let mut v = Values::new();
@@ -360,7 +360,7 @@ mod tests {
         let values = 0..BAG_THRESHOLD - 1;
         let len = values.clone().count();
         for i in values.clone() {
-            v.push(ForwardThroughAliased::from(i), &hasher);
+            v.push(Aliased::from(i), &hasher);
         }
 
         for i in values.clone() {
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn long_values() {
-        let _guard = unsafe { crate::shallow_copy::drop_copies() };
+        let _guard = unsafe { crate::aliasing::drop_copies() };
 
         let hasher = RandomState::default();
         let mut v = Values::new();
@@ -393,7 +393,7 @@ mod tests {
         let values = 0..BAG_THRESHOLD;
         let len = values.clone().count();
         for i in values.clone() {
-            v.push(ForwardThroughAliased::from(i), &hasher);
+            v.push(Aliased::from(i), &hasher);
         }
 
         for i in values.clone() {

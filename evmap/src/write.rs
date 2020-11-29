@@ -1,7 +1,6 @@
-use super::{Operation, Predicate};
+use super::{Aliased, Operation, Predicate};
 use crate::inner::Inner;
 use crate::read::ReadHandle;
-use crate::shallow_copy::ForwardThroughAliased;
 use crate::values::Values;
 use left_right::Absorb;
 
@@ -147,7 +146,7 @@ where
     /// The updated value-bag will only be visible to readers after the next call to
     /// [`publish`](Self::publish).
     pub fn insert(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Add(k, ForwardThroughAliased::from(v)))
+        self.add_op(Operation::Add(k, Aliased::from(v)))
     }
 
     /// Replace the value-bag of the given key with the given value.
@@ -161,7 +160,7 @@ where
     /// The new value will only be visible to readers after the next call to
     /// [`publish`](Self::publish).
     pub fn update(&mut self, k: K, v: V) -> &mut Self {
-        self.add_op(Operation::Replace(k, ForwardThroughAliased::from(v)))
+        self.add_op(Operation::Replace(k, Aliased::from(v)))
     }
 
     /// Clear the value-bag of the given key, without removing it.
@@ -426,9 +425,9 @@ where
 
     /// Apply operations while allowing dropping of values
     fn absorb_second(&mut self, op: Operation<K, V, M>, other: &Self) {
-        let _guard = unsafe { crate::shallow_copy::drop_copies() };
+        let _guard = unsafe { crate::aliasing::drop_copies() };
         // NOTE: the dropping here applies equally to Vs in the Operation as to Vs in the map.
-        // So, we need to make sure _consume_ the ForwardThroughAliased from the oplog.
+        // So, we need to make sure _consume_ the Aliased from the oplog.
 
         let hasher = other.data.hasher();
         match op {
@@ -537,7 +536,7 @@ where
         // the map. we do that by setting drop_copies to true. we do it with a guard though to make
         // sure that if drop panics we unset the thread-local!
 
-        let _guard = unsafe { crate::shallow_copy::drop_copies() };
+        let _guard = unsafe { crate::aliasing::drop_copies() };
         drop(self);
     }
 }

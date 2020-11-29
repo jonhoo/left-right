@@ -1,5 +1,4 @@
-use crate::shallow_copy::ForwardThroughAliased;
-use crate::{inner::Inner, values::Values};
+use crate::{inner::Inner, Aliased, Values};
 use left_right::ReadGuard;
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
@@ -148,7 +147,7 @@ where
     pub fn contains_value<Q: ?Sized, W: ?Sized>(&self, key: &Q, value: &W) -> bool
     where
         K: Borrow<Q>,
-        ForwardThroughAliased<V>: Borrow<W>,
+        Aliased<V>: Borrow<W>,
         Q: Hash + Eq,
         W: Hash + Eq,
     {
