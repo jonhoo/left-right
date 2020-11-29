@@ -108,6 +108,7 @@ impl<'a, T, S> IntoIterator for &'a Values<T, S> {
     }
 }
 
+#[non_exhaustive]
 pub enum ValuesIter<'a, T, S> {
     #[doc(hidden)]
     Short(<&'a smallvec::SmallVec<[T; 1]> as IntoIterator>::IntoIter),
