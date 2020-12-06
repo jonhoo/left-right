@@ -213,8 +213,8 @@ impl Backend for sync::Arc<parking_lot::RwLock<HashMap<usize, usize>>> {
 }
 
 enum EvHandle {
-    Read(evmap::ReadHandle<usize, usize>),
-    Write(sync::Arc<parking_lot::Mutex<(evmap::WriteHandle<usize, usize>, usize, usize)>>),
+    Read(evmap::handles::ReadHandle<usize, usize>),
+    Write(sync::Arc<parking_lot::Mutex<(evmap::handles::WriteHandle<usize, usize>, usize, usize)>>),
 }
 
 impl Backend for EvHandle {

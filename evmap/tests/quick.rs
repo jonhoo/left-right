@@ -2,7 +2,7 @@
 
 extern crate evmap;
 
-use evmap::{ReadHandle, WriteHandle};
+use evmap::handles::{ReadHandle, WriteHandle};
 
 extern crate quickcheck;
 #[macro_use(quickcheck)]
@@ -97,7 +97,7 @@ fn do_ops<K, V, S>(
     read_ref: &mut HashMap<K, Vec<V>>,
 ) where
     K: Hash + Eq + Clone,
-    V: Clone + evmap::ShallowCopy + Eq + Hash,
+    V: Clone + Eq + Hash,
     S: BuildHasher + Clone,
 {
     for op in ops {

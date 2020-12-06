@@ -193,7 +193,7 @@ fn read_after_drop() {
 
 #[test]
 fn clone_types() {
-    let x = evmap::shallow_copy::CopyValue::from(b"xyz");
+    let x = b"xyz";
 
     let (mut w, r) = evmap::new();
     w.insert(&*x, x);

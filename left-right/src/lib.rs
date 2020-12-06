@@ -180,6 +180,8 @@ pub use crate::write::WriteHandle;
 mod read;
 pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};
 
+pub mod aliasing;
+
 /// Types that can incorporate operations of type `O`.
 ///
 /// This trait allows `left-right` to keep the two copies of the underlying data structure (see the
@@ -231,11 +233,13 @@ pub trait Absorb<O> {
     /// Drop the first of the two copies.
     ///
     /// Defaults to calling `Self::drop`.
+    #[allow(clippy::boxed_local)]
     fn drop_first(self: Box<Self>) {}
 
     /// Drop the second of the two copies.
     ///
     /// Defaults to calling `Self::drop`.
+    #[allow(clippy::boxed_local)]
     fn drop_second(self: Box<Self>) {}
 }
 

@@ -166,8 +166,8 @@
 //!
 //! [`ReadHandle`] is not `Sync` as sharing a single instance amongst threads would introduce a
 //! significant performance bottleneck. A fresh `ReadHandle` needs to be created for each thread
-//! either by cloning a [`ReadHandle`] or from a [`ReadHandleFactory`]. For further information,
-//! see [`left_right::ReadHandle`].
+//! either by cloning a [`ReadHandle`] or from a [`handles::ReadHandleFactory`]. For further
+//! information, see [`left_right::ReadHandle`].
 //!
 //! # Implementation
 //!
@@ -179,8 +179,8 @@
 //!
 //! # Value storage
 //!
-//! The values for each key in the map are stored in [`Values`]. Conceptually, each `Values` is a
-//! _bag_ or _multiset_; it can store multiple copies of the same value. `evmap` applies some
+//! The values for each key in the map are stored in [`refs::Values`]. Conceptually, each `Values`
+//! is a _bag_ or _multiset_; it can store multiple copies of the same value. `evmap` applies some
 //! cleverness in an attempt to reduce unnecessary allocations and keep the cost of operations on
 //! even large value-bags small. For small bags, `Values` uses the `smallvec` crate. This avoids
 //! allocation entirely for single-element bags, and uses a `Vec` if the bag is relatively small.
@@ -197,132 +197,47 @@
     broken_intra_doc_links
 )]
 #![allow(clippy::type_complexity)]
+// This _should_ detect if we ever accidentally leak aliasing::NoDrop.
+// But, currently, it does not..
+#![deny(unreachable_pub)]
 
+use crate::inner::Inner;
+use crate::read::ReadHandle;
+use crate::write::WriteHandle;
+use left_right::aliasing::Aliased;
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
 mod inner;
-use crate::inner::Inner;
-
-mod values;
-pub use values::Values;
-
-mod write;
-pub use crate::write::WriteHandle;
-
 mod read;
-pub use crate::read::{MapReadRef, ReadGuardIter, ReadHandle, ReadHandleFactory};
+mod values;
+mod write;
 
-pub mod shallow_copy;
-pub use crate::shallow_copy::ShallowCopy;
+/// Handles to the read and write halves of an `evmap`.
+pub mod handles {
+    pub use crate::write::WriteHandle;
 
-// Expose `ReadGuard` since it has useful methods the user will likely care about.
-#[doc(inline)]
-pub use left_right::ReadGuard;
-
-/// Unary predicate used to retain elements.
-///
-/// The predicate function is called once for each distinct value, and `true` if this is the
-/// _first_ call to the predicate on the _second_ application of the operation.
-pub struct Predicate<V: ?Sized>(pub(crate) Box<dyn FnMut(&V, bool) -> bool + Send>);
-
-impl<V: ?Sized> Predicate<V> {
-    /// Evaluate the predicate for the given element
-    #[inline]
-    pub fn eval(&mut self, value: &V, reset: bool) -> bool {
-        (*self.0)(value, reset)
-    }
+    // These cannot use ::{..} syntax because of
+    // https://github.com/rust-lang/rust/issues/57411
+    pub use crate::read::ReadHandle;
+    pub use crate::read::ReadHandleFactory;
 }
 
-impl<V: ?Sized> PartialEq for Predicate<V> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        // only compare data, not vtable: https://stackoverflow.com/q/47489449/472927
-        &*self.0 as *const _ as *const () == &*other.0 as *const _ as *const ()
-    }
+/// Helper types that give access to values inside the read half of an `evmap`.
+pub mod refs {
+    // Same here, ::{..} won't work.
+    pub use super::values::Values;
+    pub use crate::read::MapReadRef;
+    pub use crate::read::ReadGuardIter;
+
+    // Expose `ReadGuard` since it has useful methods the user will likely care about.
+    #[doc(inline)]
+    pub use left_right::ReadGuard;
 }
 
-impl<V: ?Sized> Eq for Predicate<V> {}
-
-impl<V: ?Sized> fmt::Debug for Predicate<V> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Predicate")
-            .field(&format_args!("{:p}", &*self.0 as *const _))
-            .finish()
-    }
-}
-
-/// A pending map operation.
-#[non_exhaustive]
-pub(crate) enum Operation<K, V, M> {
-    /// Replace the set of entries for this key with this value.
-    Replace(K, V),
-    /// Add this value to the set of entries for this key.
-    Add(K, V),
-    /// Remove this value from the set of entries for this key.
-    RemoveValue(K, V),
-    /// Remove the value set for this key.
-    RemoveEntry(K),
-    #[cfg(feature = "eviction")]
-    /// Drop keys at the given indices.
-    ///
-    /// The list of indices must be sorted in ascending order.
-    EmptyAt(Vec<usize>),
-    /// Remove all values in the value set for this key.
-    Clear(K),
-    /// Remove all values for all keys.
-    ///
-    /// Note that this will iterate once over all the keys internally.
-    Purge,
-    /// Retains all values matching the given predicate.
-    Retain(K, Predicate<V>),
-    /// Shrinks [`Values`] to their minimum necessary size, freeing memory
-    /// and potentially improving cache locality.
-    ///
-    /// If no key is given, all `Values` will shrink to fit.
-    Fit(Option<K>),
-    /// Reserves capacity for some number of additional elements in [`Values`]
-    /// for the given key. If the given key does not exist, allocate an empty
-    /// `Values` with the given capacity.
-    ///
-    /// This can improve performance by pre-allocating space for large bags of values.
-    Reserve(K, usize),
-    /// Mark the map as ready to be consumed for readers.
-    MarkReady,
-    /// Set the value of the map meta.
-    SetMeta(M),
-    /// Copy over the contents of the read map wholesale as the write map is empty.
-    JustCloneRHandle,
-}
-
-impl<K, V, M> fmt::Debug for Operation<K, V, M>
-where
-    K: fmt::Debug,
-    V: fmt::Debug,
-    M: fmt::Debug,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Operation::Replace(ref a, ref b) => f.debug_tuple("Replace").field(a).field(b).finish(),
-            Operation::Add(ref a, ref b) => f.debug_tuple("Add").field(a).field(b).finish(),
-            Operation::RemoveValue(ref a, ref b) => {
-                f.debug_tuple("RemoveValue").field(a).field(b).finish()
-            }
-            Operation::RemoveEntry(ref a) => f.debug_tuple("RemoveEntry").field(a).finish(),
-            #[cfg(feature = "eviction")]
-            Operation::EmptyAt(ref a) => f.debug_tuple("EmptyAt").field(a).finish(),
-            Operation::Clear(ref a) => f.debug_tuple("Clear").field(a).finish(),
-            Operation::Purge => f.debug_tuple("Purge").finish(),
-            Operation::Retain(ref a, ref b) => f.debug_tuple("Retain").field(a).field(b).finish(),
-            Operation::Fit(ref a) => f.debug_tuple("Fit").field(a).finish(),
-            Operation::Reserve(ref a, ref b) => f.debug_tuple("Reserve").field(a).field(b).finish(),
-            Operation::MarkReady => f.debug_tuple("MarkReady").finish(),
-            Operation::SetMeta(ref a) => f.debug_tuple("SetMeta").field(a).finish(),
-            Operation::JustCloneRHandle => f.debug_tuple("JustCloneRHandle").finish(),
-        }
-    }
-}
+// NOTE: It is _critical_ that this module is not public.
+mod aliasing;
 
 /// Options for how to initialize the map.
 ///
@@ -400,7 +315,7 @@ where
     where
         K: Eq + Hash + Clone,
         S: BuildHasher + Clone,
-        V: Eq + Hash + ShallowCopy,
+        V: Eq + Hash,
         M: 'static + Clone,
     {
         let inner = if let Some(cap) = self.capacity {
@@ -410,7 +325,7 @@ where
         };
 
         let (mut w, r) = left_right::new_from_empty(inner);
-        w.append(Operation::MarkReady);
+        w.append(write::Operation::MarkReady);
 
         (WriteHandle::new(w), ReadHandle::new(r))
     }
@@ -426,7 +341,7 @@ pub fn new<K, V>() -> (
 )
 where
     K: Eq + Hash + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: Eq + Hash,
 {
     Options::default().construct()
 }
@@ -443,7 +358,7 @@ pub fn with_meta<K, V, M>(
 )
 where
     K: Eq + Hash + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: Eq + Hash,
     M: 'static + Clone,
 {
     Options::default().with_meta(meta).construct()
@@ -459,7 +374,7 @@ pub fn with_hasher<K, V, M, S>(
 ) -> (WriteHandle<K, V, M, S>, ReadHandle<K, V, M, S>)
 where
     K: Eq + Hash + Clone,
-    V: Eq + Hash + ShallowCopy,
+    V: Eq + Hash,
     M: 'static + Clone,
     S: BuildHasher + Clone,
 {

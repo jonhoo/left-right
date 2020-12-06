@@ -6,14 +6,16 @@ pub(crate) use indexmap::IndexMap as MapImpl;
 #[cfg(not(feature = "indexed"))]
 pub(crate) use std::collections::HashMap as MapImpl;
 
-use crate::values::Values;
+use crate::values::ValuesInner;
+use left_right::aliasing::DropBehavior;
 
-pub(crate) struct Inner<K, V, M, S>
+pub(crate) struct Inner<K, V, M, S, D = crate::aliasing::NoDrop>
 where
     K: Eq + Hash,
     S: BuildHasher,
+    D: DropBehavior,
 {
-    pub(crate) data: MapImpl<K, Values<V, S>, S>,
+    pub(crate) data: MapImpl<K, ValuesInner<V, S, D>, S>,
     pub(crate) meta: M,
     pub(crate) ready: bool,
 }
@@ -58,7 +60,7 @@ where
     K: Eq + Hash,
     S: BuildHasher,
 {
-    pub fn with_hasher(m: M, hash_builder: S) -> Self {
+    pub(crate) fn with_hasher(m: M, hash_builder: S) -> Self {
         Inner {
             data: MapImpl::with_hasher(hash_builder),
             meta: m,
@@ -66,7 +68,7 @@ where
         }
     }
 
-    pub fn with_capacity_and_hasher(m: M, capacity: usize, hash_builder: S) -> Self {
+    pub(crate) fn with_capacity_and_hasher(m: M, capacity: usize, hash_builder: S) -> Self {
         Inner {
             data: MapImpl::with_capacity_and_hasher(capacity, hash_builder),
             meta: m,
