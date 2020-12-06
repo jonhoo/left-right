@@ -48,6 +48,6 @@ especially on the read side. This benchmark represents the worst-case usage of
 `evmap` in which every write also does a `refresh`. If the map is refreshed
 less often, performance increases (see bottom plot).
 
-![Read throughput](benchmark/read-throughput.png)
-![Write throughput](benchmark/write-throughput.png)
-![Write throughput](benchmark/write-with-refresh.png)
+![Read throughput](evmap/benchmark/read-throughput.png)
+![Write throughput](evmap/benchmark/write-throughput.png)
+![Write throughput](evmap/benchmark/write-with-refresh.png)
