@@ -1,10 +1,12 @@
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
 
-#[cfg(feature = "indexed")]
-pub(crate) use indexmap::IndexMap as MapImpl;
-#[cfg(not(feature = "indexed"))]
-pub(crate) use std::collections::HashMap as MapImpl;
+#[cfg(all(feature = "indexed", not(feature = "amortize")))]
+pub(crate) use indexmap::{map::Entry, IndexMap as MapImpl};
+#[cfg(feature = "amortize")]
+pub(crate) use indexmap_amortized::{map::Entry, IndexMap as MapImpl};
+#[cfg(not(any(feature = "indexed", feature = "amortize")))]
+pub(crate) use std::collections::{hash_map::Entry, HashMap as MapImpl};
 
 use crate::values::ValuesInner;
 use left_right::aliasing::DropBehavior;

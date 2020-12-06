@@ -1,4 +1,4 @@
-use crate::inner::Inner;
+use crate::inner::{Entry, Inner};
 use crate::read::ReadHandle;
 use crate::values::ValuesInner;
 use left_right::{aliasing::Aliased, Absorb};
@@ -6,11 +6,6 @@ use left_right::{aliasing::Aliased, Absorb};
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hash};
-
-#[cfg(feature = "indexed")]
-use indexmap::map::Entry;
-#[cfg(not(feature = "indexed"))]
-use std::collections::hash_map::Entry;
 
 /// A handle that may be used to modify the eventually consistent map.
 ///
