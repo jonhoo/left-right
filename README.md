@@ -10,14 +10,18 @@ parallel with minimal coordination, and shifts the coordination overhead
 to the writer. In the absence of writes, reads scale linearly with the
 number of cores.
 
+[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/evmap?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=8&branchName=master)
+[![Codecov](https://codecov.io/github/jonhoo/rust-evmap/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/rust-evmap)
+
+**left-right**
+
 [![Crates.io](https://img.shields.io/crates/v/left-right.svg)](https://crates.io/crates/left-right)
 [![Documentation](https://docs.rs/left-right/badge.svg)](https://docs.rs/left-right/)
 
+**evmap**
+
 [![Crates.io](https://img.shields.io/crates/v/evmap.svg)](https://crates.io/crates/evmap)
 [![Documentation](https://docs.rs/evmap/badge.svg)](https://docs.rs/evmap/)
-
-[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/evmap?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=8&branchName=master)
-[![Codecov](https://codecov.io/github/jonhoo/rust-evmap/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/rust-evmap)
 
 ## Performance
 
