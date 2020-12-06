@@ -10,11 +10,15 @@
 //!
 //! In [`Absorb::absorb_second`], you first cast your datastructure from
 //!
-//!     &mut DataStructure<Aliased<T, D>>
+//! ```rust,ignore
+//! &mut DataStructure<Aliased<T, D>>
+//! ```
 //!
 //! to
 //!
-//!     &mut DataStructure<Aliased<T, D2>>
+//! ```rust,ignore
+//! &mut DataStructure<Aliased<T, D2>>
+//! ```
 //!
 //! where `<D2 as DropBehavior>::do_drop` returns `true`. This time, any `Aliased<T>` that you drop
 //! _will_ drop the inner `T`, but this should be safe since the only other alias was dropped in
@@ -75,11 +79,15 @@
 //!
 //! The instructions above say to cast from
 //!
-//!     &mut DataStructure<Aliased<T, D>>
+//! ```rust,ignore
+//! &mut DataStructure<Aliased<T, D>>
+//! ```
 //!
 //! to
 //!
-//!     &mut DataStructure<Aliased<T, D2>>
+//! ```rust,ignore
+//! &mut DataStructure<Aliased<T, D2>>
+//! ```
 //!
 //! That cast is unsafe, and rightly so! While it is _likely that the cast is safe, that is far
 //! from obvious, and it's worth spending some time on why, since it has implications for how you
