@@ -1,21 +1,28 @@
 //! Types that aid in aliasing values across the two left-right data copies.
 //!
 //! This module primarily revolves around the [`Aliased`] type, and its associated [`DropBehavior`]
-//! trait. The basic idea is as follows:
+//! trait. The basic flow of using it is going to go as follows.
 //!
-//!  - In general, each value in your data structure should be stored wrapped in an `Aliased`, with
-//!    an associated type `D` that has `DropBehavior::do_drop` return `false`.
-//!  - In [`Absorb::absorb_first`], simply drop any removed `Aliased<T, D>` as normal. The backing
-//!    `T` will not be dropped.
-//!  - In [`Absorb::absorb_second`], cast your datastructure from
-//!    `&mut DataStructure<Aliased<T, D>>` to `&mut DataStructure<Aliased<T, D2>>` where
-//!    `<D2 as DropBehavior>::do_drop` returns `true`. This time, any removed `Aliased<T>` _will_
-//!    drop the inner `T`, but this should be safe since the only other alias was dropped in
-//!    `absorb_first`. This is where the invariant that `absorb_*` is deterministic becomes
-//!    extremely important!
+//! In general, each value in your data structure should be stored wrapped in an `Aliased`, with an
+//! associated type `D` that has `DropBehavior::do_drop` return `false`. In
+//! [`Absorb::absorb_first`], you then simply drop any removed `Aliased<T, D>` as normal. The
+//! backing `T` will not be dropped.
 //!
-//! Now, you have to be _really_ careful when working with this type. There are two primary things
-//! to watch out for:
+//! In [`Absorb::absorb_second`], you first cast your datastructure from
+//!
+//!     &mut DataStructure<Aliased<T, D>>
+//!
+//! to
+//!
+//!     &mut DataStructure<Aliased<T, D2>>
+//!
+//! where `<D2 as DropBehavior>::do_drop` returns `true`. This time, any `Aliased<T>` that you drop
+//! _will_ drop the inner `T`, but this should be safe since the only other alias was dropped in
+//! `absorb_first`. This is where the invariant that `absorb_*` is deterministic becomes extremely
+//! important!
+//!
+//! Sounds nice enough, right? Well, you have to be _really_ careful when working with this type.
+//! There are two primary things to watch out for:
 //!
 //! ## Mismatched dropping
 //!
@@ -66,10 +73,17 @@
 //!
 //! ## Unsafe casting
 //!
-//! The instructions above say to cast from `&mut DataStructure<Aliased<T, D>>` to
-//! `&mut DataStructure<Aliased<T, D2>>`. That cast is unsafe, and rightly so!
-//! While it is _likely that the cast is safe, that is far from obvious, and it's worth spending
-//! some time on why, since it has implications for how you use `Aliased` in your own crate.
+//! The instructions above say to cast from
+//!
+//!     &mut DataStructure<Aliased<T, D>>
+//!
+//! to
+//!
+//!     &mut DataStructure<Aliased<T, D2>>
+//!
+//! That cast is unsafe, and rightly so! While it is _likely that the cast is safe, that is far
+//! from obvious, and it's worth spending some time on why, since it has implications for how you
+//! use `Aliased` in your own crate.
 //!
 //! The cast is only sound if the two types are laid out exactly the same in memory, but that is
 //! harder to guarantee than you might expect. The Rust compiler does not guarantee that
@@ -101,9 +115,8 @@
 //! making it unsound to cast between the types!
 //!
 //! Now, I only say that this is likely sound because the language does not actually give
-//! this as a _guarantee_ at the moment. Though wiser minds seem to suggest that this might
-//! be okay:
-//! https://github.com/rust-lang/unsafe-code-guidelines/issues/35#issuecomment-735858397
+//! this as a _guarantee_ at the moment. Though wiser minds [seem to suggest that this might
+//! be okay](https://github.com/rust-lang/unsafe-code-guidelines/issues/35#issuecomment-735858397).
 //!
 //! But this warrants repeating: **your `D` types for `Aliased` _must_ be private**.
 
