@@ -54,11 +54,6 @@ where
 {
     handle: left_right::WriteHandle<Inner<K, V, M, S>, Operation<K, V, M>>,
     r_handle: ReadHandle<K, V, M, S>,
-
-    /// If Some, write directly to the write handle map, since no publish has happened.
-    /// Some(false) indicates that the necessary `Operation::JustCloneRHandle` has not
-    /// yet been appended to the oplog for when a publish does happen.
-    direct_write: Option<bool>,
 }
 
 impl<K, V, M, S> fmt::Debug for WriteHandle<K, V, M, S>
@@ -71,7 +66,6 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WriteHandle")
             .field("handle", &self.handle)
-            .field("direct_write", &self.direct_write)
             .finish()
     }
 }
@@ -87,11 +81,7 @@ where
         handle: left_right::WriteHandle<Inner<K, V, M, S>, Operation<K, V, M>>,
     ) -> Self {
         let r_handle = ReadHandle::new(left_right::ReadHandle::clone(&*handle));
-        Self {
-            handle,
-            r_handle,
-            direct_write: Some(false),
-        }
+        Self { handle, r_handle }
     }
 
     /// Publish all changes since the last call to `publish` to make them visible to readers.
@@ -100,7 +90,6 @@ where
     /// are many of them.
     pub fn publish(&mut self) -> &mut Self {
         self.handle.publish();
-        self.direct_write = None;
         self
     }
 
@@ -117,26 +106,7 @@ where
     }
 
     fn add_op(&mut self, op: Operation<K, V, M>) -> &mut Self {
-        if let Some(ref mut queued_clone) = self.direct_write {
-            {
-                // Safety: we know there are no outstanding w_handle readers, since we haven't
-                // refreshed ever before, so we can modify it directly!
-                let mut w_inner = self.handle.raw_write_handle();
-                let w_inner = unsafe { w_inner.as_mut() };
-                let r_handle = self.handle.enter().expect("map has not yet been destroyed");
-                // Because we are operating directly on the map, and nothing is aliased, we do want
-                // to perform drops, so we invoke absorb_second.
-                Absorb::absorb_second(w_inner, op, &*r_handle);
-            }
-
-            if !*queued_clone {
-                // NOTE: since we didn't record this in the oplog, r_handle *must* clone w_handle
-                self.handle.append(Operation::JustCloneRHandle);
-                *queued_clone = true;
-            }
-        } else {
-            self.handle.append(op);
-        }
+        self.handle.append(op);
         self
     }
 
@@ -426,10 +396,6 @@ where
             Operation::SetMeta(ref m) => {
                 self.meta = m.clone();
             }
-            Operation::JustCloneRHandle => {
-                // This is applying the operation to the original write handle,
-                // which we already applied the first batch of operations to.
-            }
         }
     }
 
@@ -541,33 +507,6 @@ where
             Operation::SetMeta(m) => {
                 inner.meta = m;
             }
-            Operation::JustCloneRHandle => {
-                // This is applying the operation to the original read handle,
-                // which is empty, and needs to copy over all data from the
-                // write handle that we wrote to directly.
-
-                // XXX: it really is too bad that we can't just .clone() the data here and save
-                // ourselves a lot of re-hashing, re-bucketization, etc.
-                inner.data.extend(other.data.iter().map(|(k, vs)| {
-                    // # Safety (for aliasing):
-                    //
-                    // We are aliasing every value in the read map, and the oplog has no other
-                    // pending operations (by the semantics of JustCloneRHandle). For any of the
-                    // values we alias to be dropped, the operation that drops it must first be
-                    // enqueued to the oplog, at which point it will _first_ go through
-                    // absorb_first, which will remove the alias and leave only one alias left.
-                    // Only after that, when that operation eventually goes through absorb_second,
-                    // will the alias be dropped, and by that time it is the only value.
-                    //
-                    // # Safety (for NoDrop -> DoDrop):
-                    //
-                    // The oplog has only this one operation in it for the first call to `publish`,
-                    // so we are about to turn the alias back into NoDrop.
-                    (k.clone(), unsafe {
-                        ValuesInner::alias(vs, other.data.hasher())
-                    })
-                }));
-            }
         }
     }
 
@@ -587,6 +526,37 @@ where
         let inner: Box<Inner<K, V, M, S, crate::aliasing::DoDrop>> =
             unsafe { Box::from_raw(Box::into_raw(self) as *mut _ as *mut _) };
         drop(inner);
+    }
+
+    fn sync_with(&mut self, first: &Self) {
+        let inner: &mut Inner<K, V, M, S, crate::aliasing::DoDrop> =
+            unsafe { &mut *(self as *mut _ as *mut _) };
+        inner.data.extend(first.data.iter().map(|(k, vs)| {
+            // # Safety (for aliasing):
+            //
+            // We are aliasing every value in the read map, and the oplog has no other
+            // pending operations (by the semantics of JustCloneRHandle). For any of the
+            // values we alias to be dropped, the operation that drops it must first be
+            // enqueued to the oplog, at which point it will _first_ go through
+            // absorb_first, which will remove the alias and leave only one alias left.
+            // Only after that, when that operation eventually goes through absorb_second,
+            // will the alias be dropped, and by that time it is the only value.
+            //
+            // # Safety (for hashing):
+            //
+            // Due to `RandomState` there can be subtle differences between the iteration order
+            // of two `HashMap` instances. We prevent this by using `left_right::new_with_empty`,
+            // which `clone`s the first map, making them use the same hasher.
+            //
+            // # Safety (for NoDrop -> DoDrop):
+            //
+            // The oplog has only this one operation in it for the first call to `publish`,
+            // so we are about to turn the alias back into NoDrop.
+            (k.clone(), unsafe {
+                ValuesInner::alias(vs, first.data.hasher())
+            })
+        }));
+        self.ready = true;
     }
 }
 
@@ -658,8 +628,6 @@ pub(super) enum Operation<K, V, M> {
     MarkReady,
     /// Set the value of the map meta.
     SetMeta(M),
-    /// Copy over the contents of the read map wholesale as the write map is empty.
-    JustCloneRHandle,
 }
 
 impl<K, V, M> fmt::Debug for Operation<K, V, M>
@@ -685,7 +653,6 @@ where
             Operation::Reserve(ref a, ref b) => f.debug_tuple("Reserve").field(a).field(b).finish(),
             Operation::MarkReady => f.debug_tuple("MarkReady").finish(),
             Operation::SetMeta(ref a) => f.debug_tuple("SetMeta").field(a).finish(),
-            Operation::JustCloneRHandle => f.debug_tuple("JustCloneRHandle").finish(),
         }
     }
 }

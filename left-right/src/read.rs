@@ -198,7 +198,9 @@ impl<T> ReadHandle<T> {
     /// Note that it is only safe to read through this pointer if you _know_ that the writer will
     /// not start writing into it. This is most likely only the case if you are calling this method
     /// from inside a method that holds `&mut WriteHandle`.
-    pub fn raw_handle(&mut self) -> Option<NonNull<T>> {
+    ///
+    /// Casting this pointer to `&mut` is never safe.
+    pub fn raw_handle(&self) -> Option<NonNull<T>> {
         NonNull::new(self.inner.load(atomic::Ordering::Acquire))
     }
 }
