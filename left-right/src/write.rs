@@ -31,6 +31,10 @@ where
     last_epochs: Vec<usize>,
     #[cfg(test)]
     refreshes: usize,
+    /// Write directly to the write handle map, since no publish has happened.
+    first: bool,
+    /// A publish has happened, but the two copies have not been synchronized yet.
+    second: bool,
 }
 
 // safety: if a `WriteHandle` is sent across a thread boundary, we need to be able to take
@@ -57,6 +61,8 @@ where
             .field("oplog", &self.oplog)
             .field("swap_index", &self.swap_index)
             .field("r_handle", &self.r_handle)
+            .field("first", &self.first)
+            .field("second", &self.second)
             .finish()
     }
 }
@@ -123,6 +129,8 @@ where
             last_epochs: Vec::new(),
             #[cfg(test)]
             refreshes: 0,
+            first: true,
+            second: true,
         }
     }
 
@@ -194,7 +202,7 @@ where
 
         self.wait(&mut epochs);
 
-        {
+        if !self.first {
             // all the readers have left!
             // safety: we haven't freed the Box, and no readers are accessing the w_handle
             let w_handle = unsafe { self.w_handle.as_mut() };
@@ -207,6 +215,11 @@ where
                     .as_ref()
                     .unwrap()
             };
+
+            if self.second {
+                Absorb::sync_with(w_handle, r_handle);
+                self.second = false
+            }
 
             // the w_handle copy has not seen any of the writes in the oplog
             // the r_handle copy has not seen any of the writes following swap_index
@@ -226,7 +239,9 @@ where
             // the w_handle copy is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
 
-            // w_handle (the old r_handle) is now fully up to date!
+        // w_handle (the old r_handle) is now fully up to date!
+        } else {
+            self.first = false
         }
 
         // at this point, we have exclusive access to w_handle, and it is up-to-date with all
@@ -262,6 +277,16 @@ where
         self
     }
 
+    /// Publish as necessary to ensure that all operations are visible to readers.
+    ///
+    /// `WriteHandle::publish` will *always* wait for old readers to depart and swap the maps.
+    /// This method will only do so if there are pending operations.
+    pub fn flush(&mut self) {
+        if self.has_pending_operations() {
+            self.publish();
+        }
+    }
+
     /// Returns true if there are operations in the operational log that have not yet been exposed
     /// to readers.
     pub fn has_pending_operations(&self) -> bool {
@@ -274,7 +299,18 @@ where
     ///
     /// Its effects will not be exposed to readers until you call [`publish`](Self::publish).
     pub fn append(&mut self, op: O) -> &mut Self {
-        self.oplog.push_back(op);
+        if self.first {
+            // Safety: we know there are no outstanding w_handle readers, since we haven't
+            // refreshed ever before, so we can modify it directly!
+            let mut w_inner = self.raw_write_handle();
+            let w_inner = unsafe { w_inner.as_mut() };
+            let r_handle = self.enter().expect("map has not yet been destroyed");
+            // Because we are operating directly on the map, and nothing is aliased, we do want
+            // to perform drops, so we invoke absorb_second.
+            Absorb::absorb_second(w_inner, op, &*r_handle);
+        } else {
+            self.oplog.push_back(op);
+        }
         self
     }
 
@@ -312,6 +348,7 @@ where
 /// struct Data;
 /// impl left_right::Absorb<()> for Data {
 ///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
+///     fn sync_with(&mut self, _: &Self) {}
 /// }
 ///
 /// fn is_send<T: Send>() {

@@ -93,6 +93,10 @@
 //!
 //!     // See the documentation of `Absorb::drop_first`.
 //!     fn drop_first(self: Box<Self>) {}
+//!
+//!     fn sync_with(&mut self, first: &Self) {
+//!         *self = *first
+//!     }
 //! }
 //!
 //! // Now, you can construct a new left-right over an instance of your data structure.
@@ -241,6 +245,19 @@ pub trait Absorb<O> {
     /// Defaults to calling `Self::drop`.
     #[allow(clippy::boxed_local)]
     fn drop_second(self: Box<Self>) {}
+
+    /// Sync the data from `first` into `self`.
+    ///
+    /// To improve initialization performance, before the first call to `publish` changes aren't
+    /// added to the internal oplog, but applied to the first copy directly using `absorb_second`.
+    /// The first `publish` then calls `sync_with` instead of `absorb_second`.
+    ///
+    /// `sync_with` should ensure that `self`'s state exactly matches that of `first` after it
+    /// returns. Be particularly mindful of non-deterministic implementations of traits that are
+    /// often assumed to be deterministic (like `Eq` and `Hash`), and of "hidden states" that
+    /// subtly affect results like the `RandomState` of a `HashMap` which can change iteration
+    /// order.
+    fn sync_with(&mut self, first: &Self);
 }
 
 /// Construct a new write and read handle pair from an empty data structure.
@@ -259,12 +276,23 @@ where
 
 /// Construct a new write and read handle pair from the data structure default.
 ///
-/// The type must implement `Clone` so we can construct the second copy from the first.
+/// The type must implement `Default` so we can construct two empty instances. You must ensure that
+/// the trait's `Default` implementation is deterministic and idempotent - that is to say, two
+/// instances created by it must behave _exactly_ the same. An example of where this is problematic
+/// is `HashMap` - due to `RandomState`, two instances returned by `Default` may have a different
+/// iteration order.
+///
+/// If your type's `Default` implementation does not guarantee this, you can use `new_from_empty`,
+/// which relies on `Clone` instead of `Default`.
 pub fn new<T, O>() -> (WriteHandle<T, O>, ReadHandle<T>)
 where
-    T: Absorb<O> + Default + Clone,
+    T: Absorb<O> + Default,
 {
-    new_from_empty(T::default())
+    let epochs = Default::default();
+
+    let r = ReadHandle::new(T::default(), Arc::clone(&epochs));
+    let w = WriteHandle::new(T::default(), epochs, r.clone());
+    (w, r)
 }
 
 #[cfg(test)]
@@ -281,4 +309,8 @@ impl Absorb<CounterAddOp> for i32 {
     }
 
     fn drop_first(self: Box<Self>) {}
+
+    fn sync_with(&mut self, first: &Self) {
+        *self = *first
+    }
 }
