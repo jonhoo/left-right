@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "evmap"
-version = "11.0.0-alpha.3"
+version = "11.0.0-alpha.5"
 dependencies = [
  "hashbag",
  "left-right",
@@ -121,9 +121,9 @@ dependencies = [
 
 [[package]]
 name = "left-right"
-version = "0.9.1"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "302c3b424da1067ee881cbfc7ad29696d39b37a392a7d62920ead27a4e2b3478"
+checksum = "d2aff789af956df5f1115e2fbec21b511bdd3a0964b169839b5b23c6f37300b3"
 dependencies = [
  "slab",
 ]
