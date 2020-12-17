@@ -4,7 +4,7 @@
 //! trait. The basic flow of using it is going to go as follows.
 //!
 //! In general, each value in your data structure should be stored wrapped in an `Aliased`, with an
-//! associated type `D` that has `DropBehavior::do_drop` return `false`. In
+//! associated type `D` that has `DropBehavior::DO_DROP` set to `false`. In
 //! [`Absorb::absorb_first`], you then simply drop any removed `Aliased<T, D>` as normal. The
 //! backing `T` will not be dropped.
 //!
@@ -20,7 +20,7 @@
 //! &mut DataStructure<Aliased<T, D2>>
 //! ```
 //!
-//! where `<D2 as DropBehavior>::do_drop` returns `true`. This time, any `Aliased<T>` that you drop
+//! where `<D2 as DropBehavior>::DO_DROP` is `true`. This time, any `Aliased<T>` that you drop
 //! _will_ drop the inner `T`, but this should be safe since the only other alias was dropped in
 //! `absorb_first`. This is where the invariant that `absorb_*` is deterministic becomes extremely
 //! important!
@@ -138,9 +138,8 @@ use crate::Absorb;
 
 /// Dictates the dropping behavior for the implementing type when used with [`Aliased`].
 pub trait DropBehavior {
-    /// An [`Aliased<T, D>`](Aliased) will drop its inner `T` if and only if `D::do_drop` returns
-    /// `true`.
-    fn do_drop() -> bool;
+    /// An [`Aliased<T, D>`](Aliased) will drop its inner `T` if and only if `D::DO_DROP` is `true`
+    const DO_DROP: bool;
 }
 
 /// A `T` that is aliased.
@@ -174,7 +173,7 @@ where
     /// # Safety
     ///
     /// This method is only safe to call as long as you ensure that the alias is never used after
-    /// an `Aliased<T, D>` of `self` where `D::do_drop` returns `true` is dropped, **and** as long
+    /// an `Aliased<T, D>` of `self` where `D::DO_DROP` is `true` is dropped, **and** as long
     /// as no `&mut T` is ever given out while some `Aliased<T>` may still be used. The returned
     /// type assumes that it is always safe to dereference into `&T`, which would not be true if
     /// either of those invariants were broken.
@@ -242,7 +241,7 @@ where
     D: DropBehavior,
 {
     fn drop(&mut self) {
-        if D::do_drop() {
+        if D::DO_DROP {
             // safety:
             //   MaybeUninit<T> was created from a valid T.
             //   That T has not been dropped (getting a Aliased<T, DoDrop> is unsafe).
