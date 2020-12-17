@@ -299,18 +299,7 @@ where
     ///
     /// Its effects will not be exposed to readers until you call [`publish`](Self::publish).
     pub fn append(&mut self, op: O) -> &mut Self {
-        if self.first {
-            // Safety: we know there are no outstanding w_handle readers, since we haven't
-            // refreshed ever before, so we can modify it directly!
-            let mut w_inner = self.raw_write_handle();
-            let w_inner = unsafe { w_inner.as_mut() };
-            let r_handle = self.enter().expect("map has not yet been destroyed");
-            // Because we are operating directly on the map, and nothing is aliased, we do want
-            // to perform drops, so we invoke absorb_second.
-            Absorb::absorb_second(w_inner, op, &*r_handle);
-        } else {
-            self.oplog.push_back(op);
-        }
+        self.extend(std::iter::once(op));
         self
     }
 
@@ -337,6 +326,34 @@ where
     type Target = ReadHandle<T>;
     fn deref(&self) -> &Self::Target {
         &self.r_handle
+    }
+}
+
+impl<T, O> Extend<O> for WriteHandle<T, O>
+where
+    T: Absorb<O>,
+{
+    /// Add multiple operations to the operational log.
+    ///
+    /// Their effects will not be exposed to readers until you call [`publish`](Self::publish)
+    fn extend<I>(&mut self, ops: I)
+    where
+        I: IntoIterator<Item = O>,
+    {
+        if self.first {
+            // Safety: we know there are no outstanding w_handle readers, since we haven't
+            // refreshed ever before, so we can modify it directly!
+            let mut w_inner = self.raw_write_handle();
+            let w_inner = unsafe { w_inner.as_mut() };
+            let r_handle = self.enter().expect("map has not yet been destroyed");
+            // Because we are operating directly on the map, and nothing is aliased, we do want
+            // to perform drops, so we invoke absorb_second.
+            for op in ops {
+                Absorb::absorb_second(w_inner, op, &*r_handle);
+            }
+        } else {
+            self.oplog.extend(ops);
+        }
     }
 }
 
