@@ -18,12 +18,8 @@ pub struct NoDrop;
 pub(crate) struct DoDrop;
 
 impl DropBehavior for NoDrop {
-    fn do_drop() -> bool {
-        false
-    }
+    const DO_DROP: bool = false;
 }
 impl DropBehavior for DoDrop {
-    fn do_drop() -> bool {
-        true
-    }
+    const DO_DROP: bool = true;
 }
