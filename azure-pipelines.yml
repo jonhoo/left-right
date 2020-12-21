@@ -7,22 +7,11 @@ stages:
         dir: "left-right"
  - stage: evmap
    jobs:
-    - template: nightly-only.yml@templates
+    - template: default.yml@templates
       parameters:
+        minrust: 1.48.0
         codecov_token: $(CODECOV_TOKEN_SECRET)
         dir: "evmap"
-    - job: features
-      displayName: "Check feature combinations"
-      pool:
-        vmImage: ubuntu-latest
-      steps:
-        - template: install-rust.yml@templates
-          parameters:
-            rust: nightly
-        - script: cargo install cargo-hack
-          displayName: install cargo-hack
-        - script: cargo hack --feature-powerset check
-          displayName: cargo hack
     - job: benchmark
       displayName: "Check that benchmark compiles"
       pool:
