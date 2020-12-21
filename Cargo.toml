@@ -1,12 +1,12 @@
 [package]
 name = "left-right"
-version = "0.11.0"
+version = "0.11.1"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 
 description = "A concurrency primitive for high concurrency reads over a single-writer data structure."
-repository = "https://github.com/jonhoo/rust-evmap.git"
+repository = "https://github.com/jonhoo/left-right.git"
 
 keywords = ["concurrency","lock-free"]
 categories = ["concurrency"]
