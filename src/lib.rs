@@ -160,7 +160,7 @@
 //! ```
 //!
 //! One additional noteworthy detail: much like with `Mutex`, `RwLock`, and `RefCell` from the
-//! standard library, the values you derefetence out of a `ReadGuard` are tied to the lifetime of
+//! standard library, the values you dereference out of a `ReadGuard` are tied to the lifetime of
 //! that `ReadGuard`. This can make it awkward to write ergonomic methods on the read handle that
 //! return references into the underlying data, and may tempt you to clone the data out or take a
 //! closure instead. Instead, consider using [`ReadGuard::map`] and [`ReadGuard::try_map`], which
