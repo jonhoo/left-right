@@ -437,6 +437,20 @@ mod tests {
     use crate::CounterAddOp;
 
     #[test]
+    fn append_test() {
+        let (mut w, _r) = crate::new::<i32, _>();
+        assert_eq!(w.first, true);
+        w.append(CounterAddOp(1));
+        assert_eq!(w.oplog.len(), 0);
+        assert_eq!(w.first, true);
+        w.publish();
+        assert_eq!(w.first, false);
+        w.append(CounterAddOp(2));
+        w.append(CounterAddOp(3));
+        assert_eq!(w.oplog.len(), 2);
+    }
+
+    #[test]
     fn flush_noblock() {
         let (mut w, r) = crate::new::<i32, _>();
         w.append(CounterAddOp(42));
