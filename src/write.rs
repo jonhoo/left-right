@@ -435,6 +435,9 @@ struct CheckWriteHandleSend;
 #[cfg(test)]
 mod tests {
     use crate::CounterAddOp;
+    use slab::Slab;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn append_test() {
@@ -448,6 +451,41 @@ mod tests {
         w.append(CounterAddOp(2));
         w.append(CounterAddOp(3));
         assert_eq!(w.oplog.len(), 2);
+    }
+
+    #[test]
+    fn wait_test() {
+        use std::thread;
+
+        let (mut w, _r) = crate::new::<i32, _>();
+
+        // Case 1: If epoch is set to default.
+        let test_epoch: crate::Epochs = Default::default();
+        let mut test_epoch = test_epoch.lock().unwrap();
+        w.wait(&mut test_epoch);
+
+        // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
+        // and wait has been called.
+        let holded_epoch = Arc::new(AtomicUsize::new(1));
+
+        w.last_epochs = vec![2, 2, 1];
+        let mut epoch_slab = Slab::new();
+        epoch_slab.insert(Arc::new(AtomicUsize::new(2)));
+        epoch_slab.insert(Arc::new(AtomicUsize::new(2)));
+        epoch_slab.insert(Arc::clone(&holded_epoch));
+
+        // A new thread act as a reader thread that will increase epoch by 1 and break wait cycle.
+        let move_val = Arc::clone(&holded_epoch);
+        thread::spawn(move || {
+            move_val.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let test_epoch = Arc::new(Mutex::new(epoch_slab));
+        let mut test_epoch = test_epoch.lock().unwrap();
+        w.wait(&mut test_epoch);
+
+        let count = holded_epoch.load(Ordering::Relaxed);
+        assert_eq!(count, 2);
     }
 
     #[test]
