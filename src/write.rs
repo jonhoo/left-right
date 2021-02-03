@@ -31,6 +31,8 @@ where
     last_epochs: Vec<usize>,
     #[cfg(test)]
     refreshes: usize,
+    #[cfg(test)]
+    is_waiting: atomic::AtomicBool,
     /// Write directly to the write handle map, since no publish has happened.
     first: bool,
     /// A publish has happened, but the two copies have not been synchronized yet.
@@ -128,6 +130,8 @@ where
             r_handle,
             last_epochs: Vec::new(),
             #[cfg(test)]
+            is_waiting: atomic::AtomicBool::new(false),
+            #[cfg(test)]
             refreshes: 0,
             first: true,
             second: true,
@@ -138,6 +142,10 @@ where
         let mut iter = 0;
         let mut starti = 0;
 
+        #[cfg(test)]
+        {
+            self.is_waiting = atomic::AtomicBool::new(false);
+        }
         // we're over-estimating here, but slab doesn't expose its max index
         self.last_epochs.resize(epochs.capacity(), 0);
         'retry: loop {
@@ -178,6 +186,10 @@ where
 
                     continue 'retry;
                 }
+            }
+            #[cfg(test)]
+            {
+                self.is_waiting = atomic::AtomicBool::new(false);
             }
             break;
         }
@@ -456,7 +468,7 @@ mod tests {
     #[test]
     fn wait_test() {
         use std::thread;
-
+        use std::time::Duration;
         let (mut w, _r) = crate::new::<i32, _>();
 
         // Case 1: If epoch is set to default.
@@ -476,16 +488,23 @@ mod tests {
 
         // A new thread act as a reader thread that will increase epoch by 1 and break wait cycle.
         let move_holded_epoch = Arc::clone(&holded_epoch);
-        thread::spawn(move || {
+        let progress_handle = thread::spawn(move || {
+            thread::park_timeout(Duration::from_secs(2));
             move_holded_epoch.fetch_add(1, Ordering::SeqCst);
         });
 
         let test_epochs = Arc::new(Mutex::new(epochs_slab));
         let mut test_epochs = test_epochs.lock().unwrap();
+        let is_waiting = w.is_waiting.load(Ordering::Relaxed);
+        assert_eq!(false, is_waiting);
+
         w.wait(&mut test_epochs);
+        let _ = progress_handle.join();
 
         let count = holded_epoch.load(Ordering::Relaxed);
         assert_eq!(count, 2);
+        let is_waiting = w.is_waiting.load(Ordering::Relaxed);
+        assert_eq!(false, is_waiting);
     }
 
     #[test]
