@@ -144,7 +144,7 @@ where
 
         #[cfg(test)]
         {
-            self.is_waiting = atomic::AtomicBool::new(false);
+            self.is_waiting = atomic::AtomicBool::new(true);
         }
         // we're over-estimating here, but slab doesn't expose its max index
         self.last_epochs.resize(epochs.capacity(), 0);
