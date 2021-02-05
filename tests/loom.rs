@@ -33,12 +33,13 @@ mod loom_tests {
             w.append(CounterAddOp(1));
             w.publish();
 
+            let jh = thread::spawn(move || {
+                w.publish();
+                w.append(CounterAddOp(1));
+            });
+
             let val = *r.enter().unwrap();
 
-            let jh = thread::spawn(move || {
-                w.append(CounterAddOp(1));
-                w.publish();
-            });
             jh.join().unwrap();
 
             assert_eq!(1, val);
