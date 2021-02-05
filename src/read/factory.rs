@@ -1,6 +1,6 @@
 use super::ReadHandle;
-use std::sync::atomic::AtomicPtr;
-use std::{fmt, sync};
+use crate::sync::{Arc, AtomicPtr};
+use std::fmt;
 
 /// A type that is both `Sync` and `Send` and lets you produce new [`ReadHandle`] instances.
 ///
@@ -9,7 +9,7 @@ use std::{fmt, sync};
 /// that this _internally_ takes a lock whenever you call [`ReadHandleFactory::handle`], so
 /// you should not expect producing new handles rapidly to scale well.
 pub struct ReadHandleFactory<T> {
-    pub(super) inner: sync::Arc<AtomicPtr<T>>,
+    pub(super) inner: Arc<AtomicPtr<T>>,
     pub(super) epochs: crate::Epochs,
 }
 
@@ -24,8 +24,8 @@ impl<T> fmt::Debug for ReadHandleFactory<T> {
 impl<T> Clone for ReadHandleFactory<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: sync::Arc::clone(&self.inner),
-            epochs: sync::Arc::clone(&self.epochs),
+            inner: Arc::clone(&self.inner),
+            epochs: Arc::clone(&self.epochs),
         }
     }
 }
@@ -34,9 +34,6 @@ impl<T> ReadHandleFactory<T> {
     /// Produce a new [`ReadHandle`] to the same left-right data structure as this factory was
     /// originally produced from.
     pub fn handle(&self) -> ReadHandle<T> {
-        ReadHandle::new_with_arc(
-            sync::Arc::clone(&self.inner),
-            sync::Arc::clone(&self.epochs),
-        )
+        ReadHandle::new_with_arc(Arc::clone(&self.inner), Arc::clone(&self.epochs))
     }
 }

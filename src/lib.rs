@@ -174,9 +174,11 @@
 )]
 #![allow(clippy::type_complexity)]
 
-use std::sync::{atomic, Arc, Mutex};
+mod sync;
 
-type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicUsize>>>>;
+use crate::sync::{Arc, AtomicUsize, Mutex};
+
+type Epochs = Arc<Mutex<slab::Slab<Arc<AtomicUsize>>>>;
 
 mod write;
 pub use crate::write::WriteHandle;
