@@ -211,7 +211,7 @@ impl<T> ReadHandle<T> {
 ///
 /// // the line below will not compile as ReadHandle does not implement Sync
 ///
-/// is_<ReadHandle<u64>>()
+/// is_sync::<ReadHandle<u64>>()
 /// ```
 ///
 /// But, it can be sent across threads:
