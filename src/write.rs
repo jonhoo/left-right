@@ -4,6 +4,9 @@ use crate::read::ReadHandle;
 use std::collections::VecDeque;
 use std::ptr::NonNull;
 use std::sync::atomic;
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, MutexGuard};
 use std::{fmt, thread};
 
@@ -32,7 +35,7 @@ where
     #[cfg(test)]
     refreshes: usize,
     #[cfg(test)]
-    is_waiting: atomic::AtomicBool,
+    is_waiting: Arc<AtomicBool>,
     /// Write directly to the write handle map, since no publish has happened.
     first: bool,
     /// A publish has happened, but the two copies have not been synchronized yet.
@@ -87,10 +90,7 @@ where
         assert!(self.oplog.is_empty());
 
         // next, grab the read handle and set it to NULL
-        let r_handle = self
-            .r_handle
-            .inner
-            .swap(ptr::null_mut(), atomic::Ordering::Release);
+        let r_handle = self.r_handle.inner.swap(ptr::null_mut(), Ordering::Release);
 
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.epochs);
@@ -98,7 +98,7 @@ where
         self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
+        atomic::fence(Ordering::SeqCst);
 
         // all readers have now observed the NULL, so we own both handles.
         // all operations have been applied to both w_handle and r_handle.
@@ -130,7 +130,7 @@ where
             r_handle,
             last_epochs: Vec::new(),
             #[cfg(test)]
-            is_waiting: atomic::AtomicBool::new(false),
+            is_waiting: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             refreshes: 0,
             first: true,
@@ -138,13 +138,13 @@ where
         }
     }
 
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<atomic::AtomicUsize>>>) {
+    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>) {
         let mut iter = 0;
         let mut starti = 0;
 
         #[cfg(test)]
         {
-            self.is_waiting = atomic::AtomicBool::new(true);
+            self.is_waiting.swap(true, Ordering::Relaxed);
         }
         // we're over-estimating here, but slab doesn't expose its max index
         self.last_epochs.resize(epochs.capacity(), 0);
@@ -167,7 +167,7 @@ where
                     continue;
                 }
 
-                let now = epoch.load(atomic::Ordering::Acquire);
+                let now = epoch.load(Ordering::Acquire);
                 if now != self.last_epochs[ri] {
                     // reader must have seen the last swap, since they have done at least one
                     // operation since we last looked at their epoch, which _must_ mean that they
@@ -187,11 +187,11 @@ where
                     continue 'retry;
                 }
             }
-            #[cfg(test)]
-            {
-                self.is_waiting = atomic::AtomicBool::new(false);
-            }
             break;
+        }
+        #[cfg(test)]
+        {
+            self.is_waiting.swap(false, Ordering::Relaxed);
         }
     }
 
@@ -223,7 +223,7 @@ where
             let r_handle = unsafe {
                 self.r_handle
                     .inner
-                    .load(atomic::Ordering::Acquire)
+                    .load(Ordering::Acquire)
                     .as_ref()
                     .unwrap()
             };
@@ -268,17 +268,17 @@ where
         let r_handle = self
             .r_handle
             .inner
-            .swap(self.w_handle.as_ptr(), atomic::Ordering::Release);
+            .swap(self.w_handle.as_ptr(), Ordering::Release);
 
         // NOTE: at this point, there are likely still readers using r_handle.
         // safety: r_handle was also created from a Box, so it is not null and is covariant.
         self.w_handle = unsafe { NonNull::new_unchecked(r_handle) };
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
+        atomic::fence(Ordering::SeqCst);
 
         for (ri, epoch) in epochs.iter() {
-            self.last_epochs[ri] = epoch.load(atomic::Ordering::Acquire);
+            self.last_epochs[ri] = epoch.load(Ordering::Acquire);
         }
 
         #[cfg(test)]
@@ -449,7 +449,7 @@ mod tests {
     use crate::CounterAddOp;
     use slab::Slab;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
 
     #[test]
     fn append_test() {
@@ -467,8 +467,8 @@ mod tests {
 
     #[test]
     fn wait_test() {
+        use std::sync::{Arc, Barrier};
         use std::thread;
-        use std::time::Duration;
         let (mut w, _r) = crate::new::<i32, _>();
 
         // Case 1: If epoch is set to default.
@@ -478,33 +478,50 @@ mod tests {
 
         // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
         // and wait has been called.
-        let holded_epoch = Arc::new(AtomicUsize::new(1));
+        let held_epoch = Arc::new(AtomicUsize::new(1));
 
         w.last_epochs = vec![2, 2, 1];
         let mut epochs_slab = Slab::new();
         epochs_slab.insert(Arc::new(AtomicUsize::new(2)));
         epochs_slab.insert(Arc::new(AtomicUsize::new(2)));
-        epochs_slab.insert(Arc::clone(&holded_epoch));
+        epochs_slab.insert(Arc::clone(&held_epoch));
+
+        let barrier = Arc::new(Barrier::new(2));
 
         // A new thread act as a reader thread that will increase epoch by 1 and break wait cycle.
-        let move_holded_epoch = Arc::clone(&holded_epoch);
-        let progress_handle = thread::spawn(move || {
-            thread::park_timeout(Duration::from_secs(2));
-            move_holded_epoch.fetch_add(1, Ordering::SeqCst);
-        });
+        let move_held_epoch = Arc::clone(&held_epoch);
+
+        let is_waiting = Arc::clone(&w.is_waiting);
+        let m_is_waiting = Arc::clone(&w.is_waiting);
 
         let test_epochs = Arc::new(Mutex::new(epochs_slab));
-        let mut test_epochs = test_epochs.lock().unwrap();
-        let is_waiting = w.is_waiting.load(Ordering::Relaxed);
-        assert_eq!(false, is_waiting);
+        let c = Arc::clone(&barrier);
 
-        w.wait(&mut test_epochs);
+        let progress_handle = thread::spawn(move || {
+            let is_waiting = m_is_waiting.load(Ordering::Relaxed);
+            assert_eq!(false, is_waiting);
+            let mut test_epochs = test_epochs.lock().unwrap();
+            c.wait();
+            w.wait(&mut test_epochs);
+        });
+
+        let is_waiting_v = is_waiting.load(Ordering::Relaxed);
+        assert_eq!(false, is_waiting_v);
+
+        barrier.wait();
+
+        thread::yield_now();
+
+        let is_waiting_v = is_waiting.load(Ordering::Relaxed);
+        assert_eq!(true, is_waiting_v);
+        move_held_epoch.fetch_add(1, Ordering::SeqCst);
+
         let _ = progress_handle.join();
 
-        let count = holded_epoch.load(Ordering::Relaxed);
+        let count = held_epoch.load(Ordering::Relaxed);
         assert_eq!(count, 2);
-        let is_waiting = w.is_waiting.load(Ordering::Relaxed);
-        assert_eq!(false, is_waiting);
+        let is_waiting_v = is_waiting.load(Ordering::SeqCst);
+        assert_eq!(false, is_waiting_v);
     }
 
     #[test]
