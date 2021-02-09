@@ -474,6 +474,7 @@ mod tests {
         // Case 1: If epoch is set to default.
         let test_epochs: crate::Epochs = Default::default();
         let mut test_epochs = test_epochs.lock().unwrap();
+        // since there is no apoch to waiting for wait function will return instant.
         w.wait(&mut test_epochs);
 
         // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
@@ -497,7 +498,7 @@ mod tests {
         let test_epochs = Arc::new(Mutex::new(epochs_slab));
         let c = Arc::clone(&barrier);
 
-        let progress_handle = thread::spawn(move || {
+        let wait_handle = thread::spawn(move || {
             let is_waiting = m_is_waiting.load(Ordering::Relaxed);
             assert_eq!(false, is_waiting);
             let mut test_epochs = test_epochs.lock().unwrap();
@@ -509,17 +510,20 @@ mod tests {
         assert_eq!(false, is_waiting_v);
 
         barrier.wait();
-
+        // make sure that writer wait() will call first before changing the held epoch.
         thread::yield_now();
-
+        
         let is_waiting_v = is_waiting.load(Ordering::Relaxed);
+        // check if is_waiting is set to true.
         assert_eq!(true, is_waiting_v);
-        move_held_epoch.fetch_add(1, Ordering::SeqCst);
 
-        let _ = progress_handle.join();
+        move_held_epoch.fetch_add(1, Ordering::SeqCst);
+        
+        let _ = wait_handle.join();
 
         let count = held_epoch.load(Ordering::Relaxed);
         assert_eq!(count, 2);
+        
         let is_waiting_v = is_waiting.load(Ordering::SeqCst);
         assert_eq!(false, is_waiting_v);
     }
