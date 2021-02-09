@@ -474,7 +474,7 @@ mod tests {
         // Case 1: If epoch is set to default.
         let test_epochs: crate::Epochs = Default::default();
         let mut test_epochs = test_epochs.lock().unwrap();
-        // since there is no apoch to waiting for wait function will return instant.
+        // since there is no epoch to waiting for, wait function will return immediately.
         w.wait(&mut test_epochs);
 
         // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
@@ -489,14 +489,11 @@ mod tests {
 
         let barrier = Arc::new(Barrier::new(2));
 
-        // A new thread act as a reader thread that will increase epoch by 1 and break wait cycle.
-        let move_held_epoch = Arc::clone(&held_epoch);
-
         let is_waiting = Arc::clone(&w.is_waiting);
-        let m_is_waiting = Arc::clone(&w.is_waiting);
-
-        let test_epochs = Arc::new(Mutex::new(epochs_slab));
         let c = Arc::clone(&barrier);
+
+        let m_is_waiting = Arc::clone(&w.is_waiting);
+        let test_epochs = Arc::new(Mutex::new(epochs_slab));
 
         let wait_handle = thread::spawn(move || {
             let is_waiting = m_is_waiting.load(Ordering::Relaxed);
@@ -510,20 +507,20 @@ mod tests {
         assert_eq!(false, is_waiting_v);
 
         barrier.wait();
-        // make sure that writer wait() will call first before changing the held epoch.
+        // make sure that writer wait() will call first then change the held epoch.
         thread::yield_now();
-        
+
         let is_waiting_v = is_waiting.load(Ordering::Relaxed);
-        // check if is_waiting is set to true.
+        // check if is_waiting is set to true after calling wait.
         assert_eq!(true, is_waiting_v);
 
-        move_held_epoch.fetch_add(1, Ordering::SeqCst);
-        
+        held_epoch.fetch_add(1, Ordering::SeqCst);
+
         let _ = wait_handle.join();
 
         let count = held_epoch.load(Ordering::Relaxed);
         assert_eq!(count, 2);
-        
+
         let is_waiting_v = is_waiting.load(Ordering::SeqCst);
         assert_eq!(false, is_waiting_v);
     }
