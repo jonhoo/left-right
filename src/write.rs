@@ -490,25 +490,30 @@ mod tests {
         let barrier = Arc::new(Barrier::new(2));
 
         let is_waiting = Arc::clone(&w.is_waiting);
-        let c = Arc::clone(&barrier);
 
-        let m_is_waiting = Arc::clone(&w.is_waiting);
-        let test_epochs = Arc::new(Mutex::new(epochs_slab));
-
-        let wait_handle = thread::spawn(move || {
-            let is_waiting = m_is_waiting.load(Ordering::Relaxed);
-            assert_eq!(false, is_waiting);
-            let mut test_epochs = test_epochs.lock().unwrap();
-            c.wait();
-            w.wait(&mut test_epochs);
-        });
-
+        // check for writer waiting state before calling wait.
         let is_waiting_v = is_waiting.load(Ordering::Relaxed);
         assert_eq!(false, is_waiting_v);
 
+        let barrier2 = Arc::clone(&barrier);
+        let test_epochs = Arc::new(Mutex::new(epochs_slab));
+        let wait_handle = thread::spawn(move || {
+            barrier2.wait();
+            let mut test_epochs = test_epochs.lock().unwrap();
+            w.wait(&mut test_epochs);
+        });
+
         barrier.wait();
-        // make sure that writer wait() will call first then change the held epoch.
-        thread::yield_now();
+
+        // make sure that writer wait() will call first only then update the held epoch.
+        'retry: loop {
+            thread::yield_now();
+            let is_waiting_v = is_waiting.load(Ordering::Relaxed);
+            if is_waiting_v {
+                thread::yield_now();
+                break 'retry;
+            }
+        }
 
         let is_waiting_v = is_waiting.load(Ordering::Relaxed);
         // check if is_waiting is set to true after calling wait.
@@ -516,6 +521,8 @@ mod tests {
 
         held_epoch.fetch_add(1, Ordering::SeqCst);
 
+        // join to make sure that wait fn must return after the progress/increment
+        // of held_epoch.
         let _ = wait_handle.join();
 
         let count = held_epoch.load(Ordering::Relaxed);
