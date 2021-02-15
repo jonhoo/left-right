@@ -172,6 +172,9 @@ where
                         thread::yield_now();
                     }
 
+                    #[cfg(loom)]
+                    loom::thread::yield_now();
+
                     continue 'retry;
                 }
             }
