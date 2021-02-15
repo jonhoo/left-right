@@ -505,7 +505,7 @@ mod tests {
 
         barrier.wait();
 
-        // make sure that writer wait() will call first, only then updates the held epoch.
+        // make sure that writer wait() will call first, only then allow to updates the held epoch.
         while !is_waiting.load(Ordering::Relaxed) {
             thread::yield_now();
         }
