@@ -21,8 +21,6 @@ mod loom_tests {
             w.publish();
             w.append(CounterAddOp(1));
 
-            // This is just to ensure the write handle is not dropped before the reader reads
-            w.flush();
             let val = jh.join().unwrap();
 
             assert_eq!(1, val);
