@@ -144,7 +144,7 @@ where
 
         #[cfg(test)]
         {
-            self.is_waiting.swap(true, Ordering::Relaxed);
+            self.is_waiting.store(true, Ordering::Relaxed);
         }
         // we're over-estimating here, but slab doesn't expose its max index
         self.last_epochs.resize(epochs.capacity(), 0);
@@ -191,7 +191,7 @@ where
         }
         #[cfg(test)]
         {
-            self.is_waiting.swap(false, Ordering::Relaxed);
+            self.is_waiting.store(false, Ordering::Relaxed);
         }
     }
 
@@ -491,7 +491,7 @@ mod tests {
 
         let is_waiting = Arc::clone(&w.is_waiting);
 
-        // check for writer waiting state before calling wait.
+        // check writers waiting state before calling wait.
         let is_waiting_v = is_waiting.load(Ordering::Relaxed);
         assert_eq!(false, is_waiting_v);
 
@@ -505,29 +505,19 @@ mod tests {
 
         barrier.wait();
 
-        // make sure that writer wait() will call first only then update the held epoch.
-        'retry: loop {
+        // make sure that writer wait() will call first, only then updates the held epoch.
+        while !is_waiting.load(Ordering::Relaxed) {
             thread::yield_now();
-            let is_waiting_v = is_waiting.load(Ordering::Relaxed);
-            if is_waiting_v {
-                thread::yield_now();
-                break 'retry;
-            }
         }
-
-        let is_waiting_v = is_waiting.load(Ordering::Relaxed);
-        // check if is_waiting is set to true after calling wait.
-        assert_eq!(true, is_waiting_v);
+        thread::yield_now();
 
         held_epoch.fetch_add(1, Ordering::SeqCst);
 
-        // join to make sure that wait fn must return after the progress/increment
+        // join to make sure that wait must return after the progress/increment
         // of held_epoch.
         let _ = wait_handle.join();
 
-        let count = held_epoch.load(Ordering::Relaxed);
-        assert_eq!(count, 2);
-
+        // check that writes is_waiting is set to false after wait returns.
         let is_waiting_v = is_waiting.load(Ordering::SeqCst);
         assert_eq!(false, is_waiting_v);
     }
