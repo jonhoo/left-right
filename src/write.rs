@@ -166,6 +166,7 @@ where
                     starti = ii;
 
                     // how eagerly should we retry?
+                    #[cfg(not(loom))]
                     if iter != 20 {
                         iter += 1;
                     } else {
