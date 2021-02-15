@@ -1,7 +1,3 @@
-#[cfg(not(loom))]
-#[cfg(test)]
-use crate::Absorb;
-
 #[cfg(test)]
 #[derive(Debug)]
 pub struct CounterAddOp(pub i32);

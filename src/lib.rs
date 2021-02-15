@@ -296,6 +296,3 @@ where
     let w = WriteHandle::new(T::default(), epochs, r.clone());
     (w, r)
 }
-
-#[cfg(test)]
-mod utilities;

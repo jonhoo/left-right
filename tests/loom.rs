@@ -6,10 +6,6 @@ mod loom_tests {
     use left_right::Absorb;
     include!("../src/utilities.rs");
 
-    use left_right::ReadGuard;
-    use loom::sync::atomic::AtomicUsize;
-    use loom::sync::atomic::Ordering::{Acquire, Relaxed, Release};
-    use loom::sync::Arc;
     use loom::thread;
 
     #[test]

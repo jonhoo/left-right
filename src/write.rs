@@ -430,7 +430,8 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
-    use crate::CounterAddOp;
+    use crate::Absorb;
+    include!("./utilities.rs");
 
     #[test]
     fn append_test() {
