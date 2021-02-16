@@ -509,7 +509,6 @@ mod tests {
         while !is_waiting.load(Ordering::Relaxed) {
             thread::yield_now();
         }
-        thread::yield_now();
 
         held_epoch.fetch_add(1, Ordering::SeqCst);
 
@@ -517,7 +516,7 @@ mod tests {
         // of held_epoch.
         let _ = wait_handle.join();
 
-        // check that writes is_waiting is set to false after wait returns.
+        // check that writes waiting state is set to false after wait returns.
         let is_waiting_v = is_waiting.load(Ordering::SeqCst);
         assert_eq!(false, is_waiting_v);
     }
