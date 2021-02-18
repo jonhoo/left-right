@@ -4,6 +4,8 @@ use crate::read::ReadHandle;
 use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::{fmt, thread};
 
 /// A writer handle to a left-right guarded data structure.
@@ -30,6 +32,8 @@ where
     last_epochs: Vec<usize>,
     #[cfg(test)]
     refreshes: usize,
+    #[cfg(test)]
+    is_waiting: Arc<AtomicBool>,
     /// Write directly to the write handle map, since no publish has happened.
     first: bool,
     /// A publish has happened, but the two copies have not been synchronized yet.
@@ -124,6 +128,8 @@ where
             r_handle,
             last_epochs: Vec::new(),
             #[cfg(test)]
+            is_waiting: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
             refreshes: 0,
             first: true,
             second: true,
@@ -134,6 +140,10 @@ where
         let mut iter = 0;
         let mut starti = 0;
 
+        #[cfg(test)]
+        {
+            self.is_waiting.store(true, Ordering::Relaxed);
+        }
         // we're over-estimating here, but slab doesn't expose its max index
         self.last_epochs.resize(epochs.capacity(), 0);
         'retry: loop {
@@ -181,6 +191,10 @@ where
                 }
             }
             break;
+        }
+        #[cfg(test)]
+        {
+            self.is_waiting.store(false, Ordering::Relaxed);
         }
     }
 
@@ -435,7 +449,9 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
+    use crate::sync::{AtomicUsize, Mutex, Ordering};
     use crate::Absorb;
+    use slab::Slab;
     include!("./utilities.rs");
 
     #[test]
@@ -450,6 +466,58 @@ mod tests {
         w.append(CounterAddOp(2));
         w.append(CounterAddOp(3));
         assert_eq!(w.oplog.len(), 2);
+    }
+
+    #[test]
+    fn wait_test() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+        let (mut w, _r) = crate::new::<i32, _>();
+
+        // Case 1: If epoch is set to default.
+        let test_epochs: crate::Epochs = Default::default();
+        let mut test_epochs = test_epochs.lock().unwrap();
+        // since there is no epoch to waiting for, wait function will return immediately.
+        w.wait(&mut test_epochs);
+
+        // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
+        // and wait has been called.
+        let held_epoch = Arc::new(AtomicUsize::new(1));
+
+        w.last_epochs = vec![2, 2, 1];
+        let mut epochs_slab = Slab::new();
+        epochs_slab.insert(Arc::new(AtomicUsize::new(2)));
+        epochs_slab.insert(Arc::new(AtomicUsize::new(2)));
+        epochs_slab.insert(Arc::clone(&held_epoch));
+
+        let barrier = Arc::new(Barrier::new(2));
+
+        let is_waiting = Arc::clone(&w.is_waiting);
+
+        // check writers waiting state before calling wait.
+        let is_waiting_v = is_waiting.load(Ordering::Relaxed);
+        assert_eq!(false, is_waiting_v);
+
+        let barrier2 = Arc::clone(&barrier);
+        let test_epochs = Arc::new(Mutex::new(epochs_slab));
+        let wait_handle = thread::spawn(move || {
+            barrier2.wait();
+            let mut test_epochs = test_epochs.lock().unwrap();
+            w.wait(&mut test_epochs);
+        });
+
+        barrier.wait();
+
+        // make sure that writer wait() will call first, only then allow to updates the held epoch.
+        while !is_waiting.load(Ordering::Relaxed) {
+            thread::yield_now();
+        }
+
+        held_epoch.fetch_add(1, Ordering::SeqCst);
+
+        // join to make sure that wait must return after the progress/increment
+        // of held_epoch.
+        let _ = wait_handle.join();
     }
 
     #[test]
