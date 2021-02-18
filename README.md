@@ -1,4 +1,4 @@
-[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/left-right?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=8&branchName=master)
+[![Build Status](https://dev.azure.com/jonhoo/jonhoo/_apis/build/status/left-right?branchName=master)](https://dev.azure.com/jonhoo/jonhoo/_build/latest?definitionId=31&branchName=master)
 [![Codecov](https://codecov.io/github/jonhoo/left-right/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/left-right)
 [![Crates.io](https://img.shields.io/crates/v/left-right.svg)](https://crates.io/crates/left-right)
 [![Documentation](https://docs.rs/left-right/badge.svg)](https://docs.rs/left-right/)
