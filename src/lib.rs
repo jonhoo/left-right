@@ -174,9 +174,11 @@
 )]
 #![allow(clippy::type_complexity)]
 
-use std::sync::{atomic, Arc, Mutex};
+mod sync;
 
-type Epochs = Arc<Mutex<slab::Slab<Arc<atomic::AtomicUsize>>>>;
+use crate::sync::{Arc, AtomicUsize, Mutex};
+
+type Epochs = Arc<Mutex<slab::Slab<Arc<AtomicUsize>>>>;
 
 mod write;
 pub use crate::write::WriteHandle;
@@ -293,24 +295,4 @@ where
     let r = ReadHandle::new(T::default(), Arc::clone(&epochs));
     let w = WriteHandle::new(T::default(), epochs, r.clone());
     (w, r)
-}
-
-#[cfg(test)]
-struct CounterAddOp(i32);
-
-#[cfg(test)]
-impl Absorb<CounterAddOp> for i32 {
-    fn absorb_first(&mut self, operation: &mut CounterAddOp, _: &Self) {
-        *self += operation.0;
-    }
-
-    fn absorb_second(&mut self, operation: CounterAddOp, _: &Self) {
-        *self += operation.0;
-    }
-
-    fn drop_first(self: Box<Self>) {}
-
-    fn sync_with(&mut self, first: &Self) {
-        *self = *first
-    }
 }

@@ -2,6 +2,7 @@ jobs:
  - template: default.yml@templates
    parameters:
      minrust: 1.40.0
+     codecov_token: $(CODECOV_TOKEN_SECRET)
  - job: miri
    displayName: "Run miri on test suite"
    pool:
@@ -19,38 +20,49 @@ jobs:
        displayName: cargo miri setup
      - script: cargo miri test
        displayName: cargo miri test
-    - job: asan
-      displayName: "Run address sanitizer on test suite"
-      pool:
-        vmImage: ubuntu-latest
-      steps:
-        - template: install-rust.yml@templates
-          parameters:
-            rust: nightly
-        - bash: |
-              sudo ln -s /usr/bin/llvm-symbolizer-6.0 /usr/bin/llvm-symbolizer
-          displayName: Enable debug symbols
-        # only --lib --tests b/c of https://github.com/rust-lang/rust/issues/53945
-        - script: |
-              env ASAN_OPTIONS="detect_odr_violation=0" RUSTFLAGS="-Z sanitizer=address" cargo test --lib --tests --target x86_64-unknown-linux-gnu
-          displayName: cargo -Z sanitizer=address test
-    - job: lsan
-      displayName: "Run leak sanitizer on test suite"
-      pool:
-        vmImage: ubuntu-latest
-      steps:
-        - template: install-rust.yml@templates
-          parameters:
-            rust: nightly
-        - bash: |
-              sudo ln -s /usr/bin/llvm-symbolizer-6.0 /usr/bin/llvm-symbolizer
-              sed -i '/\[features\]/i [profile.dev]' Cargo.toml
-              sed -i '/profile.dev/a opt-level = 1' Cargo.toml
-              cat Cargo.toml
-          displayName: Enable debug symbols
-        - script: |
-              env RUSTFLAGS="-Z sanitizer=leak" cargo test --target x86_64-unknown-linux-gnu
-          displayName: cargo -Z sanitizer=leak test
+ - job: asan
+   displayName: "Run address sanitizer on test suite"
+   pool:
+     vmImage: ubuntu-latest
+   steps:
+     - template: install-rust.yml@templates
+       parameters:
+         rust: nightly
+     - bash: |
+           sudo ln -s /usr/bin/llvm-symbolizer-6.0 /usr/bin/llvm-symbolizer
+       displayName: Enable debug symbols
+     # only --lib --tests b/c of https://github.com/rust-lang/rust/issues/53945
+     - script: |
+           env ASAN_OPTIONS="detect_odr_violation=0" RUSTFLAGS="-Z sanitizer=address" cargo test --lib --tests --target x86_64-unknown-linux-gnu
+       displayName: cargo -Z sanitizer=address test
+ - job: lsan
+   displayName: "Run leak sanitizer on test suite"
+   pool:
+     vmImage: ubuntu-latest
+   steps:
+     - template: install-rust.yml@templates
+       parameters:
+         rust: nightly
+     - bash: |
+           sudo ln -s /usr/bin/llvm-symbolizer-6.0 /usr/bin/llvm-symbolizer
+           sed -i '/\[features\]/i [profile.dev]' Cargo.toml
+           sed -i '/profile.dev/a opt-level = 1' Cargo.toml
+           cat Cargo.toml
+       displayName: Enable debug symbols
+     - script: |
+           env RUSTFLAGS="-Z sanitizer=leak" cargo test --target x86_64-unknown-linux-gnu
+       displayName: cargo -Z sanitizer=leak test
+ - job: loom
+   displayName: "Loom tests"
+   pool:
+     vmImage: ubuntu-latest
+   steps:
+     - template: install-rust.yml@templates
+       parameters:
+         rust: nightly
+     - script: |
+           env LOOM_MAX_PREEMPTIONS=3 RUSTFLAGS="--cfg loom" cargo test --test loom
+       displayName: cargo test loom
 
 resources:
   repositories:

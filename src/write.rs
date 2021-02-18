@@ -1,13 +1,11 @@
 use super::Absorb;
 use crate::read::ReadHandle;
 
+use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
-use std::sync::atomic;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, MutexGuard};
 use std::{fmt, thread};
 
 /// A writer handle to a left-right guarded data structure.
@@ -98,7 +96,7 @@ where
         self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         // all readers have now observed the NULL, so we own both handles.
         // all operations have been applied to both w_handle and r_handle.
@@ -177,12 +175,17 @@ where
                     // continue from this reader's epoch
                     starti = ii;
 
-                    // how eagerly should we retry?
-                    if iter != 20 {
-                        iter += 1;
-                    } else {
-                        thread::yield_now();
+                    if !cfg!(loom) {
+                        // how eagerly should we retry?
+                        if iter != 20 {
+                            iter += 1;
+                        } else {
+                            thread::yield_now();
+                        }
                     }
+
+                    #[cfg(loom)]
+                    loom::thread::yield_now();
 
                     continue 'retry;
                 }
@@ -275,7 +278,7 @@ where
         self.w_handle = unsafe { NonNull::new_unchecked(r_handle) };
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         for (ri, epoch) in epochs.iter() {
             self.last_epochs[ri] = epoch.load(Ordering::Acquire);
@@ -446,10 +449,10 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
-    use crate::CounterAddOp;
+    use crate::sync::{AtomicUsize, Mutex, Ordering};
+    use crate::Absorb;
     use slab::Slab;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+    include!("./utilities.rs");
 
     #[test]
     fn append_test() {

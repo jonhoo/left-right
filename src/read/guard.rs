@@ -1,11 +1,10 @@
+use crate::sync::{AtomicUsize, Ordering};
 use std::cell::Cell;
 use std::mem;
-use std::sync;
-use std::sync::atomic;
 
 #[derive(Debug, Copy, Clone)]
 pub(super) struct ReadHandleState<'rh> {
-    pub(super) epoch: &'rh sync::atomic::AtomicUsize,
+    pub(super) epoch: &'rh AtomicUsize,
     pub(super) enters: &'rh Cell<usize>,
 }
 
@@ -121,7 +120,7 @@ impl<'rh, T: ?Sized> Drop for ReadGuard<'rh, T> {
         self.handle.enters.set(enters);
         if enters == 0 {
             // We are the last guard to be dropped -- now release our epoch.
-            self.handle.epoch.fetch_add(1, atomic::Ordering::AcqRel);
+            self.handle.epoch.fetch_add(1, Ordering::AcqRel);
         }
     }
 }
