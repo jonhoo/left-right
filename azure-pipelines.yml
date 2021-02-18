@@ -2,6 +2,7 @@ jobs:
  - template: default.yml@templates
    parameters:
      minrust: 1.40.0
+     codecov_token: $(CODECOV_TOKEN_SECRET)
  - job: miri
    displayName: "Run miri on test suite"
    pool:
