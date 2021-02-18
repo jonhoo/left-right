@@ -52,6 +52,17 @@ jobs:
      - script: |
            env RUSTFLAGS="-Z sanitizer=leak" cargo test --target x86_64-unknown-linux-gnu
        displayName: cargo -Z sanitizer=leak test
+ - job: loom
+   displayName: "Loom tests"
+   pool:
+     vmImage: ubuntu-latest
+   steps:
+     - template: install-rust.yml@templates
+       parameters:
+         rust: nightly
+     - script: |
+           env RUSTFLAGS="--cfg loom" cargo test --test loom
+       displayName: cargo test loom
 
 resources:
   repositories:
