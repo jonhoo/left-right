@@ -1,10 +1,8 @@
+use crate::sync::{fence, Arc, AtomicPtr, AtomicUsize, Ordering};
 use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
-use std::sync::atomic;
-use std::sync::atomic::AtomicPtr;
-use std::sync::{self, Arc};
 
 // To make [`WriteHandle`] and friends work.
 #[cfg(doc)]
@@ -39,9 +37,9 @@ pub use factory::ReadHandleFactory;
 /// a [`ReadHandleFactory`]. Note, however, that creating a new handle through either of these
 /// mechanisms _does_ take a lock, and may therefore become a bottleneck if you do it frequently.
 pub struct ReadHandle<T> {
-    pub(crate) inner: sync::Arc<AtomicPtr<T>>,
+    pub(crate) inner: Arc<AtomicPtr<T>>,
     pub(crate) epochs: crate::Epochs,
-    epoch: sync::Arc<sync::atomic::AtomicUsize>,
+    epoch: Arc<AtomicUsize>,
     epoch_i: usize,
     enters: Cell<usize>,
 
@@ -74,23 +72,20 @@ impl<T> fmt::Debug for ReadHandle<T> {
 
 impl<T> Clone for ReadHandle<T> {
     fn clone(&self) -> Self {
-        ReadHandle::new_with_arc(
-            sync::Arc::clone(&self.inner),
-            sync::Arc::clone(&self.epochs),
-        )
+        ReadHandle::new_with_arc(Arc::clone(&self.inner), Arc::clone(&self.epochs))
     }
 }
 
 impl<T> ReadHandle<T> {
     pub(crate) fn new(inner: T, epochs: crate::Epochs) -> Self {
         let store = Box::into_raw(Box::new(inner));
-        let inner = sync::Arc::new(AtomicPtr::new(store));
+        let inner = Arc::new(AtomicPtr::new(store));
         Self::new_with_arc(inner, epochs)
     }
 
     fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: crate::Epochs) -> Self {
         // tell writer about our epoch tracker
-        let epoch = sync::Arc::new(atomic::AtomicUsize::new(0));
+        let epoch = Arc::new(AtomicUsize::new(0));
         // okay to lock, since we're not holding up the epoch
         let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
 
@@ -117,7 +112,7 @@ impl<T> ReadHandle<T> {
         if enters != 0 {
             // We have already locked the epoch.
             // Just give out another guard.
-            let r_handle = self.inner.load(atomic::Ordering::Acquire);
+            let r_handle = self.inner.load(Ordering::Acquire);
             // since we previously bumped our epoch, this pointer will remain valid until we bump
             // it again, which only happens when the last ReadGuard is dropped.
             let r_handle = unsafe { r_handle.as_ref() };
@@ -161,13 +156,13 @@ impl<T> ReadHandle<T> {
         // in all cases, using a pointer we read *after* updating our epoch is safe.
 
         // so, update our epoch tracker.
-        self.epoch.fetch_add(1, atomic::Ordering::AcqRel);
+        self.epoch.fetch_add(1, Ordering::AcqRel);
 
         // ensure that the pointer read happens strictly after updating the epoch
-        atomic::fence(atomic::Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         // then, atomically read pointer, and use the copy being pointed to
-        let r_handle = self.inner.load(atomic::Ordering::Acquire);
+        let r_handle = self.inner.load(Ordering::Acquire);
 
         // since we bumped our epoch, this pointer will remain valid until we bump it again
         let r_handle = unsafe { r_handle.as_ref() };
@@ -183,14 +178,14 @@ impl<T> ReadHandle<T> {
         } else {
             // the writehandle has been dropped, and so has both copies,
             // so restore parity and return None
-            self.epoch.fetch_add(1, atomic::Ordering::AcqRel);
+            self.epoch.fetch_add(1, Ordering::AcqRel);
             None
         }
     }
 
     /// Returns true if the [`WriteHandle`] has been dropped.
     pub fn was_dropped(&self) -> bool {
-        self.inner.load(atomic::Ordering::Acquire).is_null()
+        self.inner.load(Ordering::Acquire).is_null()
     }
 
     /// Returns a raw pointer to the read copy of the data.
@@ -201,7 +196,7 @@ impl<T> ReadHandle<T> {
     ///
     /// Casting this pointer to `&mut` is never safe.
     pub fn raw_handle(&self) -> Option<NonNull<T>> {
-        NonNull::new(self.inner.load(atomic::Ordering::Acquire))
+        NonNull::new(self.inner.load(Ordering::Acquire))
     }
 }
 

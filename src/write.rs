@@ -1,10 +1,9 @@
 use super::Absorb;
 use crate::read::ReadHandle;
 
+use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
-use std::sync::atomic;
-use std::sync::{Arc, MutexGuard};
 use std::{fmt, thread};
 
 /// A writer handle to a left-right guarded data structure.
@@ -85,10 +84,7 @@ where
         assert!(self.oplog.is_empty());
 
         // next, grab the read handle and set it to NULL
-        let r_handle = self
-            .r_handle
-            .inner
-            .swap(ptr::null_mut(), atomic::Ordering::Release);
+        let r_handle = self.r_handle.inner.swap(ptr::null_mut(), Ordering::Release);
 
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.epochs);
@@ -96,7 +92,7 @@ where
         self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         // all readers have now observed the NULL, so we own both handles.
         // all operations have been applied to both w_handle and r_handle.
@@ -134,7 +130,7 @@ where
         }
     }
 
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<atomic::AtomicUsize>>>) {
+    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>) {
         let mut iter = 0;
         let mut starti = 0;
 
@@ -159,7 +155,7 @@ where
                     continue;
                 }
 
-                let now = epoch.load(atomic::Ordering::Acquire);
+                let now = epoch.load(Ordering::Acquire);
                 if now != self.last_epochs[ri] {
                     // reader must have seen the last swap, since they have done at least one
                     // operation since we last looked at their epoch, which _must_ mean that they
@@ -169,12 +165,17 @@ where
                     // continue from this reader's epoch
                     starti = ii;
 
-                    // how eagerly should we retry?
-                    if iter != 20 {
-                        iter += 1;
-                    } else {
-                        thread::yield_now();
+                    if !cfg!(loom) {
+                        // how eagerly should we retry?
+                        if iter != 20 {
+                            iter += 1;
+                        } else {
+                            thread::yield_now();
+                        }
                     }
+
+                    #[cfg(loom)]
+                    loom::thread::yield_now();
 
                     continue 'retry;
                 }
@@ -211,7 +212,7 @@ where
             let r_handle = unsafe {
                 self.r_handle
                     .inner
-                    .load(atomic::Ordering::Acquire)
+                    .load(Ordering::Acquire)
                     .as_ref()
                     .unwrap()
             };
@@ -256,17 +257,17 @@ where
         let r_handle = self
             .r_handle
             .inner
-            .swap(self.w_handle.as_ptr(), atomic::Ordering::Release);
+            .swap(self.w_handle.as_ptr(), Ordering::Release);
 
         // NOTE: at this point, there are likely still readers using r_handle.
         // safety: r_handle was also created from a Box, so it is not null and is covariant.
         self.w_handle = unsafe { NonNull::new_unchecked(r_handle) };
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
-        atomic::fence(atomic::Ordering::SeqCst);
+        fence(Ordering::SeqCst);
 
         for (ri, epoch) in epochs.iter() {
-            self.last_epochs[ri] = epoch.load(atomic::Ordering::Acquire);
+            self.last_epochs[ri] = epoch.load(Ordering::Acquire);
         }
 
         #[cfg(test)]
@@ -434,7 +435,8 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
-    use crate::CounterAddOp;
+    use crate::Absorb;
+    include!("./utilities.rs");
 
     #[test]
     fn append_test() {
