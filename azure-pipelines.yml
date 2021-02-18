@@ -61,7 +61,7 @@ jobs:
        parameters:
          rust: nightly
      - script: |
-           env RUSTFLAGS="--cfg loom" cargo test --test loom
+           env LOOM_MAX_PREEMPTIONS=3 RUSTFLAGS="--cfg loom" cargo test --test loom
        displayName: cargo test loom
 
 resources:
