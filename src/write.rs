@@ -515,10 +515,6 @@ mod tests {
         // join to make sure that wait must return after the progress/increment
         // of held_epoch.
         let _ = wait_handle.join();
-
-        // check that writes waiting state is set to false after wait returns.
-        let is_waiting_v = is_waiting.load(Ordering::SeqCst);
-        assert_eq!(false, is_waiting_v);
     }
 
     #[test]
