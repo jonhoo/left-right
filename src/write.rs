@@ -165,12 +165,13 @@ where
                     // continue from this reader's epoch
                     starti = ii;
 
-                    // how eagerly should we retry?
-                    #[cfg(not(loom))]
-                    if iter != 20 {
-                        iter += 1;
-                    } else {
-                        thread::yield_now();
+                    if !cfg!(loom) {
+                        // how eagerly should we retry?
+                        if iter != 20 {
+                            iter += 1;
+                        } else {
+                            thread::yield_now();
+                        }
                     }
 
                     #[cfg(loom)]
