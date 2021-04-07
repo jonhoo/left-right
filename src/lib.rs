@@ -48,7 +48,7 @@
 //! points to a `T` that the readers access in order to read data. Every time a read has accessed
 //! the pointer, they increment a local epoch counter, and they update it again when they have
 //! finished the read. When a write occurs, the writer updates the other `T` (for which there are
-//! no readers), and also stores a copy of the change in a log. When [`WriteHandle::publish`) is
+//! no readers), and also stores a copy of the change in a log. When [`WriteHandle::publish`] is
 //! called, the writer, atomically swaps the reader pointer to point to the other `T`. It then
 //! waits for the epochs of all current readers to change, and then replays the operational log to
 //! bring the stale copy up to date.
