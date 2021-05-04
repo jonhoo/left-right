@@ -38,6 +38,8 @@ where
     first: bool,
     /// A publish has happened, but the two copies have not been synchronized yet.
     second: bool,
+    /// If we call `Self::take` the drop needs to be different.
+    taken: bool,
 }
 
 // safety: if a `WriteHandle` is sent across a thread boundary, we need to be able to take
@@ -75,6 +77,12 @@ where
     T: Absorb<O>,
 {
     fn drop(&mut self) {
+        // If we use `Self::take` then we cannot drop both r_handle and w_handle so
+        // a different cleanup happens there.
+        if self.taken {
+            return;
+        }
+
         use std::ptr;
 
         // first, ensure both copies are up to date
@@ -133,6 +141,7 @@ where
             refreshes: 0,
             first: true,
             second: true,
+            taken: false,
         }
     }
 
@@ -329,6 +338,90 @@ where
     // and only `Some` if there are indeed to readers in the write copy.
     pub fn raw_write_handle(&mut self) -> NonNull<T> {
         self.w_handle
+    }
+
+    /// Returns the backing data structure.
+    ///
+    /// Makes sure that all the pending operations are applied and waits till all the read handles
+    /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
+    /// returns the other copy as an owned value.
+    ///
+    /// ## With custom `drop_second`:
+    ///
+    /// This will not call `Absorb::drop_second` for you!
+    ///
+    /// If you implemented a custom `Absorb::drop_second` then, instead of letting your `T` drop, you should:
+    /// ```
+    /// use left_right::Absorb;
+    /// 
+    /// #[derive(Debug, Clone, PartialEq)]
+    /// struct BackingData(i32);
+    /// # struct CounterAddOp(i32);
+    /// # impl left_right::Absorb<CounterAddOp> for BackingData {
+    /// #    fn absorb_first(&mut self, operation: &mut CounterAddOp, _: &Self) {
+    /// #        self.0 += operation.0;
+    /// #    }
+    /// # 
+    /// #    fn sync_with(&mut self, first: &Self) {
+    /// #        self.0 = first.0
+    /// #    }
+    /// # }
+    /// 
+    /// let original_data = BackingData(10);
+    /// let (write, read) = left_right::new_from_empty::<_, CounterAddOp>(original_data.clone());
+    /// 
+    /// let taken_data = write.take();
+    /// assert_eq!(original_data, taken_data);
+    /// 
+    /// // make sure it is dropped using `drop_second` if your type requires it.
+    /// Absorb::drop_second(Box::new(taken_data));
+    /// ```
+    ///
+    /// Another option is to edit the `Drop` implementation of your `T`.
+    pub fn take(mut self) -> T {
+        use std::ptr;
+
+        // Stop `Drop` from dropping both r_handle and w_handle. It is handled here.
+        self.taken = true;
+
+        // first, ensure both copies are up to date
+        // (otherwise safely dropping the possibly duplicated w_handle data is a pain)
+        if !self.oplog.is_empty() {
+            self.publish();
+        }
+        if !self.oplog.is_empty() {
+            self.publish();
+        }
+        assert!(self.oplog.is_empty());
+
+        // next, grab the read handle and set it to NULL
+        let r_handle = self.r_handle.inner.swap(ptr::null_mut(), Ordering::Release);
+
+        // now, wait for all readers to depart
+        let epochs = Arc::clone(&self.epochs);
+        let mut epochs = epochs.lock().unwrap();
+        self.wait(&mut epochs);
+
+        // ensure that the subsequent epoch reads aren't re-ordered to before the swap
+        fence(Ordering::SeqCst);
+
+        // all readers have now observed the NULL, so we own both handles.
+        // all operations have been applied to both w_handle and r_handle.
+        // give the underlying data structure an opportunity to handle the one copy differently:
+        // 
+        // safety: w_handle was initially crated from a `Box`, and is no longer aliased.
+        Absorb::drop_first(unsafe { Box::from_raw(self.w_handle.as_ptr()) });
+
+        // next we take the r_handle and return it as an owned value.
+        //
+        // this is safe, since we know that no readers are using this pointer
+        // anymore (due to the .wait() following swapping the pointer with NULL).
+        //
+        // safety: r_handle was initially crated from a `Box`, and is no longer aliased.
+        unsafe { *Box::from_raw(r_handle) }
+
+        // here `self` is dropped but because we set `self.taken` to `true` the drop
+        // doesn't do anything with r_handle and w_handle
     }
 }
 
