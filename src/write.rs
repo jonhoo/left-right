@@ -38,6 +38,8 @@ where
     first: bool,
     /// A publish has happened, but the two copies have not been synchronized yet.
     second: bool,
+    /// If we call `Self::take` the drop needs to be different.
+    taken: bool,
 }
 
 // safety: if a `WriteHandle` is sent across a thread boundary, we need to be able to take
@@ -70,16 +72,28 @@ where
     }
 }
 
-impl<T, O> Drop for WriteHandle<T, O>
+impl<T, O> WriteHandle<T, O>
 where
     T: Absorb<O>,
 {
-    fn drop(&mut self) {
+    /// Takes out the inner backing data structure if it hasn't been taken yet. Otherwise returns `None`.
+    ///
+    /// Makes sure that all the pending operations are applied and waits till all the read handles
+    /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
+    /// returns the other copy as a boxed value.
+    fn take_inner(&mut self) -> Option<Box<T>> {
         use std::ptr;
+        // Can only take inner once.
+        if self.taken {
+            return None;
+        }
+
+        // Disallow taking again.
+        self.taken = true;
 
         // first, ensure both copies are up to date
-        // (otherwise safely dropping deduplicated data is a pain)
-        if !self.oplog.is_empty() {
+        // (otherwise safely dropping the possibly duplicated w_handle data is a pain)
+        if self.first || !self.oplog.is_empty() {
             self.publish();
         }
         if !self.oplog.is_empty() {
@@ -105,12 +119,24 @@ where
         // safety: w_handle was initially crated from a `Box`, and is no longer aliased.
         Absorb::drop_first(unsafe { Box::from_raw(self.w_handle.as_ptr()) });
 
-        // next we drop the r_handle.
+        // next we take the r_handle and return it as a boxed value.
+        //
         // this is safe, since we know that no readers are using this pointer
         // anymore (due to the .wait() following swapping the pointer with NULL).
         //
         // safety: r_handle was initially crated from a `Box`, and is no longer aliased.
-        Absorb::drop_second(unsafe { Box::from_raw(r_handle) });
+        unsafe { Some(Box::from_raw(r_handle)) }
+    }
+}
+
+impl<T, O> Drop for WriteHandle<T, O>
+where
+    T: Absorb<O>,
+{
+    fn drop(&mut self) {
+        if let Some(inner) = self.take_inner() {
+            Absorb::drop_second(inner);
+        }
     }
 }
 
@@ -133,6 +159,7 @@ where
             refreshes: 0,
             first: true,
             second: true,
+            taken: false,
         }
     }
 
@@ -330,6 +357,52 @@ where
     pub fn raw_write_handle(&mut self) -> NonNull<T> {
         self.w_handle
     }
+
+    /// Returns the backing data structure.
+    ///
+    /// Makes sure that all the pending operations are applied and waits till all the read handles
+    /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
+    /// returns the other copy as an owned value.
+    ///
+    /// ## With custom `drop_second`:
+    ///
+    /// This will not call `Absorb::drop_second` for you!
+    ///
+    /// If you implemented a custom `Absorb::drop_second` then, instead of letting your `T` drop, you should:
+    /// ```
+    /// use left_right::Absorb;
+    ///
+    /// #[derive(Debug, Clone, PartialEq)]
+    /// struct BackingData(i32);
+    /// # struct CounterAddOp(i32);
+    /// # impl left_right::Absorb<CounterAddOp> for BackingData {
+    /// #    fn absorb_first(&mut self, operation: &mut CounterAddOp, _: &Self) {
+    /// #        self.0 += operation.0;
+    /// #    }
+    /// #
+    /// #    fn sync_with(&mut self, first: &Self) {
+    /// #        self.0 = first.0
+    /// #    }
+    /// # }
+    ///
+    /// let original_data = BackingData(10);
+    /// let (write, read) = left_right::new_from_empty::<_, CounterAddOp>(original_data.clone());
+    ///
+    /// let taken_data = write.take();
+    /// assert_eq!(original_data, taken_data);
+    ///
+    /// // make sure it is dropped using `drop_second` if your type requires it.
+    /// Absorb::drop_second(Box::new(taken_data));
+    /// ```
+    ///
+    /// Another option is to edit the `Drop` implementation of your `T`.
+    pub fn take(mut self) -> T {
+        // Safety: it is always safe to unwrap here because `take_inner` is private
+        // and it is only called here and in the drop impl. Since we have an owned
+        // `self` we know the drop has not yet been called. And every first call of
+        // `take_inner` returns `Some`
+        *self.take_inner().unwrap()
+    }
 }
 
 // allow using write handle for reads
@@ -466,6 +539,23 @@ mod tests {
         w.append(CounterAddOp(2));
         w.append(CounterAddOp(3));
         assert_eq!(w.oplog.len(), 2);
+    }
+
+    #[test]
+    fn take_test() {
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(1));
+        assert_eq!(w.take(), 4);
+
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        // w.publish();
+        assert_eq!(w.take(), 3);
+
+        let (w, _r) = crate::new_from_empty::<i32, _>(2);
+        assert_eq!(w.take(), 2);
     }
 
     #[test]
