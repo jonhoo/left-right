@@ -392,7 +392,7 @@ where
     /// assert_eq!(original_data, taken_data);
     ///
     /// // make sure it is dropped using `drop_second` if your type requires it.
-    /// Absorb::drop_second(Box::new(taken_data));
+    /// BackingData::drop_second(Box::new(taken_data));
     /// ```
     ///
     /// Another option is to edit the `Drop` implementation of your `T`.
