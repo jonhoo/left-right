@@ -1,8 +1,10 @@
-use super::Absorb;
 use crate::read::ReadHandle;
+use crate::Absorb;
 
 use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
 use std::collections::VecDeque;
+use std::marker::PhantomData;
+use std::ops::DerefMut;
 use std::ptr::NonNull;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
@@ -72,6 +74,64 @@ where
     }
 }
 
+/// A **smart pointer** to an owned backing data structure. This makes sure that the
+/// data is dropped correctly. (Using `Absorb::drop_second`)
+///
+/// Additionally it allows for unsafely getting the inner data out using `.into_box()`
+pub struct AbsorbDrop<T: Absorb<O>, O> {
+    inner: Option<Box<T>>,
+    _marker: PhantomData<O>,
+}
+
+impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for AbsorbDrop<T, O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Safety: the unwrap will never panic because `inner` is private and the
+        // only way to make it None is with `into_box` which takes an owned self.
+        f.debug_struct("AbsorbDrop")
+            .field("inner", self.inner.as_ref().unwrap())
+            .finish()
+    }
+}
+
+impl<T: Absorb<O>, O> Deref for AbsorbDrop<T, O> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        // Safety: the unwrap will never panic because `inner` is private and the
+        // only way to make it None is with `into_box` which takes an owned self.
+        self.inner.as_ref().unwrap()
+    }
+}
+
+impl<T: Absorb<O>, O> DerefMut for AbsorbDrop<T, O> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // Safety: the unwrap will never panic because `inner` is private and the
+        // only way to make it None is with `into_box` which takes an owned self.
+        self.inner.as_mut().unwrap()
+    }
+}
+
+impl<T: Absorb<O>, O> AbsorbDrop<T, O> {
+    /// This is unsafe because you must call `Absorb::drop_second` in
+    /// case just dropping `T` would not be safe and sufficient.
+    ///
+    /// If you used the default implementation of `Absorb::drop_second` (which just calls `drop`)
+    /// you don't need to use `Absorb::drop_second`.
+    pub unsafe fn into_box(mut self) -> Box<T> {
+        // Safety: the unwrap will never panic because `inner` is private and the
+        // only way to make it None is with this function.
+        self.inner.take().unwrap()
+    }
+}
+
+impl<T: Absorb<O>, O> Drop for AbsorbDrop<T, O> {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            T::drop_second(inner);
+        }
+    }
+}
+
 impl<T, O> WriteHandle<T, O>
 where
     T: Absorb<O>,
@@ -80,8 +140,8 @@ where
     ///
     /// Makes sure that all the pending operations are applied and waits till all the read handles
     /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
-    /// returns the other copy as a boxed value.
-    fn take_inner(&mut self) -> Option<Box<T>> {
+    /// returns the other copy as an `AbsorbDrop` smart pointer.
+    fn take_inner(&mut self) -> Option<AbsorbDrop<T, O>> {
         use std::ptr;
         // Can only take inner once.
         if self.taken {
@@ -125,7 +185,12 @@ where
         // anymore (due to the .wait() following swapping the pointer with NULL).
         //
         // safety: r_handle was initially crated from a `Box`, and is no longer aliased.
-        unsafe { Some(Box::from_raw(r_handle)) }
+        let boxed_r_handle = unsafe { Box::from_raw(r_handle) };
+
+        Some(AbsorbDrop {
+            inner: Some(boxed_r_handle),
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -135,7 +200,7 @@ where
 {
     fn drop(&mut self) {
         if let Some(inner) = self.take_inner() {
-            Absorb::drop_second(inner);
+            drop(inner);
         }
     }
 }
@@ -362,46 +427,13 @@ where
     ///
     /// Makes sure that all the pending operations are applied and waits till all the read handles
     /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
-    /// returns the other copy as an owned value.
-    ///
-    /// ## With custom `drop_second`:
-    ///
-    /// This will not call `Absorb::drop_second` for you!
-    ///
-    /// If you implemented a custom `Absorb::drop_second` then, instead of letting your `T` drop, you should:
-    /// ```
-    /// use left_right::Absorb;
-    ///
-    /// #[derive(Debug, Clone, PartialEq)]
-    /// struct BackingData(i32);
-    /// # struct CounterAddOp(i32);
-    /// # impl left_right::Absorb<CounterAddOp> for BackingData {
-    /// #    fn absorb_first(&mut self, operation: &mut CounterAddOp, _: &Self) {
-    /// #        self.0 += operation.0;
-    /// #    }
-    /// #
-    /// #    fn sync_with(&mut self, first: &Self) {
-    /// #        self.0 = first.0
-    /// #    }
-    /// # }
-    ///
-    /// let original_data = BackingData(10);
-    /// let (write, read) = left_right::new_from_empty(original_data.clone());
-    ///
-    /// let taken_data = write.take();
-    /// assert_eq!(original_data, taken_data);
-    ///
-    /// // make sure it is dropped using `drop_second` if your type requires it.
-    /// BackingData::drop_second(Box::new(taken_data));
-    /// ```
-    ///
-    /// Another option is to edit the `Drop` implementation of your `T`.
-    pub fn take(mut self) -> T {
+    /// returns the other copy as an `AbsorbDrop` smart pointer.
+    pub fn take(mut self) -> AbsorbDrop<T, O> {
         // Safety: it is always safe to unwrap here because `take_inner` is private
         // and it is only called here and in the drop impl. Since we have an owned
         // `self` we know the drop has not yet been called. And every first call of
         // `take_inner` returns `Some`
-        *self.take_inner().unwrap()
+        self.take_inner().unwrap()
     }
 }
 
@@ -548,22 +580,22 @@ mod tests {
         w.append(CounterAddOp(1));
         w.publish();
         w.append(CounterAddOp(1));
-        assert_eq!(w.take(), 4);
+        assert_eq!(*w.take(), 4);
 
         // pending operations published by take
         let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
         w.append(CounterAddOp(1));
-        assert_eq!(w.take(), 3);
+        assert_eq!(*w.take(), 3);
 
         // emptry op queue
         let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
         w.append(CounterAddOp(1));
         w.publish();
-        assert_eq!(w.take(), 3);
+        assert_eq!(*w.take(), 3);
 
         // no operations
         let (w, _r) = crate::new_from_empty::<i32, _>(2);
-        assert_eq!(w.take(), 2);
+        assert_eq!(*w.take(), 2);
     }
 
     #[test]
