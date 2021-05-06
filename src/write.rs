@@ -386,7 +386,7 @@ where
     /// # }
     ///
     /// let original_data = BackingData(10);
-    /// let (write, read) = left_right::new_from_empty::<_, CounterAddOp>(original_data.clone());
+    /// let (write, read) = left_right::new_from_empty(original_data.clone());
     ///
     /// let taken_data = write.take();
     /// assert_eq!(original_data, taken_data);
