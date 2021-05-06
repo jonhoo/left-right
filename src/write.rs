@@ -543,17 +543,25 @@ mod tests {
 
     #[test]
     fn take_test() {
+        // normal publish then pending operations published by take
         let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
         w.append(CounterAddOp(1));
         w.publish();
         w.append(CounterAddOp(1));
         assert_eq!(w.take(), 4);
 
+        // pending operations published by take
         let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
         w.append(CounterAddOp(1));
-        // w.publish();
         assert_eq!(w.take(), 3);
 
+        // emptry op queue
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        assert_eq!(w.take(), 3);
+
+        // no operations
         let (w, _r) = crate::new_from_empty::<i32, _>(2);
         assert_eq!(w.take(), 2);
     }
