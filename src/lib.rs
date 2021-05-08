@@ -182,6 +182,7 @@ type Epochs = Arc<Mutex<slab::Slab<Arc<AtomicUsize>>>>;
 
 mod write;
 pub use crate::write::WriteHandle;
+pub use crate::write::Taken;
 
 mod read;
 pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};

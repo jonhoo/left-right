@@ -77,15 +77,15 @@ where
 /// A **smart pointer** to an owned backing data structure. This makes sure that the
 /// data is dropped correctly (using [`Absorb::drop_second`]).
 ///
-/// Additionally it allows for unsafely getting the inner data out using [`into_box()`](AbsorbDrop::into_box).
-pub struct AbsorbDrop<T: Absorb<O>, O> {
+/// Additionally it allows for unsafely getting the inner data out using [`into_box()`](Taken::into_box).
+pub struct Taken<T: Absorb<O>, O> {
     inner: Option<Box<T>>,
     _marker: PhantomData<O>,
 }
 
-impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for AbsorbDrop<T, O> {
+impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for Taken<T, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AbsorbDrop")
+        f.debug_struct("Taken")
             .field(
                 "inner",
                 self.inner
@@ -96,7 +96,7 @@ impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for AbsorbDrop<T, O> {
     }
 }
 
-impl<T: Absorb<O>, O> Deref for AbsorbDrop<T, O> {
+impl<T: Absorb<O>, O> Deref for Taken<T, O> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -106,7 +106,7 @@ impl<T: Absorb<O>, O> Deref for AbsorbDrop<T, O> {
     }
 }
 
-impl<T: Absorb<O>, O> DerefMut for AbsorbDrop<T, O> {
+impl<T: Absorb<O>, O> DerefMut for Taken<T, O> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
             .as_mut()
@@ -114,7 +114,7 @@ impl<T: Absorb<O>, O> DerefMut for AbsorbDrop<T, O> {
     }
 }
 
-impl<T: Absorb<O>, O> AbsorbDrop<T, O> {
+impl<T: Absorb<O>, O> Taken<T, O> {
     /// This is unsafe because you must call [`Absorb::drop_second`] in
     /// case just dropping `T` is not safe and sufficient.
     ///
@@ -127,7 +127,7 @@ impl<T: Absorb<O>, O> AbsorbDrop<T, O> {
     }
 }
 
-impl<T: Absorb<O>, O> Drop for AbsorbDrop<T, O> {
+impl<T: Absorb<O>, O> Drop for Taken<T, O> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.take() {
             T::drop_second(inner);
@@ -143,8 +143,8 @@ where
     ///
     /// Makes sure that all the pending operations are applied and waits till all the read handles
     /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
-    /// returns the other copy as an [`AbsorbDrop`] smart pointer.
-    fn take_inner(&mut self) -> Option<AbsorbDrop<T, O>> {
+    /// returns the other copy as a [`Taken`] smart pointer.
+    fn take_inner(&mut self) -> Option<Taken<T, O>> {
         use std::ptr;
         // Can only take inner once.
         if self.taken {
@@ -190,7 +190,7 @@ where
         // safety: r_handle was initially crated from a `Box`, and is no longer aliased.
         let boxed_r_handle = unsafe { Box::from_raw(r_handle) };
 
-        Some(AbsorbDrop {
+        Some(Taken {
             inner: Some(boxed_r_handle),
             _marker: PhantomData,
         })
@@ -430,8 +430,8 @@ where
     ///
     /// Makes sure that all the pending operations are applied and waits till all the read handles
     /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
-    /// returns the other copy as an [`AbsorbDrop`] smart pointer.
-    pub fn take(mut self) -> AbsorbDrop<T, O> {
+    /// returns the other copy as a [`Taken`] smart pointer.
+    pub fn take(mut self) -> Taken<T, O> {
         // It is always safe to `expect` here because `take_inner` is private
         // and it is only called here and in the drop impl. Since we have an owned
         // `self` we know the drop has not yet been called. And every first call of
