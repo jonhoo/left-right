@@ -1,8 +1,10 @@
-use super::Absorb;
 use crate::read::ReadHandle;
+use crate::Absorb;
 
 use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
 use std::collections::VecDeque;
+use std::marker::PhantomData;
+use std::ops::DerefMut;
 use std::ptr::NonNull;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
@@ -38,6 +40,8 @@ where
     first: bool,
     /// A publish has happened, but the two copies have not been synchronized yet.
     second: bool,
+    /// If we call `Self::take` the drop needs to be different.
+    taken: bool,
 }
 
 // safety: if a `WriteHandle` is sent across a thread boundary, we need to be able to take
@@ -70,16 +74,89 @@ where
     }
 }
 
-impl<T, O> Drop for WriteHandle<T, O>
+/// A **smart pointer** to an owned backing data structure. This makes sure that the
+/// data is dropped correctly (using [`Absorb::drop_second`]).
+///
+/// Additionally it allows for unsafely getting the inner data out using [`into_box()`](Taken::into_box).
+pub struct Taken<T: Absorb<O>, O> {
+    inner: Option<Box<T>>,
+    _marker: PhantomData<O>,
+}
+
+impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for Taken<T, O> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Taken")
+            .field(
+                "inner",
+                self.inner
+                    .as_ref()
+                    .expect("inner is only taken in `into_box` which drops self"),
+            )
+            .finish()
+    }
+}
+
+impl<T: Absorb<O>, O> Deref for Taken<T, O> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+            .as_ref()
+            .expect("inner is only taken in `into_box` which drops self")
+    }
+}
+
+impl<T: Absorb<O>, O> DerefMut for Taken<T, O> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner
+            .as_mut()
+            .expect("inner is only taken in `into_box` which drops self")
+    }
+}
+
+impl<T: Absorb<O>, O> Taken<T, O> {
+    /// This is unsafe because you must call [`Absorb::drop_second`] in
+    /// case just dropping `T` is not safe and sufficient.
+    ///
+    /// If you used the default implementation of [`Absorb::drop_second`] (which just calls [`drop`](Drop::drop))
+    /// you don't need to call [`Absorb::drop_second`].
+    pub unsafe fn into_box(mut self) -> Box<T> {
+        self.inner
+            .take()
+            .expect("inner is only taken here then self is dropped")
+    }
+}
+
+impl<T: Absorb<O>, O> Drop for Taken<T, O> {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            T::drop_second(inner);
+        }
+    }
+}
+
+impl<T, O> WriteHandle<T, O>
 where
     T: Absorb<O>,
 {
-    fn drop(&mut self) {
+    /// Takes out the inner backing data structure if it hasn't been taken yet. Otherwise returns `None`.
+    ///
+    /// Makes sure that all the pending operations are applied and waits till all the read handles
+    /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
+    /// returns the other copy as a [`Taken`] smart pointer.
+    fn take_inner(&mut self) -> Option<Taken<T, O>> {
         use std::ptr;
+        // Can only take inner once.
+        if self.taken {
+            return None;
+        }
+
+        // Disallow taking again.
+        self.taken = true;
 
         // first, ensure both copies are up to date
-        // (otherwise safely dropping deduplicated data is a pain)
-        if !self.oplog.is_empty() {
+        // (otherwise safely dropping the possibly duplicated w_handle data is a pain)
+        if self.first || !self.oplog.is_empty() {
             self.publish();
         }
         if !self.oplog.is_empty() {
@@ -105,12 +182,29 @@ where
         // safety: w_handle was initially crated from a `Box`, and is no longer aliased.
         Absorb::drop_first(unsafe { Box::from_raw(self.w_handle.as_ptr()) });
 
-        // next we drop the r_handle.
+        // next we take the r_handle and return it as a boxed value.
+        //
         // this is safe, since we know that no readers are using this pointer
         // anymore (due to the .wait() following swapping the pointer with NULL).
         //
         // safety: r_handle was initially crated from a `Box`, and is no longer aliased.
-        Absorb::drop_second(unsafe { Box::from_raw(r_handle) });
+        let boxed_r_handle = unsafe { Box::from_raw(r_handle) };
+
+        Some(Taken {
+            inner: Some(boxed_r_handle),
+            _marker: PhantomData,
+        })
+    }
+}
+
+impl<T, O> Drop for WriteHandle<T, O>
+where
+    T: Absorb<O>,
+{
+    fn drop(&mut self) {
+        if let Some(inner) = self.take_inner() {
+            drop(inner);
+        }
     }
 }
 
@@ -133,6 +227,7 @@ where
             refreshes: 0,
             first: true,
             second: true,
+            taken: false,
         }
     }
 
@@ -330,6 +425,20 @@ where
     pub fn raw_write_handle(&mut self) -> NonNull<T> {
         self.w_handle
     }
+
+    /// Returns the backing data structure.
+    ///
+    /// Makes sure that all the pending operations are applied and waits till all the read handles
+    /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
+    /// returns the other copy as a [`Taken`] smart pointer.
+    pub fn take(mut self) -> Taken<T, O> {
+        // It is always safe to `expect` here because `take_inner` is private
+        // and it is only called here and in the drop impl. Since we have an owned
+        // `self` we know the drop has not yet been called. And every first call of
+        // `take_inner` returns `Some`
+        self.take_inner()
+            .expect("inner is only taken here then self is dropped")
+    }
 }
 
 // allow using write handle for reads
@@ -466,6 +575,48 @@ mod tests {
         w.append(CounterAddOp(2));
         w.append(CounterAddOp(3));
         assert_eq!(w.oplog.len(), 2);
+    }
+
+    #[test]
+    fn take_test() {
+        // publish twice then take with no pending operations
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(1));
+        w.publish();
+        assert_eq!(*w.take(), 4);
+
+        // publish twice then pending operation published by take
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(2));
+        assert_eq!(*w.take(), 6);
+
+        // normal publish then pending operations published by take
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(1));
+        assert_eq!(*w.take(), 4);
+
+        // pending operations published by take
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        assert_eq!(*w.take(), 3);
+
+        // emptry op queue
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        assert_eq!(*w.take(), 3);
+
+        // no operations
+        let (w, _r) = crate::new_from_empty::<i32, _>(2);
+        assert_eq!(*w.take(), 2);
     }
 
     #[test]

@@ -181,6 +181,7 @@ use crate::sync::{Arc, AtomicUsize, Mutex};
 type Epochs = Arc<Mutex<slab::Slab<Arc<AtomicUsize>>>>;
 
 mod write;
+pub use crate::write::Taken;
 pub use crate::write::WriteHandle;
 
 mod read;
