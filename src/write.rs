@@ -579,6 +579,23 @@ mod tests {
 
     #[test]
     fn take_test() {
+        // publish twice then take with no pending operations
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(1));
+        w.publish();
+        assert_eq!(*w.take(), 4);
+
+        // publish twice then pending operation published by take
+        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(1));
+        w.publish();
+        w.append(CounterAddOp(2));
+        assert_eq!(*w.take(), 6);
+
         // normal publish then pending operations published by take
         let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
         w.append(CounterAddOp(1));
