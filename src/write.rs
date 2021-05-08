@@ -85,10 +85,13 @@ pub struct AbsorbDrop<T: Absorb<O>, O> {
 
 impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for AbsorbDrop<T, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Safety: the unwrap will never panic because `inner` is private and the
-        // only way to make it None is with `into_box` which takes an owned self.
         f.debug_struct("AbsorbDrop")
-            .field("inner", self.inner.as_ref().unwrap())
+            .field(
+                "inner",
+                self.inner
+                    .as_ref()
+                    .expect("inner is only taken in `into_box` which drops self"),
+            )
             .finish()
     }
 }
@@ -97,17 +100,17 @@ impl<T: Absorb<O>, O> Deref for AbsorbDrop<T, O> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        // Safety: the unwrap will never panic because `inner` is private and the
-        // only way to make it None is with `into_box` which takes an owned self.
-        self.inner.as_ref().unwrap()
+        self.inner
+            .as_ref()
+            .expect("inner is only taken in `into_box` which drops self")
     }
 }
 
 impl<T: Absorb<O>, O> DerefMut for AbsorbDrop<T, O> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        // Safety: the unwrap will never panic because `inner` is private and the
-        // only way to make it None is with `into_box` which takes an owned self.
-        self.inner.as_mut().unwrap()
+        self.inner
+            .as_mut()
+            .expect("inner is only taken in `into_box` which drops self")
     }
 }
 
@@ -118,9 +121,9 @@ impl<T: Absorb<O>, O> AbsorbDrop<T, O> {
     /// If you used the default implementation of `Absorb::drop_second` (which just calls `drop`)
     /// you don't need to use `Absorb::drop_second`.
     pub unsafe fn into_box(mut self) -> Box<T> {
-        // Safety: the unwrap will never panic because `inner` is private and the
-        // only way to make it None is with this function.
-        self.inner.take().unwrap()
+        self.inner
+            .take()
+            .expect("inner is only taken here then self is dropped")
     }
 }
 
@@ -429,11 +432,12 @@ where
     /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
     /// returns the other copy as an `AbsorbDrop` smart pointer.
     pub fn take(mut self) -> AbsorbDrop<T, O> {
-        // Safety: it is always safe to unwrap here because `take_inner` is private
+        // It is always safe to `expect` here because `take_inner` is private
         // and it is only called here and in the drop impl. Since we have an owned
         // `self` we know the drop has not yet been called. And every first call of
         // `take_inner` returns `Some`
-        self.take_inner().unwrap()
+        self.take_inner()
+            .expect("inner is only taken here then self is dropped")
     }
 }
 
