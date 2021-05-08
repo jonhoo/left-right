@@ -75,9 +75,9 @@ where
 }
 
 /// A **smart pointer** to an owned backing data structure. This makes sure that the
-/// data is dropped correctly. (Using `Absorb::drop_second`)
+/// data is dropped correctly (using [`Absorb::drop_second`]).
 ///
-/// Additionally it allows for unsafely getting the inner data out using `.into_box()`
+/// Additionally it allows for unsafely getting the inner data out using [`into_box()`](AbsorbDrop::into_box).
 pub struct AbsorbDrop<T: Absorb<O>, O> {
     inner: Option<Box<T>>,
     _marker: PhantomData<O>,
@@ -115,11 +115,11 @@ impl<T: Absorb<O>, O> DerefMut for AbsorbDrop<T, O> {
 }
 
 impl<T: Absorb<O>, O> AbsorbDrop<T, O> {
-    /// This is unsafe because you must call `Absorb::drop_second` in
-    /// case just dropping `T` would not be safe and sufficient.
+    /// This is unsafe because you must call [`Absorb::drop_second`] in
+    /// case just dropping `T` is not safe and sufficient.
     ///
-    /// If you used the default implementation of `Absorb::drop_second` (which just calls `drop`)
-    /// you don't need to use `Absorb::drop_second`.
+    /// If you used the default implementation of [`Absorb::drop_second`] (which just calls [`drop`](Drop::drop))
+    /// you don't need to call [`Absorb::drop_second`].
     pub unsafe fn into_box(mut self) -> Box<T> {
         self.inner
             .take()
@@ -142,8 +142,8 @@ where
     /// Takes out the inner backing data structure if it hasn't been taken yet. Otherwise returns `None`.
     ///
     /// Makes sure that all the pending operations are applied and waits till all the read handles
-    /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
-    /// returns the other copy as an `AbsorbDrop` smart pointer.
+    /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
+    /// returns the other copy as an [`AbsorbDrop`] smart pointer.
     fn take_inner(&mut self) -> Option<AbsorbDrop<T, O>> {
         use std::ptr;
         // Can only take inner once.
@@ -429,8 +429,8 @@ where
     /// Returns the backing data structure.
     ///
     /// Makes sure that all the pending operations are applied and waits till all the read handles
-    /// have departed. Then it uses `Absorb::drop_first` to drop one of the copies of the data and
-    /// returns the other copy as an `AbsorbDrop` smart pointer.
+    /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
+    /// returns the other copy as an [`AbsorbDrop`] smart pointer.
     pub fn take(mut self) -> AbsorbDrop<T, O> {
         // It is always safe to `expect` here because `take_inner` is private
         // and it is only called here and in the drop impl. Since we have an owned
