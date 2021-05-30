@@ -297,3 +297,34 @@ where
     let w = WriteHandle::new(T::default(), epochs, r.clone());
     (w, r)
 }
+
+/// Construct a new write randle and read handle factory pair from an empty data structure.
+///
+/// The type must implement `Clone` so we can construct the second copy from the first.
+pub fn new_from_empty_with_factory<T, O>(t: T) -> (WriteHandle<T, O>, ReadHandleFactory<T>)
+where
+    T: Absorb<O> + Clone,
+{
+    let epochs = Default::default();
+
+    let r = ReadHandleFactory::new(t.clone(), Arc::clone(&epochs));
+    let w = WriteHandle::new(t, epochs, r.handle());
+    (w, r)
+}
+
+
+/// Construct a new write randle and read handle factory pair from the data structure default.
+///
+/// The type must implement `Default` so we can construct two empty instances. 
+/// If your type's `Default` implementation does not guarantee this, you can use `new_from_empty_with_factory`,
+/// which relies on `Clone` instead of `Default`.
+pub fn new_with_factory<T, O>() -> (WriteHandle<T, O>, ReadHandleFactory<T>)
+where
+    T: Absorb<O> + Default,
+{
+    let epochs = Default::default();
+
+    let r = ReadHandleFactory::new(T::default(), Arc::clone(&epochs));
+    let w = WriteHandle::new(T::default(), epochs, r.handle());
+    (w, r)
+}

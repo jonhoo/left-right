@@ -13,6 +13,17 @@ pub struct ReadHandleFactory<T> {
     pub(super) epochs: crate::Epochs,
 }
 
+impl<T> ReadHandleFactory<T> {
+    pub(crate) fn new(inner: T, epochs: crate::Epochs) -> Self {
+        let store = Box::into_raw(Box::new(inner));
+        let inner = Arc::new(AtomicPtr::new(store));
+        Self {
+            inner,
+            epochs
+        }
+    }
+}
+
 impl<T> fmt::Debug for ReadHandleFactory<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadHandleFactory")
