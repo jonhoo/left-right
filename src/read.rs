@@ -98,6 +98,15 @@ impl<T> ReadHandle<T> {
             _unimpl_send: PhantomData,
         }
     }
+
+    /// Create a [`ReadHandleFactory`] which is `Send` & `Sync` and can be shared across threads to create 
+    /// additional [`ReadHandle`] instances.
+    pub fn factory(&self) -> ReadHandleFactory<T> {
+        ReadHandleFactory {
+            inner: Arc::clone(&self.inner),
+            epochs: Arc::clone(&self.epochs),
+        }
+    }
 }
 
 impl<T> ReadHandle<T> {
