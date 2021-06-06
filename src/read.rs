@@ -99,7 +99,7 @@ impl<T> ReadHandle<T> {
         }
     }
 
-    /// Create a [`ReadHandleFactory`] which is `Send` & `Sync` and can be shared across threads to create 
+    /// Create a [`ReadHandleFactory`] which is `Send` & `Sync` and can be shared across threads to create
     /// additional [`ReadHandle`] instances.
     pub fn factory(&self) -> ReadHandleFactory<T> {
         ReadHandleFactory {
