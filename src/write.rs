@@ -484,7 +484,7 @@ where
             }
         } else {
             // Only try to compress if it could actually have an effect, else use original impl as efficient fallback
-            if *T::max_compress_range() > 0 {
+            if T::MAX_COMPRESS_RANGE > 0 {
                 // Compress oplog by rev-iterating all ops appended since the last publish
                 // while attempting to combine them with the next op,
                 // cut short when an attempt fails due to encountering a dependence (e.g. clear then set).
@@ -496,7 +496,7 @@ where
                     // used to more efficiently insert next if possible
                     let mut none: Option<(usize, &mut Option<O>)> = None;
                     // rev-iterate all unpublished ops already in the oplog
-                    let mut range_remaining = *T::max_compress_range();
+                    let mut range_remaining = T::MAX_COMPRESS_RANGE;
 
                     for (prev_rev_idx, prev_loc) in {
                         #[cfg(test)]
@@ -540,7 +540,7 @@ where
                                     // Remember empty loc for efficient insertion
                                     none.replace((prev_rev_idx, prev_loc));
                                     // We successfully compressed ops and therefore reset our range.
-                                    range_remaining = *T::max_compress_range();
+                                    range_remaining = T::MAX_COMPRESS_RANGE;
                                     next = result;
                                     // If the now empty loc is at the back of the non-none oplog we can increment none_back_count.
                                     if prev_rev_idx == none_back_count {

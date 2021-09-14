@@ -290,10 +290,8 @@ pub trait Absorb<O> {
     ///
     /// Can be used to avoid having [`append`](WriteHandle::append) take O(oplog.len) if it is filled with mainly independent ops.
     ///
-    /// Defaults to `&0`, which disables compression and allows the usage of an efficient fallback.
-    fn max_compress_range() -> &'static usize {
-        &0
-    }
+    /// Defaults to `0`, which disables compression and allows the usage of an efficient fallback.
+    const MAX_COMPRESS_RANGE: usize = 0;
 
     /// Try to compress two ops into a single op to optimize the oplog.
     ///

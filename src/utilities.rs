@@ -39,9 +39,7 @@ impl<const MAX_COMPRESS_RANGE: usize> Absorb<CompressibleCounterOp<MAX_COMPRESS_
         *self = *first
     }
 
-    fn max_compress_range() -> &'static usize {
-        &MAX_COMPRESS_RANGE
-    }
+    const MAX_COMPRESS_RANGE: usize = MAX_COMPRESS_RANGE;
 
     fn try_compress(
         prev: CompressibleCounterOp<MAX_COMPRESS_RANGE>,
