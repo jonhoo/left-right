@@ -189,6 +189,30 @@ pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};
 
 pub mod aliasing;
 
+/// The result of [`try_compress`](Absorb::try_compress).
+#[derive(Debug)]
+pub enum TryCompressResult<O> {
+    /// Returned when [`try_compress`](Absorb::try_compress) was successful.
+    Compressed {
+        /// The compressed op.
+        result: O,
+    },
+    /// Returned when [`try_compress`](Absorb::try_compress) failed because the ops are independent of each other.
+    Independent {
+        /// The op to be returned to the oplog then skipped.
+        prev: O,
+        /// The op to be inserted.
+        next: O,
+    },
+    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` must precede `next`.
+    Dependent {
+        /// The op to be returned to the oplog preceding `next`.
+        prev: O,
+        /// The op to be inserted.
+        next: O,
+    },
+}
+
 /// Types that can incorporate operations of type `O`.
 ///
 /// This trait allows `left-right` to keep the two copies of the underlying data structure (see the
@@ -261,6 +285,29 @@ pub trait Absorb<O> {
     /// subtly affect results like the `RandomState` of a `HashMap` which can change iteration
     /// order.
     fn sync_with(&mut self, first: &Self);
+
+    /// Range at which [`WriteHandle`] tries to compress the oplog, reset each time a compression succeeds.
+    ///
+    /// Can be used to avoid having [`append`](WriteHandle::append) take O(oplog.len) if it is filled with mainly independent ops.
+    ///
+    /// Defaults to `&0`, which disables compression and allows the usage of an efficient fallback.
+    fn max_compress_range() -> &'static usize {
+        &0
+    }
+
+    /// Try to compress two ops into a single op to optimize the oplog.
+    ///
+    /// `prev` is the target of the compression and temporarily removed from the oplog, `next` is the op to be inserted.
+    ///
+    /// A return value of [`TryCompressResult::Compressed`] means the ops were successfully compressed,
+    /// [`TryCompressResult::Independent`] that while the ops can't be compressed,
+    /// `next` can safely precede `prev`, which therefore can be simply skipped over,
+    /// and [`TryCompressResult::Dependent`] that they can not be compressed, and `prev` must precede `next`.
+    ///
+    /// Defaults to `TryCompressResult::Dependent { prev, next }`, which disables compression.
+    fn try_compress(prev: O, next: O) -> TryCompressResult<O> {
+        TryCompressResult::Dependent { prev, next }
+    }
 }
 
 /// Construct a new write and read handle pair from an empty data structure.

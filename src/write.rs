@@ -28,7 +28,7 @@ where
 {
     epochs: crate::Epochs,
     w_handle: NonNull<T>,
-    oplog: VecDeque<O>,
+    oplog: VecDeque<Option<O>>,
     swap_index: usize,
     r_handle: ReadHandle<T>,
     last_epochs: Vec<usize>,
@@ -337,13 +337,20 @@ where
                 // we can drain out the operations that only the w_handle copy needs
                 //
                 // NOTE: the if above is because drain(0..0) would remove 0
-                for op in self.oplog.drain(0..self.swap_index) {
+                for op in self
+                    .oplog
+                    .drain(0..self.swap_index)
+                    .map(|op| op.unwrap_or_else(|| unreachable!("Nones are always temporary")))
+                {
                     T::absorb_second(w_handle, op, r_handle);
                 }
             }
             // we cannot give owned operations to absorb_first
             // since they'll also be needed by the r_handle copy
-            for op in self.oplog.iter_mut() {
+            for op in self.oplog.iter_mut().map(|op| {
+                op.as_mut()
+                    .unwrap_or_else(|| unreachable!("Nones are always temporary"))
+            }) {
                 T::absorb_first(w_handle, op, r_handle);
             }
             // the w_handle copy is about to become the r_handle, and can ignore the oplog
@@ -476,7 +483,171 @@ where
                 Absorb::absorb_second(w_inner, op, &*r_handle);
             }
         } else {
-            self.oplog.extend(ops);
+            // Only try to compress if it could actually have an effect, else use original impl as efficient fallback
+            if *T::max_compress_range() > 0 {
+                // Compress oplog by rev-iterating all ops appended since the last publish
+                // while attempting to combine them with the next op,
+                // cut short when an attempt fails due to encountering a dependence (e.g. clear then set).
+
+                // none_back_count allows us to avoid linear insertion time in case of an extremely compressed oplog (f.e. after a clear-op)
+                let mut none_back_count: usize = 0;
+                for mut next in ops {
+                    let oplog_len = self.oplog.len();
+                    // used to more efficiently insert next if possible
+                    let mut none: Option<(usize, &mut Option<O>)> = None;
+                    // rev-iterate all unpublished ops already in the oplog
+                    let mut range_remaining = *T::max_compress_range();
+
+                    for (prev_rev_idx, prev_loc) in {
+                        #[cfg(test)]
+                        {
+                            let none_back_count = none_back_count;
+                            self.oplog
+                                .iter_mut()
+                                .rev()
+                                .take(oplog_len - self.swap_index) // only consider the fresh part of the oplog
+                                .enumerate() // we need the reverse index for the none_back_count optimization
+                                .skip_while(move |(rev_idx, loc)| {
+                                    let none_back_count = none_back_count.saturating_sub(1);
+                                    if *rev_idx < none_back_count {
+                                        debug_assert!(loc.is_none(), "We never skip over Some.",);
+                                        true
+                                    } else {
+                                        debug_assert!(
+                                            loc.is_some() || *rev_idx == none_back_count,
+                                            "We either stop on some or the last none",
+                                        );
+                                        false
+                                    }
+                                    // skip nones at the back (except one for efficient insertion)
+                                })
+                        }
+                        #[cfg(not(test))]
+                        {
+                            self.oplog
+                                .iter_mut()
+                                .rev() // iterate from the back
+                                .take(oplog_len - self.swap_index) // only consider the fresh part of the oplog
+                                .enumerate() // we need the reverse index for the none_back_count optimization
+                                .skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
+                        }
+                    } {
+                        // Temporarily remove prev from the oplog (Nones are considered Independent of all other ops)
+                        if let Some(prev) = prev_loc.take() {
+                            match T::try_compress(prev, next) {
+                                // The ops were successfully compressed, prev_loc remains empty and result becomes next
+                                crate::TryCompressResult::Compressed { result } => {
+                                    // Remember empty loc for efficient insertion
+                                    none.replace((prev_rev_idx, prev_loc));
+                                    // We successfully compressed ops and therefore reset our range.
+                                    range_remaining = *T::max_compress_range();
+                                    next = result;
+                                    // If the now empty loc is at the back of the non-none oplog we can increment none_back_count.
+                                    if prev_rev_idx == none_back_count {
+                                        none_back_count += 1;
+                                    }
+                                }
+                                // The ops are independent of each other, restore prev and next and continue
+                                crate::TryCompressResult::Independent {
+                                    prev,
+                                    next: re_next,
+                                } => {
+                                    if prev_loc.replace(prev).is_some() {
+                                        debug_assert!(
+                                            false,
+                                            "Should still have been None from above take."
+                                        )
+                                    }
+                                    next = re_next;
+                                    // We consumed one of our range and need to check whether to break.
+                                    range_remaining -= 1;
+                                    if range_remaining == 0 {
+                                        break;
+                                    }
+                                }
+                                // prev must precede next: restore prev and next then break
+                                crate::TryCompressResult::Dependent {
+                                    prev,
+                                    next: re_next,
+                                } => {
+                                    if prev_loc.replace(prev).is_some() {
+                                        debug_assert!(
+                                            false,
+                                            "Should still have been None from above take."
+                                        )
+                                    }
+                                    next = re_next;
+                                    break;
+                                }
+                            }
+                        } else {
+                            // Remember empty loc for efficient insertion
+                            none.replace((prev_rev_idx, prev_loc));
+                            // If the empty loc is at the back of the non-none oplog we can increment none_back_count.
+                            if prev_rev_idx == none_back_count {
+                                none_back_count += 1;
+                            }
+                        }
+                    }
+                    // found nothing to combine with / encountered dependency
+                    // See if we found an empty loc during iteration, else push
+                    if let Some((none_rev_idx, none_loc)) = none {
+                        if none_loc.replace(next).is_some() {
+                            debug_assert!(
+                                false,
+                                "Should still have been None since we didn't insert yet."
+                            )
+                        }
+                        // If we inserted at the and of the non-none oplog we need to decrement none_back_count.
+                        if none_rev_idx + 1 == none_back_count {
+                            none_back_count -= 1;
+                        }
+                    } else {
+                        debug_assert!(none_back_count == 0, "We only push if we found no nones and we always find at least one none at the back if it is there.");
+                        self.oplog.push_back(Some(next));
+                    }
+                }
+                let some_len = {
+                    // stably remove temporary nones from the oplog
+                    let mut some_idx = self.swap_index;
+                    let mut none_idx = self.swap_index + 1;
+                    // use some_idx to find a none
+                    'find_none: while some_idx < self.oplog.len() {
+                        if self.oplog[some_idx].is_some() {
+                            some_idx += 1;
+                        } else {
+                            // Now use none_idx to find a some
+                            while none_idx < self.oplog.len() - none_back_count {
+                                if self.oplog[none_idx].is_none() {
+                                    none_idx += 1;
+                                } else {
+                                    // some_idx is none, none_idx is some => swap
+                                    self.oplog.swap(some_idx, none_idx);
+                                    none_idx += 1;
+                                    some_idx += 1;
+                                    continue 'find_none;
+                                }
+                            }
+                            // No some to swap with found => done
+                            break 'find_none;
+                        }
+                    }
+                    some_idx
+                };
+                debug_assert!(
+                    self.oplog
+                        .iter()
+                        .skip(some_len)
+                        .find(|op| op.is_some())
+                        .is_none(),
+                    "We never truncate off any Some."
+                );
+                // some_len is either the first remaining none or oplog.len()
+                self.oplog.truncate(some_len);
+            } else {
+                // efficient, non-compressing fallback
+                self.oplog.extend(ops.into_iter().map(|op| Some(op)));
+            }
         }
     }
 }
@@ -559,7 +730,7 @@ struct CheckWriteHandleSend;
 #[cfg(test)]
 mod tests {
     use crate::sync::{AtomicUsize, Mutex, Ordering};
-    use crate::Absorb;
+    use crate::{Absorb, TryCompressResult};
     use slab::Slab;
     include!("./utilities.rs");
 
@@ -575,6 +746,44 @@ mod tests {
         w.append(CounterAddOp(2));
         w.append(CounterAddOp(3));
         assert_eq!(w.oplog.len(), 2);
+    }
+    #[test]
+    fn append_test_compress() {
+        let (mut w, r) = crate::new::<i32, CompressibleCounterOp<{ usize::MAX }>>();
+        assert_eq!(w.first, true);
+        w.append(CompressibleCounterOp::Add(8));
+        assert_eq!(w.oplog.len(), 0);
+        assert_eq!(w.first, true);
+        w.publish();
+        assert_eq!(w.first, false);
+        w.append(CompressibleCounterOp::Add(7));
+        w.append(CompressibleCounterOp::Add(6));
+        assert_eq!(w.oplog.len(), 1);
+        w.append(CompressibleCounterOp::Sub(5));
+        w.extend([
+            CompressibleCounterOp::Sub(4),
+            CompressibleCounterOp::Add(3),
+            CompressibleCounterOp::Sub(2),
+        ]);
+        assert_eq!(w.oplog.len(), 2);
+        w.extend([
+            CompressibleCounterOp::Set(1),
+            CompressibleCounterOp::Add(2),
+            CompressibleCounterOp::Sub(1),
+            CompressibleCounterOp::Add(3),
+        ]);
+        assert_eq!(w.oplog.len(), 3);
+        w.publish();
+        // full len still 3 because only first absorb
+        assert_eq!(w.oplog.len(), 3);
+        assert_eq!(w.oplog.len(), w.swap_index);
+        assert_eq!(*r.enter().unwrap(), 5);
+
+        w.publish();
+        // now also second absorb => len == 0
+        assert_eq!(w.oplog.len(), 0);
+        assert_eq!(w.oplog.len(), w.swap_index);
+        assert_eq!(*r.enter().unwrap(), 5);
     }
 
     #[test]
@@ -615,7 +824,48 @@ mod tests {
         assert_eq!(*w.take(), 3);
 
         // no operations
-        let (w, _r) = crate::new_from_empty::<i32, _>(2);
+        let (w, _r) = crate::new_from_empty::<i32, CounterAddOp>(2);
+        assert_eq!(*w.take(), 2);
+    }
+    #[test]
+    fn take_test_compress_equiv() {
+        // publish twice then take with no pending operations
+        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
+        w.append(CompressibleCounterOp::Add(1));
+        w.publish();
+        w.append(CompressibleCounterOp::Add(1));
+        w.publish();
+        assert_eq!(*w.take(), 4);
+
+        // publish twice then pending operation published by take
+        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
+        w.append(CompressibleCounterOp::Add(1));
+        w.publish();
+        w.append(CompressibleCounterOp::Add(1));
+        w.publish();
+        w.append(CompressibleCounterOp::Add(2));
+        assert_eq!(*w.take(), 6);
+
+        // normal publish then pending operations published by take
+        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
+        w.append(CompressibleCounterOp::Add(1));
+        w.publish();
+        w.append(CompressibleCounterOp::Add(1));
+        assert_eq!(*w.take(), 4);
+
+        // pending operations published by take
+        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
+        w.append(CompressibleCounterOp::Add(1));
+        assert_eq!(*w.take(), 3);
+
+        // emptry op queue
+        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
+        w.append(CompressibleCounterOp::Add(1));
+        w.publish();
+        assert_eq!(*w.take(), 3);
+
+        // no operations
+        let (w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
         assert_eq!(*w.take(), 2);
     }
 
@@ -623,7 +873,7 @@ mod tests {
     fn wait_test() {
         use std::sync::{Arc, Barrier};
         use std::thread;
-        let (mut w, _r) = crate::new::<i32, _>();
+        let (mut w, _r) = crate::new::<i32, CounterAddOp>();
 
         // Case 1: If epoch is set to default.
         let test_epochs: crate::Epochs = Default::default();
@@ -684,6 +934,19 @@ mod tests {
         assert_eq!(w.oplog.iter().skip(w.swap_index).count(), 0);
         assert!(!w.has_pending_operations());
     }
+    #[test]
+    fn flush_noblock_compress_equiv() {
+        let (mut w, r) = crate::new::<i32, CompressibleCounterOp<{ usize::MAX }>>();
+        w.append(CompressibleCounterOp::Add(42));
+        w.publish();
+        assert_eq!(*r.enter().unwrap(), 42);
+
+        // pin the epoch
+        let _count = r.enter();
+        // refresh would hang here
+        assert_eq!(w.oplog.iter().skip(w.swap_index).count(), 0);
+        assert!(!w.has_pending_operations());
+    }
 
     #[test]
     fn flush_no_refresh() {
@@ -703,6 +966,34 @@ mod tests {
         assert_eq!(w.refreshes, 2);
 
         w.append(CounterAddOp(42));
+        assert!(w.has_pending_operations());
+        w.publish();
+        assert!(!w.has_pending_operations());
+        assert_eq!(w.refreshes, 3);
+
+        // Sanity check that a refresh would have been visible
+        assert!(!w.has_pending_operations());
+        w.publish();
+        assert_eq!(w.refreshes, 4);
+    }
+    #[test]
+    fn flush_no_refresh_compress_equiv() {
+        let (mut w, _) = crate::new::<i32, CompressibleCounterOp<{ usize::MAX }>>();
+
+        // Until we refresh, writes are written directly instead of going to the
+        // oplog (because there can't be any readers on the w_handle table).
+        assert!(!w.has_pending_operations());
+        w.publish();
+        assert!(!w.has_pending_operations());
+        assert_eq!(w.refreshes, 1);
+
+        w.append(CompressibleCounterOp::Add(42));
+        assert!(w.has_pending_operations());
+        w.publish();
+        assert!(!w.has_pending_operations());
+        assert_eq!(w.refreshes, 2);
+
+        w.append(CompressibleCounterOp::Add(42));
         assert!(w.has_pending_operations());
         w.publish();
         assert!(!w.has_pending_operations());
