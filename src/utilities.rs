@@ -14,7 +14,7 @@ impl Absorb<CounterAddOp> for i32 {
 }
 
 #[cfg(test)]
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum CompressibleCounterOp<const MAX_COMPRESS_RANGE: usize> {
     Set(i32),
     Add(i32),

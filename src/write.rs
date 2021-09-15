@@ -616,6 +616,7 @@ where
                     'find_none: while some_idx < self.oplog.len() {
                         if self.oplog[some_idx].is_some() {
                             some_idx += 1;
+                            none_idx = std::cmp::max(some_idx + 1, none_idx);
                         } else {
                             // Now use none_idx to find a some
                             while none_idx < self.oplog.len() - none_back_count {
@@ -1035,5 +1036,55 @@ mod tests {
         assert_eq!(w.oplog.len(), 0);
         assert_eq!(w.oplog.len(), w.swap_index);
         assert_eq!(*r.enter().unwrap(), 5);
+    }
+    #[test]
+    fn none_back_count_corner_case() {
+        type Op = CompressibleCounterOp<{ usize::MAX }>;
+        let (mut w, _r) = crate::new::<i32, Op>();
+        // Get first optimization out of the picture
+        assert_eq!(w.first, true);
+        w.append(Op::Add(1));
+        assert_eq!(w.oplog.len(), 0);
+        assert_eq!(w.first, true);
+        w.publish();
+        assert_eq!(w.first, false);
+        // Force contrived oplog
+        w.oplog.extend([
+            Some(Op::Add(3)),
+            Some(Op::Add(2)),
+            Some(Op::Sub(1)),
+            Some(Op::Add(1)),
+        ]);
+        w.extend([Op::Add(1), Op::Sub(1), Op::Add(1)]);
+        w.oplog
+            .iter()
+            .zip([Some(Op::Add(8)), Some(Op::Sub(2))])
+            .for_each(|(op, expected)| assert_eq!(*op, expected));
+    }
+    #[test]
+    fn oplog_remove_none_corner_case() {
+        type Op = CompressibleCounterOp<{ usize::MAX }>;
+        let (mut w, _r) = crate::new::<i32, Op>();
+        // Get first optimization out of the picture
+        assert_eq!(w.first, true);
+        w.append(Op::Add(1));
+        assert_eq!(w.oplog.len(), 0);
+        assert_eq!(w.first, true);
+        w.publish();
+        assert_eq!(w.first, false);
+        // Force contrived oplog
+        w.oplog.extend([
+            Some(Op::Add(3)),
+            Some(Op::Add(2)),
+            Some(Op::Sub(1)),
+            Some(Op::Add(1)),
+            None,
+            Some(Op::Sub(1)),
+        ]);
+        w.append(Op::Add(1));
+        w.oplog
+            .iter()
+            .zip([Some(Op::Add(7)), Some(Op::Sub(1)), Some(Op::Sub(1))])
+            .for_each(|(op, expected)| assert_eq!(*op, expected));
     }
 }
