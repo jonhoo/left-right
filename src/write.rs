@@ -491,6 +491,7 @@ where
 
                 // none_back_count allows us to avoid linear insertion time in case of an extremely compressed oplog (f.e. after a clear-op)
                 let mut none_back_count: usize = 0;
+                let mut some_front_rev_idx: usize = 0;
                 for mut next in ops {
                     let oplog_len = self.oplog.len();
                     // used to more efficiently insert next if possible
@@ -547,6 +548,9 @@ where
                                     if prev_rev_idx == none_back_count {
                                         none_back_count += 1;
                                     }
+                                    if prev_rev_idx >= some_front_rev_idx {
+                                        some_front_rev_idx = prev_rev_idx + 1;
+                                    }
                                 }
                                 // The ops are independent of each other, restore prev and next and continue
                                 crate::TryCompressResult::Independent {
@@ -601,17 +605,22 @@ where
                         }
                         // If we inserted at the and of the non-none oplog we need to decrement none_back_count.
                         if none_rev_idx + 1 == none_back_count {
-                            none_back_count -= 1;
+                            none_back_count = none_rev_idx;
+                        }
+                        // Same for some_front_rev_idx
+                        if none_rev_idx + 1 == some_front_rev_idx {
+                            some_front_rev_idx = none_rev_idx;
                         }
                     } else {
                         debug_assert!(none_back_count == 0, "We only push if we found no nones and we always find at least one none at the back if it is there.");
+                        debug_assert!(some_front_rev_idx == 0, "Pushing means no nones.");
                         self.oplog.push_back(Some(next));
                     }
                 }
                 let some_len = {
                     // stably remove temporary nones from the oplog
-                    let mut some_idx = self.swap_index;
-                    let mut none_idx = self.swap_index + 1;
+                    let mut some_idx = self.oplog.len() - some_front_rev_idx;
+                    let mut none_idx = some_idx + 1;
                     // use some_idx to find a none
                     'find_none: while some_idx < self.oplog.len() {
                         if self.oplog[some_idx].is_some() {
