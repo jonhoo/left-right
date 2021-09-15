@@ -501,6 +501,7 @@ where
                     for (prev_rev_idx, prev_loc) in {
                         #[cfg(test)]
                         {
+                            // Make very very sure we don't skip any Some.
                             let none_back_count = none_back_count;
                             self.oplog
                                 .iter_mut()
@@ -514,7 +515,7 @@ where
                                         true
                                     } else {
                                         debug_assert!(
-                                            loc.is_some() || *rev_idx == none_back_count,
+                                            *rev_idx == none_back_count || loc.is_some(),
                                             "We either stop on some or the last none",
                                         );
                                         false
@@ -749,36 +750,31 @@ mod tests {
     }
     #[test]
     fn append_test_compress() {
-        let (mut w, r) = crate::new::<i32, CompressibleCounterOp<{ usize::MAX }>>();
+        type Op = CompressibleCounterOp<{ usize::MAX }>;
+        let (mut w, r) = crate::new::<i32, Op>();
+        // Get first optimization out of the picture
         assert_eq!(w.first, true);
-        w.append(CompressibleCounterOp::Add(8));
+        w.append(Op::Add(8));
         assert_eq!(w.oplog.len(), 0);
         assert_eq!(w.first, true);
         w.publish();
         assert_eq!(w.first, false);
-        w.append(CompressibleCounterOp::Add(7));
-        w.append(CompressibleCounterOp::Add(6));
+        // Adds will combine
+        w.append(Op::Add(7));
+        w.append(Op::Add(6));
         assert_eq!(w.oplog.len(), 1);
-        w.append(CompressibleCounterOp::Sub(5));
-        w.extend([
-            CompressibleCounterOp::Sub(4),
-            CompressibleCounterOp::Add(3),
-            CompressibleCounterOp::Sub(2),
-        ]);
+        // All Subs will combine, Add with the one from above
+        w.append(Op::Sub(5));
+        w.extend([Op::Sub(4), Op::Add(3), Op::Sub(2)]);
         assert_eq!(w.oplog.len(), 2);
-        w.extend([
-            CompressibleCounterOp::Set(1),
-            CompressibleCounterOp::Add(2),
-            CompressibleCounterOp::Sub(1),
-            CompressibleCounterOp::Add(3),
-        ]);
+        // Set will clear oplog, Adds will combine
+        w.extend([Op::Set(1), Op::Add(2), Op::Sub(1), Op::Add(3)]);
         assert_eq!(w.oplog.len(), 3);
         w.publish();
         // full len still 3 because only first absorb
         assert_eq!(w.oplog.len(), 3);
         assert_eq!(w.oplog.len(), w.swap_index);
         assert_eq!(*r.enter().unwrap(), 5);
-
         w.publish();
         // now also second absorb => len == 0
         assert_eq!(w.oplog.len(), 0);
@@ -829,43 +825,44 @@ mod tests {
     }
     #[test]
     fn take_test_compress_equiv() {
+        type Op = CompressibleCounterOp<{ usize::MAX }>;
         // publish twice then take with no pending operations
-        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
-        w.append(CompressibleCounterOp::Add(1));
+        let (mut w, _r) = crate::new_from_empty::<i32, Op>(2);
+        w.append(Op::Add(1));
         w.publish();
-        w.append(CompressibleCounterOp::Add(1));
+        w.append(Op::Add(1));
         w.publish();
         assert_eq!(*w.take(), 4);
 
         // publish twice then pending operation published by take
-        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
-        w.append(CompressibleCounterOp::Add(1));
+        let (mut w, _r) = crate::new_from_empty::<i32, Op>(2);
+        w.append(Op::Add(1));
         w.publish();
-        w.append(CompressibleCounterOp::Add(1));
+        w.append(Op::Add(1));
         w.publish();
-        w.append(CompressibleCounterOp::Add(2));
+        w.append(Op::Add(2));
         assert_eq!(*w.take(), 6);
 
         // normal publish then pending operations published by take
-        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
-        w.append(CompressibleCounterOp::Add(1));
+        let (mut w, _r) = crate::new_from_empty::<i32, Op>(2);
+        w.append(Op::Add(1));
         w.publish();
-        w.append(CompressibleCounterOp::Add(1));
+        w.append(Op::Add(1));
         assert_eq!(*w.take(), 4);
 
         // pending operations published by take
-        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
-        w.append(CompressibleCounterOp::Add(1));
+        let (mut w, _r) = crate::new_from_empty::<i32, Op>(2);
+        w.append(Op::Add(1));
         assert_eq!(*w.take(), 3);
 
         // emptry op queue
-        let (mut w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
-        w.append(CompressibleCounterOp::Add(1));
+        let (mut w, _r) = crate::new_from_empty::<i32, Op>(2);
+        w.append(Op::Add(1));
         w.publish();
         assert_eq!(*w.take(), 3);
 
         // no operations
-        let (w, _r) = crate::new_from_empty::<i32, CompressibleCounterOp<{ usize::MAX }>>(2);
+        let (w, _r) = crate::new_from_empty::<i32, Op>(2);
         assert_eq!(*w.take(), 2);
     }
 
@@ -936,8 +933,9 @@ mod tests {
     }
     #[test]
     fn flush_noblock_compress_equiv() {
-        let (mut w, r) = crate::new::<i32, CompressibleCounterOp<{ usize::MAX }>>();
-        w.append(CompressibleCounterOp::Add(42));
+        type Op = CompressibleCounterOp<{ usize::MAX }>;
+        let (mut w, r) = crate::new::<i32, Op>();
+        w.append(Op::Add(42));
         w.publish();
         assert_eq!(*r.enter().unwrap(), 42);
 
@@ -978,7 +976,8 @@ mod tests {
     }
     #[test]
     fn flush_no_refresh_compress_equiv() {
-        let (mut w, _) = crate::new::<i32, CompressibleCounterOp<{ usize::MAX }>>();
+        type Op = CompressibleCounterOp<{ usize::MAX }>;
+        let (mut w, _) = crate::new::<i32, Op>();
 
         // Until we refresh, writes are written directly instead of going to the
         // oplog (because there can't be any readers on the w_handle table).
@@ -987,13 +986,13 @@ mod tests {
         assert!(!w.has_pending_operations());
         assert_eq!(w.refreshes, 1);
 
-        w.append(CompressibleCounterOp::Add(42));
+        w.append(Op::Add(42));
         assert!(w.has_pending_operations());
         w.publish();
         assert!(!w.has_pending_operations());
         assert_eq!(w.refreshes, 2);
 
-        w.append(CompressibleCounterOp::Add(42));
+        w.append(Op::Add(42));
         assert!(w.has_pending_operations());
         w.publish();
         assert!(!w.has_pending_operations());
@@ -1003,5 +1002,38 @@ mod tests {
         assert!(!w.has_pending_operations());
         w.publish();
         assert_eq!(w.refreshes, 4);
+    }
+    #[test]
+    fn limited_compress_range() {
+        type Op = CompressibleCounterOp<1>;
+        let (mut w, r) = crate::new::<i32, Op>();
+        // Get first optimization out of the picture
+        assert_eq!(w.first, true);
+        w.append(Op::Add(8));
+        assert_eq!(w.oplog.len(), 0);
+        assert_eq!(w.first, true);
+        w.publish();
+        assert_eq!(w.first, false);
+        // Both Adds will combine
+        w.append(Op::Add(7));
+        w.append(Op::Add(6));
+        assert_eq!(w.oplog.len(), 1);
+        // First Sub will combine, Add and second Sub get stopped by range before finding others.
+        w.append(Op::Sub(5));
+        w.extend([Op::Sub(4), Op::Add(3), Op::Sub(2)]);
+        assert_eq!(w.oplog.len(), 4);
+        // Set still consumes everything because the range keeps resetting, Add and Sub block each other like above.
+        w.extend([Op::Set(1), Op::Add(2), Op::Sub(1), Op::Add(3)]);
+        assert_eq!(w.oplog.len(), 4);
+        w.publish();
+        // full len still 4 because only first absorb
+        assert_eq!(w.oplog.len(), 4);
+        assert_eq!(w.oplog.len(), w.swap_index);
+        assert_eq!(*r.enter().unwrap(), 5);
+        w.publish();
+        // now also second absorb => len == 0
+        assert_eq!(w.oplog.len(), 0);
+        assert_eq!(w.oplog.len(), w.swap_index);
+        assert_eq!(*r.enter().unwrap(), 5);
     }
 }
