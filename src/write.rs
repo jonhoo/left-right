@@ -625,7 +625,6 @@ where
                     'find_none: while some_idx < self.oplog.len() {
                         if self.oplog[some_idx].is_some() {
                             some_idx += 1;
-                            none_idx = std::cmp::max(some_idx + 1, none_idx);
                         } else {
                             // Now use none_idx to find a some
                             while none_idx < self.oplog.len() - none_back_count {
