@@ -1,9 +1,8 @@
-#[cfg(loom)]
-#[cfg(test)]
+#[cfg(all(test, loom))]
 mod loom_tests {
     // Evil hack to share CounterAddOp between
     // unit tests and integration tests.
-    use left_right::Absorb;
+    use left_right::{Absorb, TryCompressResult};
     include!("../src/utilities.rs");
 
     use loom::thread;
