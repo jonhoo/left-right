@@ -604,7 +604,7 @@ where
                             )
                         }
                         // If we inserted at the and of the non-none oplog we need to decrement none_back_count.
-                        if none_rev_idx + 1 == none_back_count {
+                        if none_rev_idx < none_back_count {
                             none_back_count = none_rev_idx;
                         }
                         // Same for some_front_rev_idx
