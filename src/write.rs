@@ -500,13 +500,15 @@ where
                     let mut none: Option<(usize, &mut Option<O>)> = None;
                     // rev-iterate all unpublished and potentially non-none ops already in the oplog
                     for (prev_rev_idx, prev_loc) in {
+                        let oplog_len = self.oplog.len();
                         #[cfg(test)]
                         {
                             // While testing, make very very sure we don't skip any Some.
                             let none_back_idx = none_back_count.saturating_sub(1);
                             self.oplog
-                                .range_mut(self.swap_index..) // only consider the fresh part of the oplog
-                                .rev() // and walk it in reverse
+                                .iter_mut()
+                                .rev()
+                                .take(oplog_len - self.swap_index) // only consider the fresh part of the oplog
                                 .enumerate() // we need the reverse index for the none_back_count optimization
                                 .skip_while(move |(rev_idx, loc)| {
                                     if *rev_idx < none_back_idx {
@@ -524,10 +526,10 @@ where
                         #[cfg(not(test))]
                         {
                             self.oplog
-                                .range_mut(self.swap_index..) // only consider the fresh part of the oplog
-                                .rev() // and walk it in reverse
-                                .enumerate() // we need the reverse index for the none_back_count optimization
-                                .skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
+                                .iter_mut()
+                                .rev()
+                                .take(oplog_len - self.swap_index) // only consider the fresh part of the oplog
+                                .enumerate() // we need the reverse index for the none_back_count optimization.skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
                         }
                     } {
                         // Temporarily remove prev from the oplog (Nones are considered Independent of all other ops)
