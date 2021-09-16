@@ -288,7 +288,7 @@ pub trait Absorb<O> {
 
     /// Range at which [`WriteHandle`] tries to compress the oplog, reset each time a compression succeeds.
     ///
-    /// Can be used to avoid having [`append`](WriteHandle::append) take O(oplog.len) if it is filled with mainly independent ops.
+    /// Can be used to avoid having insertion into the oplog be O(oplog.len * ops.len) if it is filled with mainly independent ops.
     ///
     /// Defaults to `0`, which disables compression and allows the usage of an efficient fallback.
     const MAX_COMPRESS_RANGE: usize = 0;
@@ -302,7 +302,8 @@ pub trait Absorb<O> {
     /// `next` can safely precede `prev`, which therefore can be simply skipped over,
     /// and [`TryCompressResult::Dependent`] that they can not be compressed, and `prev` must precede `next`.
     ///
-    /// Defaults to `TryCompressResult::Dependent { prev, next }`, which disables compression.
+    /// Defaults to `TryCompressResult::Dependent { prev, next }`, which sub-optimally disables compression.
+    /// Setting [`Self::MAX_COMPRESS_RANGE`](Absorb::MAX_COMPRESS_RANGE) to `0` is vastly more efficient for that.
     fn try_compress(prev: O, next: O) -> TryCompressResult<O> {
         TryCompressResult::Dependent { prev, next }
     }
