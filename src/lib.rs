@@ -189,28 +189,15 @@ pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};
 
 pub mod aliasing;
 
-/// The result of [`try_compress`](Absorb::try_compress).
+/// The result of calling [`Absorb::try_compress`](Absorb::try_compress).
 #[derive(Debug)]
 pub enum TryCompressResult<O> {
     /// Returned when [`try_compress`](Absorb::try_compress) was successful.
-    Compressed {
-        /// The compressed op.
-        result: O,
-    },
-    /// Returned when [`try_compress`](Absorb::try_compress) failed because the ops are independent of each other.
-    Independent {
-        /// The op to be returned to the oplog then skipped.
-        prev: O,
-        /// The op to be inserted.
-        next: O,
-    },
-    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` must precede `next`.
-    Dependent {
-        /// The op to be returned to the oplog preceding `next`.
-        prev: O,
-        /// The op to be inserted.
-        next: O,
-    },
+    Compressed,
+    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` and `next` are independent of each other, contains `next`.
+    Independent(O),
+    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` must precede `next`, contains `next`.
+    Dependent(O),
 }
 
 /// Types that can incorporate operations of type `O`.
@@ -304,8 +291,9 @@ pub trait Absorb<O> {
     ///
     /// Defaults to `TryCompressResult::Dependent { prev, next }`, which sub-optimally disables compression.
     /// Setting [`Self::MAX_COMPRESS_RANGE`](Absorb::MAX_COMPRESS_RANGE) to `0` is vastly more efficient for that.
-    fn try_compress(prev: O, next: O) -> TryCompressResult<O> {
-        TryCompressResult::Dependent { prev, next }
+    #[allow(unused_variables)]
+    fn try_compress(prev: &mut O, next: O) -> TryCompressResult<O> {
+        TryCompressResult::Dependent(next)
     }
 }
 

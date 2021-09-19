@@ -533,35 +533,29 @@ where
                                 .skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
                         }
                     } {
-                        // Temporarily remove prev from the oplog (Nones are considered Independent of all other ops)
-                        if let Some(prev) = prev_loc.take() {
+                        if let Some(prev) = prev_loc.as_mut() {
                             match T::try_compress(prev, next) {
-                                // The ops were successfully compressed, prev_loc remains empty and result becomes next
-                                crate::TryCompressResult::Compressed { result } => {
-                                    // Remember empty loc for efficient insertion
+                                // The ops were successfully compressed, take prev as the new next
+                                crate::TryCompressResult::Compressed => {
+                                    // We successfully compressed ops and therefore take the combined op as the new next,...
+                                    next = prev_loc.take().unwrap_or_else(|| {
+                                        unreachable!("We just checked that prev_loc is Some.")
+                                    });
+                                    // ...remember the empty loc for efficient insertion,...
                                     none.replace((prev_rev_idx, prev_loc));
-                                    // We successfully compressed ops and therefore reset our range.
+                                    // ...and reset our range.
                                     range_remaining = T::MAX_COMPRESS_RANGE;
                                     // If the now empty loc is at the back of the non-none oplog we can increment none_back_count.
                                     if prev_rev_idx == none_back_count {
                                         none_back_count += 1;
                                     }
+                                    // If the now empty loc is before the front of the non-none oplog we need to increase some_front_rev_idx.
                                     if prev_rev_idx >= some_front_rev_idx {
                                         some_front_rev_idx = prev_rev_idx + 1;
                                     }
-                                    next = result;
                                 }
-                                // The ops are independent of each other, restore prev and next and continue
-                                crate::TryCompressResult::Independent {
-                                    prev,
-                                    next: re_next,
-                                } => {
-                                    if prev_loc.replace(prev).is_some() {
-                                        debug_assert!(
-                                            false,
-                                            "Should still have been None from above take."
-                                        )
-                                    }
+                                // The ops are independent of each other, restore next and continue
+                                crate::TryCompressResult::Independent(re_next) => {
                                     next = re_next;
                                     // We consumed one of our range and need to check whether to break or continue.
                                     range_remaining -= 1;
@@ -571,17 +565,8 @@ where
                                         continue;
                                     }
                                 }
-                                // prev must precede next: restore prev and next then break
-                                crate::TryCompressResult::Dependent {
-                                    prev,
-                                    next: re_next,
-                                } => {
-                                    if prev_loc.replace(prev).is_some() {
-                                        debug_assert!(
-                                            false,
-                                            "Should still have been None from above take."
-                                        )
-                                    }
+                                // prev must precede next: restore next then break
+                                crate::TryCompressResult::Dependent(re_next) => {
                                     next = re_next;
                                     break;
                                 }
@@ -608,7 +593,7 @@ where
                         if none_rev_idx < none_back_count {
                             none_back_count = none_rev_idx;
                         }
-                        // If we inserted at the front of the all-some oplog we need to decrement some_front_rev_idx.
+                        // If we inserted at the front of the all-some oplog we can decrement some_front_rev_idx.
                         if none_rev_idx + 1 == some_front_rev_idx {
                             some_front_rev_idx = none_rev_idx;
                         }
