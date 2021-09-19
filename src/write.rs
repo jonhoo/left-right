@@ -530,6 +530,7 @@ where
                                 .rev()
                                 .take(oplog_len - self.swap_index) // only consider the fresh part of the oplog
                                 .enumerate() // we need the reverse index for the none_back_count optimization.skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
+                                .skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
                         }
                     } {
                         // Temporarily remove prev from the oplog (Nones are considered Independent of all other ops)
