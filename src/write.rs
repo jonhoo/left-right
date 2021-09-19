@@ -615,7 +615,7 @@ where
                     'find_none: for some_idx in &mut some_range {
                         if self.oplog[some_idx].is_none() {
                             // Now use none_idx to find a some
-                            while let Some(none_idx) = none_range.next() {
+                            for none_idx in &mut none_range {
                                 if self.oplog[none_idx].is_some() {
                                     // some_idx is none, none_idx is some => swap
                                     self.oplog.swap(some_idx, none_idx);
@@ -1013,10 +1013,6 @@ mod tests {
         type Op = CompressibleCounterOp<1>;
         let (mut w, r) = crate::new::<i32, Op>();
         // Get first optimization out of the picture
-        assert_eq!(w.first, true);
-        w.append(Op::Add(8));
-        assert_eq!(w.oplog.len(), 0);
-        assert_eq!(w.first, true);
         w.publish();
         assert_eq!(w.first, false);
         // Both Adds will combine
@@ -1042,17 +1038,14 @@ mod tests {
         assert_eq!(*r.enter().unwrap(), 5);
     }
     #[test]
-    fn none_back_count_corner_case() {
+    fn rev_dirty_range_start_exploit_new_none_bridge() {
         type Op = CompressibleCounterOp<{ usize::MAX }>;
         let (mut w, _r) = crate::new::<i32, Op>();
         // Get first optimization out of the picture
-        assert_eq!(w.first, true);
-        w.append(Op::Add(1));
-        assert_eq!(w.oplog.len(), 0);
-        assert_eq!(w.first, true);
         w.publish();
         assert_eq!(w.first, false);
-        // Force contrived oplog
+        // Force contrived oplog, causes Sub of second extend to remove the first Sub during compression,
+        // bridging the gap between Nones, which rev_dirty_range.start is able to exploit.
         w.oplog.extend([
             Some(Op::Add(3)),
             Some(Op::Add(2)),
@@ -1066,29 +1059,19 @@ mod tests {
             .for_each(|(op, expected)| assert_eq!(*op, expected));
     }
     #[test]
-    fn oplog_remove_none_corner_case() {
+    fn oplog_remove_nones_early_stop() {
         type Op = CompressibleCounterOp<{ usize::MAX }>;
         let (mut w, _r) = crate::new::<i32, Op>();
         // Get first optimization out of the picture
-        assert_eq!(w.first, true);
-        w.append(Op::Add(1));
-        assert_eq!(w.oplog.len(), 0);
-        assert_eq!(w.first, true);
         w.publish();
         assert_eq!(w.first, false);
-        // Force contrived oplog
-        w.oplog.extend([
-            Some(Op::Add(3)),
-            Some(Op::Add(2)),
-            Some(Op::Sub(1)),
-            Some(Op::Add(1)),
-            None,
-            Some(Op::Sub(1)),
-        ]);
+        // Force contrived oplog which causes none removal to stop early after failing to find a Some to swap a None with.
+        w.oplog
+            .extend([Some(Op::Add(3)), Some(Op::Sub(1)), None, Some(Op::Sub(1))]);
         w.append(Op::Add(1));
         w.oplog
             .iter()
-            .zip([Some(Op::Add(7)), Some(Op::Sub(1)), Some(Op::Sub(1))])
+            .zip([Some(Op::Add(4)), Some(Op::Sub(1)), Some(Op::Sub(1))])
             .for_each(|(op, expected)| assert_eq!(*op, expected));
     }
 }
