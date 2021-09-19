@@ -489,10 +489,8 @@ where
                 // while attempting to combine them with the next op,
                 // cut short when an attempt fails due to encountering a dependency (e.g. clear then set).
 
-                // none_back_count allows us to avoid linear insertion time in case of an extremely compressed oplog (f.e. after a clear-op)
-                let mut none_back_count: usize = 0;
-                // some_front_idx allows us to avoid linear cleanup time after insertion in case of only little compression happening at the very back.
-                let mut some_front_rev_idx: usize = 0;
+                // used to avoid walking more of the oplog than necessary.
+                let mut rev_dirty_range = 0usize..0;
                 for mut next in ops {
                     // used to avoid linear insertion time in case of predominantly independent ops.
                     let mut range_remaining = T::MAX_COMPRESS_RANGE;
@@ -500,23 +498,22 @@ where
                     let mut none: Option<(usize, &mut Option<O>)> = None;
                     // rev-iterate all unpublished and potentially non-none ops already in the oplog
                     for (prev_rev_idx, prev_loc) in {
-                        let oplog_len = self.oplog.len();
                         #[cfg(test)]
                         {
                             // While testing, make very very sure we don't skip any Some.
-                            let none_back_idx = none_back_count.saturating_sub(1);
+                            let none_rev_idx = rev_dirty_range.start.saturating_sub(1);
                             self.oplog
                                 .iter_mut()
-                                .rev()
-                                .take(oplog_len - self.swap_index) // only consider the fresh part of the oplog
-                                .enumerate() // we need the reverse index for the none_back_count optimization
+                                .skip(self.swap_index) // only consider the fresh part of the oplog
+                                .rev() // We need to walk it in reverse
+                                .enumerate() // we need the reverse index for the rev_dirty_range optimization
                                 .skip_while(move |(rev_idx, loc)| {
-                                    if *rev_idx < none_back_idx {
+                                    if *rev_idx < none_rev_idx {
                                         debug_assert!(loc.is_none(), "We never skip over Some.",);
                                         true
                                     } else {
                                         debug_assert!(
-                                            *rev_idx == none_back_idx || loc.is_some(),
+                                            *rev_idx == none_rev_idx || loc.is_some(),
                                             "We either stop on some or the last none",
                                         );
                                         false
@@ -527,10 +524,10 @@ where
                         {
                             self.oplog
                                 .iter_mut()
-                                .rev()
-                                .take(oplog_len - self.swap_index) // only consider the fresh part of the oplog
-                                .enumerate() // we need the reverse index for the none_back_count optimization.skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
-                                .skip(none_back_count.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
+                                .skip(self.swap_index) // only consider the fresh part of the oplog
+                                .rev() // We need to walk it in reverse
+                                .enumerate() // we need the reverse index for the rev_dirty_range optimization
+                                .skip(rev_dirty_range.start.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
                         }
                     } {
                         if let Some(prev) = prev_loc.as_mut() {
@@ -545,13 +542,13 @@ where
                                     none.replace((prev_rev_idx, prev_loc));
                                     // ...and reset our range.
                                     range_remaining = T::MAX_COMPRESS_RANGE;
-                                    // If the now empty loc is at the back of the non-none oplog we can increment none_back_count.
-                                    if prev_rev_idx == none_back_count {
-                                        none_back_count += 1;
+                                    // If the now empty loc is at the back of the non-none oplog we can increment rev_dirty_range.start.
+                                    if prev_rev_idx == rev_dirty_range.start {
+                                        rev_dirty_range.start += 1;
                                     }
-                                    // If the now empty loc is before the front of the non-none oplog we need to increase some_front_rev_idx.
-                                    if prev_rev_idx >= some_front_rev_idx {
-                                        some_front_rev_idx = prev_rev_idx + 1;
+                                    // If the now empty loc is before the front of the non-none oplog we need to increase rev_dirty_range.end.
+                                    if prev_rev_idx >= rev_dirty_range.end {
+                                        rev_dirty_range.end = prev_rev_idx + 1;
                                     }
                                 }
                                 // The ops are independent of each other, restore next and continue
@@ -574,9 +571,9 @@ where
                         } else {
                             // Remember empty loc for efficient insertion
                             none.replace((prev_rev_idx, prev_loc));
-                            // If the empty loc is at the back of the non-none oplog we can increment none_back_count.
-                            if prev_rev_idx == none_back_count {
-                                none_back_count += 1;
+                            // If the empty loc is at the back of the non-none oplog we can increment rev_dirty_range.start.
+                            if prev_rev_idx == rev_dirty_range.start {
+                                rev_dirty_range.start += 1;
                             }
                         }
                     }
@@ -589,52 +586,50 @@ where
                                 "Should still have been None since we didn't insert yet."
                             )
                         }
-                        // If we inserted before the end of the non-none oplog we need to decrease none_back_count.
-                        if none_rev_idx < none_back_count {
-                            none_back_count = none_rev_idx;
+                        // If we inserted before the end of the non-none oplog we need to decrease rev_dirty_range.start.
+                        if none_rev_idx < rev_dirty_range.start {
+                            rev_dirty_range.start = none_rev_idx;
                         }
-                        // If we inserted at the front of the all-some oplog we can decrement some_front_rev_idx.
-                        if none_rev_idx + 1 == some_front_rev_idx {
-                            some_front_rev_idx = none_rev_idx;
+                        // If we inserted at the front of the all-some oplog we can decrement rev_dirty_range.end.
+                        if none_rev_idx + 1 == rev_dirty_range.end {
+                            rev_dirty_range.end = none_rev_idx;
                         }
                     } else {
-                        debug_assert!(none_back_count == 0, "We only push if we found no nones and we always find at least one none at the back if it is there.");
-                        debug_assert!(some_front_rev_idx == 0, "Pushing means no nones.");
+                        debug_assert!(rev_dirty_range.start == 0, "We only push if we found no nones and we always find at least one none at the back if it is there.");
+                        debug_assert!(rev_dirty_range.end == 0, "Pushing means no nones.");
                         self.oplog.push_back(Some(next));
                     }
                 }
+                // stably remove temporary nones from the oplog
                 let some_len = {
-                    // stably remove temporary nones from the oplog
-                    // Can't easily use ranges because some_idx is needed for truncation.
-                    let mut some_idx = self.oplog.len() - some_front_rev_idx;
-                    // some_idx depends on some_front_rev_idx, none_idx is guaranteed to either be oplog.len or on a none,
-                    // meaning during iteration it can't be caught by some_idx, guaranteeing correctness.
-                    let mut none_idx = some_idx + 1;
-                    // We only need to iterate up to the last some.
-                    let len = self.oplog.len() - none_back_count;
-                    // use some_idx to find a none
-                    'find_none: while some_idx < len {
-                        if self.oplog[some_idx].is_some() {
-                            some_idx += 1;
-                        } else {
+                    // some_range is an un-inverted rev_dirty_range
+                    let mut some_range = {
+                        let len = self.oplog.len();
+                        len - rev_dirty_range.end..len - rev_dirty_range.start
+                    };
+                    // The first none (if it exists) is on the second item in some_range,
+                    // so none_range needs to skip one to get to it.
+                    let mut none_range = some_range.clone();
+                    none_range.next();
+                    // Use some_idx to find a none
+                    'find_none: for some_idx in &mut some_range {
+                        if self.oplog[some_idx].is_none() {
                             // Now use none_idx to find a some
-                            while none_idx < len {
-                                if self.oplog[none_idx].is_none() {
-                                    none_idx += 1;
-                                } else {
+                            while let Some(none_idx) = none_range.next() {
+                                if self.oplog[none_idx].is_some() {
                                     // some_idx is none, none_idx is some => swap
                                     self.oplog.swap(some_idx, none_idx);
-                                    none_idx += 1;
-                                    some_idx += 1;
                                     continue 'find_none;
                                 }
                             }
                             // No some to swap with found => done
+                            // Need to reverse last increment of some_range
+                            some_range.start = some_idx;
                             break 'find_none;
                         }
                     }
-                    // some_idx either stops on the first none or is oplog.len, meaning we can now use it as a len to truncate the oplog.
-                    some_idx
+                    // some_range.start either stops on the first none or is oplog.len, meaning we can now use it as a len to truncate the oplog.
+                    some_range.start
                 };
                 debug_assert!(
                     self.oplog
