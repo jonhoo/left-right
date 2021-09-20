@@ -1009,6 +1009,19 @@ mod tests {
         assert_eq!(w.refreshes, 4);
     }
     #[test]
+    fn try_compress_default() {
+        assert!(
+            {
+                let mut prev = CounterAddOp(1);
+                match i32::try_compress(&mut prev, CounterAddOp(2)) {
+                    TryCompressResult::Dependent(CounterAddOp(2)) => prev.0 == 1,
+                    _ => false,
+                }
+            },
+            "Default return value of Absorb::try_compress differs from a no-op TryCompressResult::Dependent"
+        );
+    }
+    #[test]
     fn limited_compress_range() {
         type Op = CompressibleCounterOp<1>;
         let (mut w, r) = crate::new::<i32, Op>();

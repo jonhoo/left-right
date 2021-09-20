@@ -289,11 +289,14 @@ pub trait Absorb<O> {
     /// `next` can safely precede `prev`, which therefore can be simply skipped over,
     /// and [`TryCompressResult::Dependent`] that they can not be compressed, and `prev` must precede `next`.
     ///
-    /// Defaults to `TryCompressResult::Dependent { prev, next }`, which sub-optimally disables compression.
+    /// Defaults to [`TryCompressResult::Dependent`], which sub-optimally disables compression.
     /// Setting [`Self::MAX_COMPRESS_RANGE`](Absorb::MAX_COMPRESS_RANGE) to `0` is vastly more efficient for that.
-    #[allow(unused_variables)]
     fn try_compress(prev: &mut O, next: O) -> TryCompressResult<O> {
-        TryCompressResult::Dependent(next)
+        // yes, unnecessary, but: makes it so that prev is not an unused variable
+        // and really matches the mental model of 'all ops are dependent'.
+        match prev {
+            _ => TryCompressResult::Dependent(next),
+        }
     }
 }
 
