@@ -4,7 +4,7 @@ use crate::Absorb;
 use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
 use std::collections::VecDeque;
 use std::marker::PhantomData;
-use std::ops::DerefMut;
+use std::ops::{DerefMut, Range};
 use std::ptr::NonNull;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
@@ -487,111 +487,8 @@ where
 
                 // used to avoid walking more of the oplog than necessary.
                 let mut rev_dirty_range = 0usize..0;
-                for mut next in ops {
-                    // used to avoid linear insertion time in case of predominantly independent ops.
-                    let mut range_remaining = T::MAX_COMPRESS_RANGE;
-                    // used to more efficiently insert next if possible
-                    let mut none: Option<(usize, &mut Option<O>)> = None;
-                    // rev-iterate all unpublished and potentially non-none ops already in the oplog
-                    for (prev_rev_idx, prev_loc) in {
-                        #[cfg(test)]
-                        {
-                            // While testing, make very very sure we don't skip any Some.
-                            let none_rev_idx = rev_dirty_range.start.saturating_sub(1);
-                            self.oplog
-                                .iter_mut()
-                                .skip(self.swap_index) // only consider the fresh part of the oplog
-                                .rev() // We need to walk it in reverse
-                                .enumerate() // we need the reverse index for the rev_dirty_range optimization
-                                .skip_while(move |(rev_idx, loc)| {
-                                    if *rev_idx < none_rev_idx {
-                                        debug_assert!(loc.is_none(), "We never skip over Some.",);
-                                        true
-                                    } else {
-                                        debug_assert!(
-                                            *rev_idx == none_rev_idx || loc.is_some(),
-                                            "We either stop on some or the last none",
-                                        );
-                                        false
-                                    }
-                                }) // skip nones at the back (except one for efficient insertion)
-                        }
-                        #[cfg(not(test))]
-                        {
-                            self.oplog
-                                .iter_mut()
-                                .skip(self.swap_index) // only consider the fresh part of the oplog
-                                .rev() // We need to walk it in reverse
-                                .enumerate() // we need the reverse index for the rev_dirty_range optimization
-                                .skip(rev_dirty_range.start.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
-                        }
-                    } {
-                        if let Some(prev) = prev_loc.as_mut() {
-                            match T::try_compress(prev, next) {
-                                // The ops were successfully compressed, take prev as the new next
-                                crate::TryCompressResult::Compressed => {
-                                    // We successfully compressed ops and therefore take the combined op as the new next,...
-                                    next = prev_loc
-                                        .take()
-                                        .expect("We just checked that prev_loc is Some.");
-                                    // ...remember the empty loc for efficient insertion,...
-                                    none.replace((prev_rev_idx, prev_loc));
-                                    // ...and reset our range.
-                                    range_remaining = T::MAX_COMPRESS_RANGE;
-                                    // If the now empty loc is at the back of the non-none oplog we can increment rev_dirty_range.start.
-                                    if prev_rev_idx == rev_dirty_range.start {
-                                        rev_dirty_range.start += 1;
-                                    }
-                                    // If the now empty loc is before the front of the non-none oplog we need to increase rev_dirty_range.end.
-                                    if prev_rev_idx >= rev_dirty_range.end {
-                                        rev_dirty_range.end = prev_rev_idx + 1;
-                                    }
-                                }
-                                // The ops are independent of each other, restore next and continue
-                                crate::TryCompressResult::Independent(re_next) => {
-                                    next = re_next;
-                                    // We consumed one of our range and need to check whether to break or continue.
-                                    range_remaining -= 1;
-                                    if range_remaining == 0 {
-                                        break;
-                                    } else {
-                                        continue;
-                                    }
-                                }
-                                // prev must precede next: restore next then break
-                                crate::TryCompressResult::Dependent(re_next) => {
-                                    next = re_next;
-                                    break;
-                                }
-                            }
-                        } else {
-                            // Remember empty loc for efficient insertion
-                            none.replace((prev_rev_idx, prev_loc));
-                            // If the empty loc is at the back of the non-none oplog we can increment rev_dirty_range.start.
-                            if prev_rev_idx == rev_dirty_range.start {
-                                rev_dirty_range.start += 1;
-                            }
-                        }
-                    }
-                    // found nothing to combine with / encountered dependency
-                    // See if we found an empty loc during iteration, else push
-                    if let Some((none_rev_idx, none_loc)) = none {
-                        if let Some(_supposed_none) = none_loc.replace(next) {
-                            unreachable!("cached None location held Some(_)");
-                        }
-                        // If we inserted before the end of the non-none oplog we need to decrease rev_dirty_range.start.
-                        if none_rev_idx < rev_dirty_range.start {
-                            rev_dirty_range.start = none_rev_idx;
-                        }
-                        // If we inserted at the front of the all-some oplog we can decrement rev_dirty_range.end.
-                        if none_rev_idx + 1 == rev_dirty_range.end {
-                            rev_dirty_range.end = none_rev_idx;
-                        }
-                    } else {
-                        debug_assert!(rev_dirty_range.start == 0, "We only push if we found no nones and we always find at least one none at the back if it is there.");
-                        debug_assert!(rev_dirty_range.end == 0, "Pushing means no nones.");
-                        self.oplog.push_back(Some(next));
-                    }
+                for next in ops {
+                    self.compress_insert_op(next, &mut rev_dirty_range);
                 }
                 // stably remove temporary nones from the oplog
                 let some_len = {
@@ -644,6 +541,115 @@ where
                 // some_len is either the first remaining none or oplog.len()
                 self.oplog.truncate(some_len);
             }
+        }
+    }
+}
+
+impl<T: Absorb<O>, O> WriteHandle<T, O> {
+    fn compress_insert_op(&mut self, mut next: O, rev_dirty_range: &mut Range<usize>) {
+        // used to avoid linear insertion time in case of predominantly independent ops.
+        let mut range_remaining = T::MAX_COMPRESS_RANGE;
+        // used to more efficiently insert next if possible
+        let mut none: Option<(usize, &mut Option<O>)> = None;
+        // rev-iterate all unpublished and potentially non-none ops already in the oplog
+        for (prev_rev_idx, prev_loc) in {
+            #[cfg(test)]
+            {
+                // While testing, make very very sure we don't skip any Some.
+                let none_rev_idx = rev_dirty_range.start.saturating_sub(1);
+                self.oplog
+                    .iter_mut()
+                    .skip(self.swap_index) // only consider the fresh part of the oplog
+                    .rev() // We need to walk it in reverse
+                    .enumerate() // we need the reverse index for the rev_dirty_range optimization
+                    .skip_while(move |(rev_idx, loc)| {
+                        if *rev_idx < none_rev_idx {
+                            debug_assert!(loc.is_none(), "We never skip over Some.",);
+                            true
+                        } else {
+                            debug_assert!(
+                                *rev_idx == none_rev_idx || loc.is_some(),
+                                "We either stop on some or the last none",
+                            );
+                            false
+                        }
+                    }) // skip nones at the back (except one for efficient insertion)
+            }
+            #[cfg(not(test))]
+            {
+                self.oplog
+                    .iter_mut()
+                    .skip(self.swap_index) // only consider the fresh part of the oplog
+                    .rev() // We need to walk it in reverse
+                    .enumerate() // we need the reverse index for the rev_dirty_range optimization
+                    .skip(rev_dirty_range.start.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
+            }
+        } {
+            if let Some(prev) = prev_loc.as_mut() {
+                match T::try_compress(prev, next) {
+                    // The ops were successfully compressed, take prev as the new next
+                    crate::TryCompressResult::Compressed => {
+                        // We successfully compressed ops and therefore take the combined op as the new next,...
+                        next = prev_loc
+                            .take()
+                            .expect("We just checked that prev_loc is Some.");
+                        // ...remember the empty loc for efficient insertion,...
+                        none.replace((prev_rev_idx, prev_loc));
+                        // ...and reset our range.
+                        range_remaining = T::MAX_COMPRESS_RANGE;
+                        // If the now empty loc is at the back of the non-none oplog we can increment rev_dirty_range.start.
+                        if prev_rev_idx == rev_dirty_range.start {
+                            rev_dirty_range.start += 1;
+                        }
+                        // If the now empty loc is before the front of the non-none oplog we need to increase rev_dirty_range.end.
+                        if prev_rev_idx >= rev_dirty_range.end {
+                            rev_dirty_range.end = prev_rev_idx + 1;
+                        }
+                    }
+                    // The ops are independent of each other, restore next and continue
+                    crate::TryCompressResult::Independent(re_next) => {
+                        next = re_next;
+                        // We consumed one of our range and need to check whether to break or continue.
+                        range_remaining -= 1;
+                        if range_remaining == 0 {
+                            break;
+                        } else {
+                            continue;
+                        }
+                    }
+                    // prev must precede next: restore next then break
+                    crate::TryCompressResult::Dependent(re_next) => {
+                        next = re_next;
+                        break;
+                    }
+                }
+            } else {
+                // Remember empty loc for efficient insertion
+                none.replace((prev_rev_idx, prev_loc));
+                // If the empty loc is at the back of the non-none oplog we can increment rev_dirty_range.start.
+                if prev_rev_idx == rev_dirty_range.start {
+                    rev_dirty_range.start += 1;
+                }
+            }
+        }
+        // found nothing to combine with / encountered dependency
+        // See if we found an empty loc during iteration, else push
+        if let Some((none_rev_idx, none_loc)) = none {
+            if let Some(_supposed_none) = none_loc.replace(next) {
+                unreachable!("cached None location held Some(_)");
+            }
+            // If we inserted before the end of the non-none oplog we need to decrease rev_dirty_range.start.
+            if none_rev_idx < rev_dirty_range.start {
+                rev_dirty_range.start = none_rev_idx;
+            }
+            // If we inserted at the front of the all-some oplog we can decrement rev_dirty_range.end.
+            if none_rev_idx + 1 == rev_dirty_range.end {
+                rev_dirty_range.end = none_rev_idx;
+            }
+        } else {
+            debug_assert!(rev_dirty_range.start == 0, "We only push if we found no nones and we always find at least one none at the back if it is there.");
+            debug_assert!(rev_dirty_range.end == 0, "Pushing means no nones.");
+            self.oplog.push_back(Some(next));
         }
     }
 }
