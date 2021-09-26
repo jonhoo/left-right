@@ -192,11 +192,16 @@ pub mod aliasing;
 /// The result of calling [`Absorb::try_compress`](Absorb::try_compress).
 #[derive(Debug)]
 pub enum TryCompressResult<O> {
-    /// Returned when [`try_compress`](Absorb::try_compress) was successful.
+    /// Returned when [`try_compress`](Absorb::try_compress) was successful
+    /// and `prev` is now the combined operation after consuming `next`
+    /// and can be used as the new `next` to continue our current attempt at compression with the next `prev`.
     Compressed,
-    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` and `next` are independent of each other, contains `next`.
+    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` and `next` are independent of each other
+    /// and can't be compressed together, though `next` may precede `prev` in the oplog,
+    /// meaning we can resume our attempt at compression with the next `prev`. Contains `next`.
     Independent(O),
-    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` must precede `next`, contains `next`.
+    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` must precede `next`,
+    /// halting any further attempt to compress `next` before it's insertion. Contains `next`.
     Dependent(O),
 }
 
@@ -285,12 +290,11 @@ pub trait Absorb<O> {
     /// `prev` is the target of the compression and temporarily removed from the oplog, `next` is the op to be inserted.
     ///
     /// A return value of [`TryCompressResult::Compressed`] means the ops were successfully compressed,
-    /// [`TryCompressResult::Independent`] that while the ops can't be compressed,
-    /// `next` can safely precede `prev`, which therefore can be simply skipped over,
+    /// [`TryCompressResult::Independent`] that while the ops can't be compressed, `next` can safely precede `prev`,
     /// and [`TryCompressResult::Dependent`] that they can not be compressed, and `prev` must precede `next`.
     ///
     /// Defaults to [`TryCompressResult::Dependent`], which sub-optimally disables compression.
-    /// Setting [`Self::MAX_COMPRESS_RANGE`](Absorb::MAX_COMPRESS_RANGE) to `0` is vastly more efficient for that.
+    /// Setting [`Self::MAX_COMPRESS_RANGE`](Absorb::MAX_COMPRESS_RANGE) to or leaving it at it's default of `0` is vastly more efficient for that.
     fn try_compress(prev: &mut O, next: O) -> TryCompressResult<O> {
         // yes, unnecessary, but: makes it so that prev is not an unused variable
         // and really matches the mental model of 'all ops are dependent'.
