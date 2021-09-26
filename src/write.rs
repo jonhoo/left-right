@@ -337,21 +337,14 @@ where
                 // we can drain out the operations that only the w_handle copy needs
                 //
                 // NOTE: the if above is because drain(0..0) would remove 0
-                for op in self
-                    .oplog
-                    .drain(0..self.swap_index)
-                    .map(|op| op.unwrap_or_else(|| unreachable!("Nones are always temporary")))
-                {
-                    T::absorb_second(w_handle, op, r_handle);
+                for op in self.oplog.drain(0..self.swap_index) {
+                    T::absorb_second(w_handle, op.expect("Nones are always temporary"), r_handle);
                 }
             }
             // we cannot give owned operations to absorb_first
             // since they'll also be needed by the r_handle copy
-            for op in self.oplog.iter_mut().map(|op| {
-                op.as_mut()
-                    .unwrap_or_else(|| unreachable!("Nones are always temporary"))
-            }) {
-                T::absorb_first(w_handle, op, r_handle);
+            for op in self.oplog.iter_mut().map(|op| op.as_mut()) {
+                T::absorb_first(w_handle, op.expect("Nones are always temporary"), r_handle);
             }
             // the w_handle copy is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
@@ -535,9 +528,9 @@ where
                                 // The ops were successfully compressed, take prev as the new next
                                 crate::TryCompressResult::Compressed => {
                                     // We successfully compressed ops and therefore take the combined op as the new next,...
-                                    next = prev_loc.take().unwrap_or_else(|| {
-                                        unreachable!("We just checked that prev_loc is Some.")
-                                    });
+                                    next = prev_loc
+                                        .take()
+                                        .expect("We just checked that prev_loc is Some.");
                                     // ...remember the empty loc for efficient insertion,...
                                     none.replace((prev_rev_idx, prev_loc));
                                     // ...and reset our range.
