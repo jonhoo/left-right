@@ -477,7 +477,10 @@ where
             }
         } else {
             // Only try to compress if it is enabled, else use efficient fallback.
-            if T::MAX_COMPRESS_RANGE > 0 {
+            if T::MAX_COMPRESS_RANGE == 0 {
+                // efficient, non-compressing fallback
+                self.oplog.extend(ops.into_iter().map(|op| Some(op)));
+            } else {
                 // Compress oplog by rev-iterating all ops appended since the last publish
                 // while attempting to combine them with the next op,
                 // cut short when an attempt fails due to encountering a dependency (e.g. clear then set).
@@ -640,9 +643,6 @@ where
                 );
                 // some_len is either the first remaining none or oplog.len()
                 self.oplog.truncate(some_len);
-            } else {
-                // efficient, non-compressing fallback
-                self.oplog.extend(ops.into_iter().map(|op| Some(op)));
             }
         }
     }
