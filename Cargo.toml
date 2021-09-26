@@ -14,5 +14,9 @@ categories = ["concurrency"]
 [dependencies]
 slab = "0.4"
 
+[dev-dependencies]
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.0"
+
 [target.'cfg(loom)'.dependencies]
 loom = "0.4.0"

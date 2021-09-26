@@ -725,6 +725,7 @@ struct CheckWriteHandleSend;
 mod tests {
     use crate::sync::{AtomicUsize, Mutex, Ordering};
     use crate::{Absorb, TryCompressResult};
+    use quickcheck_macros::quickcheck;
     use slab::Slab;
     include!("./utilities.rs");
 
@@ -1090,5 +1091,50 @@ mod tests {
             .iter()
             .zip([Some(Op::Add(4)), Some(Op::Sub(1)), Some(Op::Sub(1))])
             .for_each(|(op, expected)| assert_eq!(*op, expected));
+    }
+    #[quickcheck]
+    fn compress_correct(mut input: Vec<i32>) -> bool {
+        // To avoid over/underflow during arithmetic
+        for x in input.iter_mut() {
+            *x &= 0b11;
+        }
+        type Op = CompressibleCounterOp<2>;
+        let (mut w, r) = crate::new::<i32, Op>();
+        // Get non-compressing first optimization out of the picture
+        w.publish();
+        assert_eq!(w.first, false);
+        // Map numbers to Ops, insert and publish them
+        let mut iter = input.chunks(8);
+        while let Some(chunk) = iter.next() {
+            // First extend while not compressing for more corner cases
+            w.oplog.extend(chunk.iter().map(|&x| {
+                Some(if x > 0 {
+                    Op::Add(x)
+                } else if x < 0 {
+                    Op::Sub(-x)
+                } else {
+                    Op::Set(0)
+                })
+            }));
+            if let Some(chunk) = iter.next() {
+                w.extend(chunk.iter().map(|&x| {
+                    if x > 0 {
+                        Op::Add(x)
+                    } else if x < 0 {
+                        Op::Sub(-x)
+                    } else {
+                        Op::Set(0)
+                    }
+                }));
+            }
+            w.publish();
+        }
+        // to avoid some macro complications
+        let val = *r.enter().unwrap();
+        // Check if value correct
+        val == input
+            .into_iter()
+            .reduce(|prev, next| if next == 0 { 0 } else { prev + next })
+            .unwrap_or(0 /* If input is empty */)
     }
 }
