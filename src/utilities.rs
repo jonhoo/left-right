@@ -54,8 +54,8 @@ impl<const MAX_COMPRESS_RANGE: usize> Absorb<CompressibleCounterOp<MAX_COMPRESS_
                 *prev += next;
                 TryCompressResult::Compressed
             }
-            (CompressibleCounterOp::Add(_), CompressibleCounterOp::Sub(next)) => {
-                TryCompressResult::Independent(CompressibleCounterOp::Sub(next))
+            (CompressibleCounterOp::Add(_), next @ CompressibleCounterOp::Sub(_)) => {
+                TryCompressResult::Independent(next)
             }
             (CompressibleCounterOp::Sub(_), CompressibleCounterOp::Add(next)) => {
                 TryCompressResult::Independent(CompressibleCounterOp::Add(next))

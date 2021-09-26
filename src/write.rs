@@ -580,11 +580,8 @@ where
                     // found nothing to combine with / encountered dependency
                     // See if we found an empty loc during iteration, else push
                     if let Some((none_rev_idx, none_loc)) = none {
-                        if none_loc.replace(next).is_some() {
-                            debug_assert!(
-                                false,
-                                "Should still have been None since we didn't insert yet."
-                            )
+                        if let Some(_supposed_none) = none_loc.replace(next) {
+                            unreachable!("cached None location held Some(_)");
                         }
                         // If we inserted before the end of the non-none oplog we need to decrease rev_dirty_range.start.
                         if none_rev_idx < rev_dirty_range.start {
