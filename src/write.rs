@@ -551,39 +551,31 @@ impl<T: Absorb<O>, O> WriteHandle<T, O> {
         let mut range_remaining = T::MAX_COMPRESS_RANGE;
         // used to more efficiently insert next if possible
         let mut none: Option<(usize, &mut Option<O>)> = None;
+        // While debugging, make very very sure rev_dirty_range.start is correct.
+        debug_assert!(
+            self.oplog
+                .iter()
+                .rev()
+                .take(rev_dirty_range.start)
+                .find(|loc| loc.is_some())
+                .is_none(),
+            "We never skip over any Some."
+        );
+        debug_assert!(
+            (self.oplog.len() - self.swap_index == 0
+                && rev_dirty_range.start == 0
+                && rev_dirty_range.end == 0)
+                || self.oplog[self.oplog.len() - rev_dirty_range.start - 1].is_some(),
+            "We start on the first Some."
+        );
         // rev-iterate all unpublished and potentially non-none ops already in the oplog
         for (prev_rev_idx, prev_loc) in {
-            #[cfg(test)]
-            {
-                // While testing, make very very sure we don't skip any Some.
-                let none_rev_idx = rev_dirty_range.start.saturating_sub(1);
-                self.oplog
-                    .iter_mut()
-                    .skip(self.swap_index) // only consider the fresh part of the oplog
-                    .rev() // We need to walk it in reverse
-                    .enumerate() // we need the reverse index for the rev_dirty_range optimization
-                    .skip_while(move |(rev_idx, loc)| {
-                        if *rev_idx < none_rev_idx {
-                            debug_assert!(loc.is_none(), "We never skip over Some.",);
-                            true
-                        } else {
-                            debug_assert!(
-                                *rev_idx == none_rev_idx || loc.is_some(),
-                                "We either stop on some or the last none",
-                            );
-                            false
-                        }
-                    }) // skip nones at the back (except one for efficient insertion)
-            }
-            #[cfg(not(test))]
-            {
-                self.oplog
-                    .iter_mut()
-                    .skip(self.swap_index) // only consider the fresh part of the oplog
-                    .rev() // We need to walk it in reverse
-                    .enumerate() // we need the reverse index for the rev_dirty_range optimization
-                    .skip(rev_dirty_range.start.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
-            }
+            self.oplog
+                .iter_mut()
+                .skip(self.swap_index) // only consider the fresh part of the oplog
+                .rev() // We need to walk it in reverse
+                .enumerate() // we need the reverse index for the rev_dirty_range optimization
+                .skip(rev_dirty_range.start.saturating_sub(1)) // skip nones at the back (except one for efficient insertion)
         } {
             if let Some(prev) = prev_loc.as_mut() {
                 match T::try_compress(prev, next) {
