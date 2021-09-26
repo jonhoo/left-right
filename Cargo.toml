@@ -15,8 +15,14 @@ categories = ["concurrency"]
 slab = "0.4"
 
 [dev-dependencies]
+rand = "0.8.4"
 quickcheck = "1.0.3"
 quickcheck_macros = "1.0.0"
+criterion = "0.3"
+
+[[bench]]
+name = "benchmark"
+harness = false
 
 [target.'cfg(loom)'.dependencies]
 loom = "0.4.0"
