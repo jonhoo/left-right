@@ -751,6 +751,7 @@ mod tests {
         assert_eq!(w.oplog.len(), 0);
         assert_eq!(w.first, true);
         w.publish();
+        assert_eq!(*r.enter().unwrap(), 8);
         assert_eq!(w.first, false);
         // Adds will combine
         w.append(Op::Add(7));
@@ -764,11 +765,13 @@ mod tests {
         w.extend([Op::Set(1), Op::Add(2), Op::Sub(1), Op::Add(3)]);
         assert_eq!(w.oplog.len(), 3);
         w.publish();
+        assert_eq!(*r.enter().unwrap(), 5);
         // full len still 3 because only first absorb
         assert_eq!(w.oplog.len(), 3);
         assert_eq!(w.oplog.len(), w.swap_index);
         assert_eq!(*r.enter().unwrap(), 5);
         w.publish();
+        assert_eq!(*r.enter().unwrap(), 5);
         // now also second absorb => len == 0
         assert_eq!(w.oplog.len(), 0);
         assert_eq!(w.oplog.len(), w.swap_index);
@@ -1015,6 +1018,7 @@ mod tests {
         let (mut w, r) = crate::new::<i32, Op>();
         // Get first optimization out of the picture
         w.publish();
+        assert_eq!(*r.enter().unwrap(), 0);
         assert_eq!(w.first, false);
         // Both Adds will combine
         w.append(Op::Add(7));
@@ -1028,11 +1032,13 @@ mod tests {
         w.extend([Op::Set(1), Op::Add(2), Op::Sub(1), Op::Add(3)]);
         assert_eq!(w.oplog.len(), 4);
         w.publish();
+        assert_eq!(*r.enter().unwrap(), 5);
         // full len still 4 because only first absorb
         assert_eq!(w.oplog.len(), 4);
         assert_eq!(w.oplog.len(), w.swap_index);
         assert_eq!(*r.enter().unwrap(), 5);
         w.publish();
+        assert_eq!(*r.enter().unwrap(), 5);
         // now also second absorb => len == 0
         assert_eq!(w.oplog.len(), 0);
         assert_eq!(w.oplog.len(), w.swap_index);
@@ -1053,7 +1059,17 @@ mod tests {
             Some(Op::Sub(1)),
             Some(Op::Add(1)),
         ]);
-        w.extend([Op::Add(1), Op::Sub(1), Op::Add(1)]);
+        let mut rev_dirty_range = 0..0;
+        for op in [Op::Add(1), Op::Sub(1), Op::Add(1)] {
+            w.compress_insert_op(op, &mut rev_dirty_range);
+        }
+        // rev_dirty_range.end is 3 instead of 2 because when inserting last Add at rev_idx: 3 it can't know about Sub at rev_idx: 2.
+        assert_eq!(rev_dirty_range, 2..3);
+        w.oplog
+            .iter()
+            .zip([Some(Op::Add(8)), Some(Op::Sub(2)), None, None])
+            .for_each(|(op, expected)| assert_eq!(*op, expected));
+        w.oplog.retain(Option::is_some);
         w.oplog
             .iter()
             .zip([Some(Op::Add(8)), Some(Op::Sub(2))])
