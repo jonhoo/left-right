@@ -292,13 +292,9 @@ pub trait Absorb<O> {
     /// Defaults to `0`, which disables compression and allows the usage of an efficient fallback.
     const MAX_COMPRESS_RANGE: usize = 0;
 
-    /// Try to compress two ops into a single op to optimize the oplog.
+    /// Try to compress two ops into a single op and return a [`TryCompressResult`].
     ///
-    /// `prev` is the target of the compression and temporarily removed from the oplog, `next` is the op to be inserted.
-    ///
-    /// A return value of [`TryCompressResult::Compressed`] means the ops were successfully compressed,
-    /// [`TryCompressResult::Independent`] that while the ops can't be compressed, `next` can safely precede `prev`,
-    /// and [`TryCompressResult::Dependent`] that they can not be compressed, and `prev` must precede `next`.
+    /// Used to optimize the oplog while extending it, `prev` is the target inside the oplog, `next` is the op being inserted.
     ///
     /// Defaults to [`TryCompressResult::Dependent`], which sub-optimally disables compression.
     /// Setting [`Self::MAX_COMPRESS_RANGE`](Absorb::MAX_COMPRESS_RANGE) to or leaving it at it's default of `0` is vastly more efficient for that.
