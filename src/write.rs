@@ -1095,48 +1095,43 @@ mod tests {
             .for_each(|(op, expected)| assert_eq!(*op, expected));
     }
     #[quickcheck]
-    fn compress_correct(mut input: Vec<i32>) -> bool {
-        // To avoid over/underflow during arithmetic
-        for x in input.iter_mut() {
-            *x &= 0b11;
-        }
+    fn compress_correct(input: Vec<(Vec<i32>, bool, bool)>) -> bool {
         type Op = CompressibleCounterOp<2>;
         let (mut w, r) = crate::new::<i32, Op>();
         // Get non-compressing first optimization out of the picture
         w.publish();
         assert_eq!(w.first, false);
+        let mut expected = 0;
         // Map numbers to Ops, insert and publish them
-        let mut iter = input.chunks(8);
-        while let Some(chunk) = iter.next() {
-            // First extend while not compressing for more corner cases
-            w.oplog.extend(chunk.iter().map(|&x| {
-                Some(if x > 0 {
+        for (chunk, compressing, publish) in input {
+            let chunk = chunk.iter().map(|x| {
+                // To avoid over/underflow during arithmetic
+                let x = x & 0b1111;
+                if x > 0 {
+                    expected += x;
                     Op::Add(x)
                 } else if x < 0 {
+                    expected += x;
                     Op::Sub(-x)
                 } else {
+                    expected = 0;
                     Op::Set(0)
-                })
-            }));
-            if let Some(chunk) = iter.next() {
-                w.extend(chunk.iter().map(|&x| {
-                    if x > 0 {
-                        Op::Add(x)
-                    } else if x < 0 {
-                        Op::Sub(-x)
-                    } else {
-                        Op::Set(0)
-                    }
-                }));
+                }
+            });
+            if compressing {
+                w.extend(chunk);
+            } else {
+                // Occasionally not compressing covers more corner cases
+                w.oplog.extend(chunk.map(|op| Some(op)));
             }
-            w.publish();
+            if publish {
+                w.publish();
+            }
         }
-        // to avoid some macro complications
+        // flush any pending ops
+        w.publish();
         let val = *r.enter().unwrap();
         // Check if value correct
-        val == input
-            .into_iter()
-            .reduce(|prev, next| if next == 0 { 0 } else { prev + next })
-            .unwrap_or(0 /* If input is empty */)
+        val == expected
     }
 }
