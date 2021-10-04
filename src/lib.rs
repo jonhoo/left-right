@@ -192,16 +192,23 @@ pub mod aliasing;
 /// The result of calling [`Absorb::try_compress`](Absorb::try_compress).
 #[derive(Debug)]
 pub enum TryCompressResult<O> {
-    /// Returned when [`try_compress`](Absorb::try_compress) was successful
-    /// and `prev` is now the combined operation after consuming `next`
-    /// and can be used as the new `next` to continue our current attempt at compression with the next `prev`.
+    /// Returned when [`try_compress`](Absorb::try_compress) was successful.
+    ///
+    /// The expectation is that the `prev` argument to `try_compress` now represents the combined operation after consuming `next`.
+    ///
+    /// Compression will continue by attempting to combine the new `prev` with its predecessors.
     Compressed,
-    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` and `next` are independent of each other
-    /// and can't be compressed together, though `next` may precede `prev` in the oplog,
-    /// meaning we can resume our attempt at compression with the next `prev`. Contains `next`.
+    /// The two operations passed to [`try_compress`](Absorb::try_compress) were not combined, but commute.
+    ///
+    /// Since `prev` and `next` commute, compression will continue attempting to merge `next` with operations that precede `prev` in the oplog, potentially changing the relative ordering of `prev` and `next`.
+    ///
+    /// Returns ownership of `next` so that compression can continue (or `next` can be restored).
     Independent(O),
-    /// Returned when [`try_compress`](Absorb::try_compress) failed because `prev` must precede `next`,
-    /// halting any further attempt to compress `next` before it's insertion. Contains `next`.
+    /// The two operations passed to [`try_compress`](Absorb::try_compress) were not combined, and do not commute.
+    ///
+    /// Since `prev` and `next` do not commute, `next` cannot be moved past `prev`, and must thus be left in its current location.
+    ///
+    /// Returns ownership of `next` so that it can be put back in the oplog (after `prev`).
     Dependent(O),
 }
 
