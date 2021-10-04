@@ -1072,7 +1072,7 @@ mod tests {
             .iter()
             .zip([Some(Op::Add(8)), Some(Op::Sub(2)), None, None])
             .for_each(|(op, expected)| assert_eq!(*op, expected));
-        w.oplog.retain(Option::is_some);
+        w.oplog_retain_some(rev_dirty_range);
         w.oplog
             .iter()
             .zip([Some(Op::Add(8)), Some(Op::Sub(2))])
