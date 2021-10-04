@@ -490,55 +490,7 @@ where
                 self.compress_insert_op(next, &mut rev_dirty_range);
             }
             // stably remove temporary nones from the oplog
-            let some_len = {
-                // some_range is an un-inverted rev_dirty_range
-                let mut some_range = {
-                    let len = self.oplog.len();
-                    len - rev_dirty_range.end..len - rev_dirty_range.start
-                };
-                // The first none (if it exists) is on the second item in some_range,
-                // so none_range needs to skip one to get to it.
-                let mut none_range = some_range.clone();
-                none_range.next();
-                // Use some_idx to find a none
-                'find_none: for some_idx in &mut some_range {
-                    if self.oplog[some_idx].is_none() {
-                        // Now use none_idx to find a some
-                        for none_idx in &mut none_range {
-                            if self.oplog[none_idx].is_some() {
-                                // some_idx is none, none_idx is some => swap
-                                self.oplog.swap(some_idx, none_idx);
-                                continue 'find_none;
-                            }
-                        }
-                        // No some to swap with found => done
-                        // Need to reverse last increment of some_range
-                        some_range.start = some_idx;
-                        break 'find_none;
-                    }
-                }
-                // some_range.start either stops on the first none or is oplog.len, meaning we can now use it as a len to truncate the oplog.
-                some_range.start
-            };
-            debug_assert!(
-                self.oplog
-                    .iter()
-                    .skip(some_len)
-                    .find(|op| op.is_some())
-                    .is_none(),
-                "We never truncate off any Some."
-            );
-            debug_assert!(
-                self.oplog
-                    .iter()
-                    .skip(self.swap_index)
-                    .take(some_len - self.swap_index)
-                    .find(|op| op.is_none())
-                    .is_none(),
-                "We never leave behind any None."
-            );
-            // some_len is either the first remaining none or oplog.len()
-            self.oplog.truncate(some_len);
+            self.oplog_retain_some(rev_dirty_range);
         }
     }
 }
@@ -641,6 +593,58 @@ impl<T: Absorb<O>, O> WriteHandle<T, O> {
             debug_assert!(rev_dirty_range.end == 0, "Pushing means no nones.");
             self.oplog.push_back(Some(next));
         }
+    }
+    fn oplog_retain_some(&mut self, rev_dirty_range: Range<usize>) {
+        // stably remove temporary nones from the oplog
+        let some_len = {
+            // some_range is an un-inverted rev_dirty_range
+            let mut some_range = {
+                let len = self.oplog.len();
+                len - rev_dirty_range.end..len - rev_dirty_range.start
+            };
+            // The first none (if it exists) is on the second item in some_range,
+            // so none_range needs to skip one to get to it.
+            let mut none_range = some_range.clone();
+            none_range.next();
+            // Use some_idx to find a none
+            'find_none: for some_idx in &mut some_range {
+                if self.oplog[some_idx].is_none() {
+                    // Now use none_idx to find a some
+                    for none_idx in &mut none_range {
+                        if self.oplog[none_idx].is_some() {
+                            // some_idx is none, none_idx is some => swap
+                            self.oplog.swap(some_idx, none_idx);
+                            continue 'find_none;
+                        }
+                    }
+                    // No some to swap with found => done
+                    // Need to reverse last increment of some_range
+                    some_range.start = some_idx;
+                    break 'find_none;
+                }
+            }
+            // some_range.start either stops on the first none or is oplog.len, meaning we can now use it as a len to truncate the oplog.
+            some_range.start
+        };
+        debug_assert!(
+            self.oplog
+                .iter()
+                .skip(some_len)
+                .find(|op| op.is_some())
+                .is_none(),
+            "We never truncate off any Some."
+        );
+        debug_assert!(
+            self.oplog
+                .iter()
+                .skip(self.swap_index)
+                .take(some_len - self.swap_index)
+                .find(|op| op.is_none())
+                .is_none(),
+            "We never leave behind any None."
+        );
+        // some_len is either the first remaining none or oplog.len()
+        self.oplog.truncate(some_len);
     }
 }
 
