@@ -1096,8 +1096,10 @@ mod tests {
     }
     #[quickcheck]
     fn compress_correct(input: Vec<(Vec<i32>, bool, bool)>) -> bool {
+        print!("\nStarting, {} chunks ... ", input.len());
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
         type Op = CompressibleCounterOp<2>;
-        let (mut w, r) = crate::new::<i32, Op>();
+        let (mut w, _) = crate::new::<i32, Op>();
         // Get non-compressing first optimization out of the picture
         w.publish();
         assert_eq!(w.first, false);
@@ -1128,9 +1130,9 @@ mod tests {
                 w.publish();
             }
         }
-        // flush any pending ops
-        w.publish();
-        let val = *r.enter().unwrap();
+        let val = *w.take();
+        print!("Finished");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
         // Check if value correct
         val == expected
     }
