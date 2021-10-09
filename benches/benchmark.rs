@@ -57,7 +57,7 @@ macro_rules! bench_instance {
  */
 
 bench_instance!(
-    name: none,
+    name: none_favorable,
     range: 0,
     delays: {
         absorb_set: 1000,
@@ -76,7 +76,7 @@ bench_instance!(
     }
 );
 bench_instance!(
-    name: max,
+    name: max_favorable,
     range: 0xFFFFFFFFFFFFFFFF,
     delays: {
         absorb_set: 1000,
@@ -95,7 +95,7 @@ bench_instance!(
     }
 );
 bench_instance!(
-    name: r1,
+    name: r1_favorable,
     range: 1,
     delays: {
         absorb_set: 1000,
@@ -114,7 +114,7 @@ bench_instance!(
     }
 );
 bench_instance!(
-    name: r16,
+    name: r16_favorable,
     range: 16,
     delays: {
         absorb_set: 1000,
@@ -133,7 +133,7 @@ bench_instance!(
     }
 );
 bench_instance!(
-    name: r64,
+    name: r64_favorable,
     range: 64,
     delays: {
         absorb_set: 1000,
@@ -152,7 +152,156 @@ bench_instance!(
     }
 );
 
-criterion_group!(benches, none, max, r1, r16, r64);
+bench_instance!(
+    name: none_unfavorable,
+    range: 0,
+    delays: {
+        absorb_set: 500,
+        absorb_clear: 10000,
+        compress_set: 125,
+        compress_clear: 100,
+    },
+    ops: {
+        key_bits: 8,
+        clear_bits: 14,
+    },
+    iteration: {
+        len: 0x20000,
+        chunk_len: 0x80,
+        publish_len: 0x800,
+    }
+);
+bench_instance!(
+    name: max_unfavorable,
+    range: 0xFFFFFFFFFFFFFFFF,
+    delays: {
+        absorb_set: 500,
+        absorb_clear: 10000,
+        compress_set: 125,
+        compress_clear: 100,
+    },
+    ops: {
+        key_bits: 8,
+        clear_bits: 14,
+    },
+    iteration: {
+        len: 0x20000,
+        chunk_len: 0x80,
+        publish_len: 0x800,
+    }
+);
+bench_instance!(
+    name: r1_unfavorable,
+    range: 1,
+    delays: {
+        absorb_set: 500,
+        absorb_clear: 10000,
+        compress_set: 125,
+        compress_clear: 100,
+    },
+    ops: {
+        key_bits: 8,
+        clear_bits: 14,
+    },
+    iteration: {
+        len: 0x20000,
+        chunk_len: 0x80,
+        publish_len: 0x800,
+    }
+);
+bench_instance!(
+    name: r16_unfavorable,
+    range: 16,
+    delays: {
+        absorb_set: 500,
+        absorb_clear: 10000,
+        compress_set: 125,
+        compress_clear: 100,
+    },
+    ops: {
+        key_bits: 8,
+        clear_bits: 14,
+    },
+    iteration: {
+        len: 0x20000,
+        chunk_len: 0x80,
+        publish_len: 0x800,
+    }
+);
+bench_instance!(
+    name: r64_unfavorable,
+    range: 64,
+    delays: {
+        absorb_set: 500,
+        absorb_clear: 10000,
+        compress_set: 125,
+        compress_clear: 100,
+    },
+    ops: {
+        key_bits: 8,
+        clear_bits: 14,
+    },
+    iteration: {
+        len: 0x20000,
+        chunk_len: 0x80,
+        publish_len: 0x800,
+    }
+);
+
+bench_instance!(
+    name: none_no_clear,
+    range: 0,
+    delays: {
+        absorb_set: 500,
+        absorb_clear: 10000,
+        compress_set: 125,
+        compress_clear: 100,
+    },
+    ops: {
+        key_bits: 8,
+        clear_bits: 63,
+    },
+    iteration: {
+        len: 0x20000,
+        chunk_len: 0x80,
+        publish_len: 0x800,
+    }
+);
+bench_instance!(
+    name: r1_no_clear,
+    range: 1,
+    delays: {
+        absorb_set: 500,
+        absorb_clear: 10000,
+        compress_set: 125,
+        compress_clear: 100,
+    },
+    ops: {
+        key_bits: 8,
+        clear_bits: 63,
+    },
+    iteration: {
+        len: 0x20000,
+        chunk_len: 0x80,
+        publish_len: 0x800,
+    }
+);
+
+criterion_group!(
+    benches,
+    none_favorable,
+    max_favorable,
+    r1_favorable,
+    r16_favorable,
+    r64_favorable,
+    none_unfavorable,
+    max_unfavorable,
+    r1_unfavorable,
+    r16_unfavorable,
+    r64_unfavorable,
+    none_no_clear,
+    r1_no_clear
+);
 criterion_main!(benches);
 
 fn run<
@@ -209,8 +358,8 @@ pub(crate) fn random_ops<
     rng.sample_iter(&dist)
         .take(LEN)
         .map(|x| {
-            let key = x & !((!1) << KEY_BITS);
-            if x & !((!1) << CLEAR_BITS) == 0 {
+            let key = x & !((!0) << KEY_BITS);
+            if x & !((!0) << CLEAR_BITS) == 0 {
                 FakeMapOp::Clear
             } else {
                 FakeMapOp::Set(key)
