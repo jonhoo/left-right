@@ -484,18 +484,16 @@ where
             // used to avoid walking more of the oplog than necessary.
             let mut rev_dirty_range = 0usize..0;
             for next in ops {
-                // Rev-iterate all ops appended since the last publish
-                // while attempting to combine them with the next op,
-                // cut short when an attempt fails due to encountering a dependency (e.g. clear then set).
                 self.compress_insert_op(next, &mut rev_dirty_range);
             }
-            // stably remove temporary nones from the oplog
             self.oplog_retain_some(rev_dirty_range);
         }
     }
 }
 
 impl<T: Absorb<O>, O> WriteHandle<T, O> {
+    /// Rev-iterate all ops appended since the last publish while attempting to combine them with the next op,
+    /// cut short when an attempt fails due to encountering a dependency (e.g. clear then set), or after running out of range.
     fn compress_insert_op(&mut self, mut next: O, rev_dirty_range: &mut Range<usize>) {
         // used to avoid linear insertion time in case of predominantly independent ops.
         let mut range_remaining = T::MAX_COMPRESS_RANGE;
@@ -594,8 +592,8 @@ impl<T: Absorb<O>, O> WriteHandle<T, O> {
             self.oplog.push_back(Some(next));
         }
     }
+    /// stably remove temporary nones from the oplog
     fn oplog_retain_some(&mut self, rev_dirty_range: Range<usize>) {
-        // stably remove temporary nones from the oplog
         let some_len = {
             // some_range is an un-inverted rev_dirty_range
             let mut some_range = {
@@ -725,6 +723,8 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
+
     use crate::sync::{AtomicUsize, Mutex, Ordering};
     use crate::{Absorb, TryCompressResult};
     use quickcheck_macros::quickcheck;
@@ -1095,32 +1095,43 @@ mod tests {
             .for_each(|(op, expected)| assert_eq!(*op, expected));
     }
     #[quickcheck]
-    fn compress_correct(input: Vec<(Vec<i32>, bool, bool)>) -> bool {
-        print!("\nStarting, {} chunks ... ", input.len());
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    fn compress_correct(input: (Vec<i8>, Vec<(u8, bool, bool)>)) -> bool {
+        // !IMPORTANT!: `input: Vec<(Vec<i8>, bool, bool)>` would be more thorough, convenient and concise, but completely blows up miri.
         type Op = CompressibleCounterOp<2>;
         let (mut w, _) = crate::new::<i32, Op>();
         // Get non-compressing first optimization out of the picture
         w.publish();
         assert_eq!(w.first, false);
-        let mut expected = 0;
+
         // Map numbers to Ops, insert and publish them
-        for (chunk, compressing, publish) in input {
-            let chunk = chunk.iter().map(|x| {
-                // To avoid over/underflow during arithmetic
-                let x = x & 0b1111;
-                if x > 0 {
-                    expected += x;
-                    Op::Add(x)
-                } else if x < 0 {
-                    expected += x;
-                    Op::Sub(-x)
-                } else {
-                    expected = 0;
-                    Op::Set(0)
-                }
-            });
-            if compressing {
+        let mut remaining = input.0.len();
+        let mut ops = input.0.into_iter();
+        let mut chunks = once((0, true, true)).chain(input.1.into_iter()).cycle();
+        let mut expected = 0;
+
+        while remaining > 0 {
+            let (len, compress, publish) = chunks.next().unwrap();
+            // To have more extends per test run
+            let len = len as usize & 0xF;
+            remaining = remaining.saturating_sub(len + 1);
+            let chunk = (0..=len)
+                .map(|_| ops.next())
+                .take_while(Option::is_some)
+                .map(Option::unwrap)
+                .map(|x| {
+                    let x = x as i32;
+                    if x > 0 {
+                        expected += x;
+                        Op::Add(x)
+                    } else if x < 0 {
+                        expected += x;
+                        Op::Sub(-x)
+                    } else {
+                        expected = 0;
+                        Op::Set(0)
+                    }
+                });
+            if compress {
                 w.extend(chunk);
             } else {
                 // Occasionally not compressing covers more corner cases
@@ -1130,9 +1141,8 @@ mod tests {
                 w.publish();
             }
         }
+        assert_eq!(ops.next(), None);
         let val = *w.take();
-        print!("Finished");
-        std::io::Write::flush(&mut std::io::stdout()).unwrap();
         // Check if value correct
         val == expected
     }
