@@ -337,14 +337,22 @@ where
                 // we can drain out the operations that only the w_handle copy needs
                 //
                 // NOTE: the if above is because drain(0..0) would remove 0
-                for op in self.oplog.drain(0..self.swap_index) {
-                    T::absorb_second(w_handle, op.expect("Nones are always temporary"), r_handle);
+                for op in self
+                    .oplog
+                    .drain(0..self.swap_index)
+                    .map(|opt| opt.expect("Nones are always temporary"))
+                {
+                    T::absorb_second(w_handle, op, r_handle);
                 }
             }
             // we cannot give owned operations to absorb_first
             // since they'll also be needed by the r_handle copy
-            for op in self.oplog.iter_mut().map(|op| op.as_mut()) {
-                T::absorb_first(w_handle, op.expect("Nones are always temporary"), r_handle);
+            for op in self
+                .oplog
+                .iter_mut()
+                .map(|op| op.as_mut().expect("Nones are always temporary"))
+            {
+                T::absorb_first(w_handle, op, r_handle);
             }
             // the w_handle copy is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
@@ -495,10 +503,6 @@ impl<T: Absorb<O>, O> WriteHandle<T, O> {
     /// Rev-iterate all ops appended since the last publish while attempting to combine them with the next op,
     /// cut short when an attempt fails due to encountering a dependency (e.g. clear then set), or after running out of range.
     fn compress_insert_op(&mut self, mut next: O, rev_dirty_range: &mut Range<usize>) {
-        // used to avoid linear insertion time in case of predominantly independent ops.
-        let mut range_remaining = T::MAX_COMPRESS_RANGE;
-        // used to more efficiently insert next if possible
-        let mut none: Option<(usize, &mut Option<O>)> = None;
         // While debugging, make very very sure rev_dirty_range.start is correct.
         debug_assert!(
             self.oplog
@@ -510,12 +514,19 @@ impl<T: Absorb<O>, O> WriteHandle<T, O> {
             "We never skip over any Some."
         );
         debug_assert!(
-            (self.oplog.len() - self.swap_index == 0
-                && rev_dirty_range.start == 0
-                && rev_dirty_range.end == 0)
-                || self.oplog[self.oplog.len() - rev_dirty_range.start - 1].is_some(),
-            "We start on the first Some."
+            self.oplog
+                .iter()
+                .rev()
+                .skip(rev_dirty_range.start)
+                .next()
+                .map(Option::is_some)
+                .unwrap_or(true),
+            "We start on the first Some if it exists."
         );
+        // used to avoid linear insertion time in case of predominantly independent ops.
+        let mut range_remaining = T::MAX_COMPRESS_RANGE;
+        // used to more efficiently insert next if possible
+        let mut none: Option<(usize, &mut Option<O>)> = None;
         // rev-iterate all unpublished and potentially non-none ops already in the oplog
         for (prev_rev_idx, prev_loc) in {
             self.oplog
@@ -584,11 +595,10 @@ impl<T: Absorb<O>, O> WriteHandle<T, O> {
             }
             // If we inserted at the front of the all-some oplog we can decrement rev_dirty_range.end.
             if none_rev_idx + 1 == rev_dirty_range.end {
-                rev_dirty_range.end = none_rev_idx;
+                rev_dirty_range.end -= 1;
             }
         } else {
             debug_assert!(rev_dirty_range.start == 0, "We only push if we found no nones and we always find at least one none at the back if it is there.");
-            debug_assert!(rev_dirty_range.end == 0, "Pushing means no nones.");
             self.oplog.push_back(Some(next));
         }
     }
@@ -600,10 +610,13 @@ impl<T: Absorb<O>, O> WriteHandle<T, O> {
                 let len = self.oplog.len();
                 len - rev_dirty_range.end..len - rev_dirty_range.start
             };
-            // The first none (if it exists) is on the second item in some_range,
-            // so none_range needs to skip one to get to it.
+            // Find the first none, ok to skip at least one, because we start on Some.
             let mut none_range = some_range.clone();
-            none_range.next();
+            for none_idx in &mut none_range {
+                if self.oplog[none_idx].is_none() {
+                    break;
+                }
+            }
             // Use some_idx to find a none
             'find_none: for some_idx in &mut some_range {
                 if self.oplog[some_idx].is_none() {
@@ -1111,26 +1124,22 @@ mod tests {
 
         while remaining > 0 {
             let (len, compress, publish) = chunks.next().unwrap();
-            // To have more extends per test run
-            let len = len as usize & 0xF;
-            remaining = remaining.saturating_sub(len + 1);
-            let chunk = (0..=len)
-                .map(|_| ops.next())
-                .take_while(Option::is_some)
-                .map(Option::unwrap)
-                .map(|x| {
-                    let x = x as i32;
-                    if x > 0 {
-                        expected += x;
-                        Op::Add(x)
-                    } else if x < 0 {
-                        expected += x;
-                        Op::Sub(-x)
-                    } else {
-                        expected = 0;
-                        Op::Set(0)
-                    }
-                });
+            // To have no empty and more extends per test run
+            let len = (len as usize & 0xF) + 1;
+            remaining = remaining.saturating_sub(len);
+            let chunk = (&mut ops).take(len).map(|x| {
+                let x = x as i32;
+                if x > 0 {
+                    expected += x;
+                    Op::Add(x)
+                } else if x < 0 {
+                    expected += x;
+                    Op::Sub(-x)
+                } else {
+                    expected = 0;
+                    Op::Set(0)
+                }
+            });
             if compress {
                 w.extend(chunk);
             } else {
@@ -1145,5 +1154,23 @@ mod tests {
         let val = *w.take();
         // Check if value correct
         val == expected
+    }
+    #[test]
+    fn oplog_retain_some_none_range_start_some() {
+        type Op = CompressibleCounterOp<2>;
+        let (mut w, _) = crate::new::<i32, Op>();
+        // Get non-compressing first optimization out of the picture
+        w.publish();
+        assert_eq!(w.first, false);
+        w.oplog.extend([
+            Some(Op::Sub(1)),
+            Some(Op::Add(1)),
+            Some(Op::Sub(1)),
+            Some(Op::Sub(1)),
+            Some(Op::Add(1)),
+        ]);
+        // Causes none_range to start on a some due to rev_dirty_range.end not jumping over first add after re-inserting first sub.
+        // Makes sure it can cope and doesn't panic.
+        w.extend([Op::Sub(1), Op::Sub(1)]);
     }
 }
