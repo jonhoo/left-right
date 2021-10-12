@@ -24,18 +24,19 @@ macro_rules! bench_instance {
         }
     ) => {
         fn $name(c: &mut Criterion) {
-            run::<
+            run::<$range>(
+                c,
+                stringify!($name),
                 $key_bits,
                 $clear_bits,
-                $len,
-                $chunk_len,
-                $publish_len,
-                $range,
                 $absorb_set,
                 $absorb_clear,
                 $compress_set,
                 $compress_clear,
-            >(c, stringify!($name))
+                $len,
+                $chunk_len,
+                $publish_len,
+            )
         }
     };
 }
@@ -304,38 +305,36 @@ criterion_group!(
 );
 criterion_main!(benches);
 
-fn run<
-    const KEY_BITS: usize,
-    const CLEAR_BITS: usize,
-    const LEN: usize,
-    const CHUNK_LEN: usize,
-    const PUBLISH_LEN: usize,
-    const RANGE: usize,
-    const ABSORB_SET: usize,
-    const ABSORB_CLEAR: usize,
-    const COMPRESS_SET: usize,
-    const COMPRESS_CLEAR: usize,
->(
+fn run<const RANGE: usize>(
     c: &mut Criterion,
     name: &str,
+    key_bits: u8,
+    clear_bits: u8,
+    absorb_set: u16,
+    absorb_clear: u16,
+    compress_set: u8,
+    compress_clear: u8,
+    len: usize,
+    chunk_len: usize,
+    publish_len: usize,
 ) {
     c.bench_function(name, |b| {
         b.iter_batched(
             || {
-                let ops = random_ops::<KEY_BITS, CLEAR_BITS, LEN, CHUNK_LEN, PUBLISH_LEN, RANGE>();
-                let (w, _) = new::<
-                    FakeMap<ABSORB_SET, ABSORB_CLEAR, COMPRESS_SET, COMPRESS_CLEAR>,
-                    FakeMapOp<RANGE>,
-                >();
+                let ops = random_ops(key_bits, clear_bits, compress_set, compress_clear, len);
+                let (w, _) = new_from_empty::<_, FakeMapOp>(FakeMap::<RANGE> {
+                    absorb_set,
+                    absorb_clear,
+                });
                 (ops, w)
             },
             |(mut ops, mut w)| {
                 let mut log_len = 0;
                 while !ops.is_empty() {
-                    w.extend(ops.drain(0..black_box(CHUNK_LEN)));
-                    log_len += CHUNK_LEN;
-                    if log_len >= PUBLISH_LEN {
-                        log_len -= PUBLISH_LEN;
+                    w.extend(ops.drain(0..black_box(chunk_len)));
+                    log_len += chunk_len;
+                    if log_len >= publish_len {
+                        log_len -= publish_len;
                         w.publish();
                     }
                 }
@@ -345,24 +344,30 @@ fn run<
     });
 }
 
-pub(crate) fn random_ops<
-    const KEY_BITS: usize,
-    const CLEAR_BITS: usize,
-    const LEN: usize,
-    const CHUNK_LEN: usize,
-    const PUBLISH_LEN: usize,
-    const RANGE: usize,
->() -> VecDeque<FakeMapOp<RANGE>> {
+pub(crate) fn random_ops(
+    key_bits: u8,
+    clear_bits: u8,
+    compress_set: u8,
+    compress_clear: u8,
+    len: usize,
+) -> VecDeque<FakeMapOp> {
     let rng = rand::thread_rng();
     let dist = Uniform::new(0, usize::MAX);
     rng.sample_iter(&dist)
-        .take(LEN)
+        .take(len)
         .map(|x| {
-            let key = x & !((!0) << KEY_BITS);
-            if x & !((!0) << CLEAR_BITS) == 0 {
-                FakeMapOp::Clear
+            let key = (x & !((!0) << key_bits)) as u16;
+            if x & !((!0) << clear_bits) == 0 {
+                FakeMapOp::Clear {
+                    compress_set,
+                    compress_clear,
+                }
             } else {
-                FakeMapOp::Set(key)
+                FakeMapOp::Set {
+                    key,
+                    compress_set,
+                    compress_clear,
+                }
             }
         })
         .collect()
@@ -381,55 +386,72 @@ fn black_box_spin(spin_count: usize) {
     .unwrap()
 }
 
-pub(crate) enum FakeMapOp<const RANGE: usize> {
-    Set(usize),
-    Clear,
+pub(crate) enum FakeMapOp {
+    Set {
+        key: u16,
+        compress_set: u8,
+        compress_clear: u8,
+    },
+    Clear {
+        compress_set: u8,
+        compress_clear: u8,
+    },
 }
 #[derive(Clone, Debug, Default)]
-pub(crate) struct FakeMap<
-    const ABSORB_SET: usize,
-    const ABSORB_CLEAR: usize,
-    const COMPRESS_SET: usize,
-    const COMPRESS_CLEAR: usize,
->;
-impl<
-        const RANGE: usize,
-        const ABSORB_SET: usize,
-        const ABSORB_CLEAR: usize,
-        const COMPRESS_SET: usize,
-        const COMPRESS_CLEAR: usize,
-    > Absorb<FakeMapOp<RANGE>> for FakeMap<ABSORB_SET, ABSORB_CLEAR, COMPRESS_SET, COMPRESS_CLEAR>
-{
-    fn absorb_first(&mut self, operation: &mut FakeMapOp<RANGE>, _: &Self) {
+pub(crate) struct FakeMap<const RANGE: usize> {
+    absorb_set: u16,
+    absorb_clear: u16,
+}
+impl<const RANGE: usize> Absorb<FakeMapOp> for FakeMap<RANGE> {
+    fn absorb_first(&mut self, operation: &mut FakeMapOp, _: &Self) {
         black_box_spin(match operation {
-            FakeMapOp::Set(_) => ABSORB_SET,
-            FakeMapOp::Clear => ABSORB_CLEAR,
-        });
+            FakeMapOp::Set { .. } => self.absorb_set,
+            FakeMapOp::Clear { .. } => self.absorb_clear,
+        } as usize);
     }
     fn sync_with(&mut self, first: &Self) {
         *self = first.clone();
     }
 
     const MAX_COMPRESS_RANGE: usize = RANGE;
-    fn try_compress(
-        mut prev: &mut FakeMapOp<RANGE>,
-        next: FakeMapOp<RANGE>,
-    ) -> TryCompressResult<FakeMapOp<RANGE>> {
+    fn try_compress(mut prev: &mut FakeMapOp, next: FakeMapOp) -> TryCompressResult<FakeMapOp> {
         match (&mut prev, next) {
-            (FakeMapOp::Set(prev_key), FakeMapOp::Set(key)) => {
+            (
+                FakeMapOp::Set { key: prev_key, .. },
+                FakeMapOp::Set {
+                    key,
+                    compress_set,
+                    compress_clear,
+                },
+            ) => {
                 if *prev_key == key {
-                    black_box_spin(COMPRESS_SET);
+                    black_box_spin(compress_set as usize);
                     TryCompressResult::Compressed
                 } else {
-                    TryCompressResult::Independent(FakeMapOp::Set(key))
+                    TryCompressResult::Independent(FakeMapOp::Set {
+                        key,
+                        compress_set,
+                        compress_clear,
+                    })
                 }
             }
-            (_, FakeMapOp::Clear) => {
-                black_box_spin(COMPRESS_CLEAR);
-                *prev = FakeMapOp::Clear;
+            (
+                _,
+                FakeMapOp::Clear {
+                    compress_set,
+                    compress_clear,
+                },
+            ) => {
+                black_box_spin(compress_clear as usize);
+                *prev = FakeMapOp::Clear {
+                    compress_set,
+                    compress_clear,
+                };
                 TryCompressResult::Compressed
             }
-            (FakeMapOp::Clear, next @ FakeMapOp::Set(_)) => TryCompressResult::Dependent(next),
+            (FakeMapOp::Clear { .. }, next @ FakeMapOp::Set { .. }) => {
+                TryCompressResult::Dependent(next)
+            }
         }
     }
 }
