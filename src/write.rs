@@ -3,12 +3,12 @@ use crate::Absorb;
 
 use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
 use std::collections::VecDeque;
+use std::fmt;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::ptr::NonNull;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
-use std::{fmt, thread};
 
 /// A writer handle to a left-right guarded data structure.
 ///
@@ -42,6 +42,9 @@ where
     second: bool,
     /// If we call `Self::take` the drop needs to be different.
     taken: bool,
+    /// This function will be used to yield the current execution instead of just spinning while
+    /// waiting for all readers to move on
+    yield_fn: fn(),
 }
 
 // safety: if a `WriteHandle` is sent across a thread boundary, we need to be able to take
@@ -213,6 +216,15 @@ where
     T: Absorb<O>,
 {
     pub(crate) fn new(w_handle: T, epochs: crate::Epochs, r_handle: ReadHandle<T>) -> Self {
+        Self::new_with_yield(w_handle, epochs, r_handle, std::thread::yield_now)
+    }
+
+    pub(crate) fn new_with_yield(
+        w_handle: T,
+        epochs: crate::Epochs,
+        r_handle: ReadHandle<T>,
+        yield_fn: fn(),
+    ) -> Self {
         Self {
             epochs,
             // safety: Box<T> is not null and covariant.
@@ -228,6 +240,7 @@ where
             first: true,
             second: true,
             taken: false,
+            yield_fn,
         }
     }
 
@@ -275,7 +288,7 @@ where
                         if iter != 20 {
                             iter += 1;
                         } else {
-                            thread::yield_now();
+                            (self.yield_fn)();
                         }
                     }
 

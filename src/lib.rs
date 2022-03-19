@@ -277,6 +277,18 @@ where
     (w, r)
 }
 
+/// TODO
+pub fn new_from_empty_with_yield<T, O>(t: T, yield_fn: fn()) -> (WriteHandle<T, O>, ReadHandle<T>)
+where
+    T: Absorb<O> + Clone,
+{
+    let epochs = Default::default();
+
+    let r = ReadHandle::new(t.clone(), Arc::clone(&epochs));
+    let w = WriteHandle::new_with_yield(t, epochs, r.clone(), yield_fn);
+    (w, r)
+}
+
 /// Construct a new write and read handle pair from the data structure default.
 ///
 /// The type must implement `Default` so we can construct two empty instances. You must ensure that
@@ -295,5 +307,17 @@ where
 
     let r = ReadHandle::new(T::default(), Arc::clone(&epochs));
     let w = WriteHandle::new(T::default(), epochs, r.clone());
+    (w, r)
+}
+
+/// TODO
+pub fn new_with_yield<T, O>(yield_fn: fn()) -> (WriteHandle<T, O>, ReadHandle<T>)
+where
+    T: Absorb<O> + Default,
+{
+    let epochs = Default::default();
+
+    let r = ReadHandle::new(T::default(), Arc::clone(&epochs));
+    let w = WriteHandle::new_with_yield(T::default(), epochs, r.clone(), yield_fn);
     (w, r)
 }
