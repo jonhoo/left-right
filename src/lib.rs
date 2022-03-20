@@ -263,21 +263,23 @@ pub trait Absorb<O> {
     fn sync_with(&mut self, first: &Self);
 }
 
-/// Construct a new write and read handle pair from an empty data structure.
+/// Construct a new write and read handle pair from an empty data structure with
+/// [yield_now](std::thread::yield_now) as the yield function.
 ///
-/// The type must implement `Clone` so we can construct the second copy from the first.
+/// See [new_from_empty_with_yield] for a more detailed explaination
 pub fn new_from_empty<T, O>(t: T) -> (WriteHandle<T, O>, ReadHandle<T>)
 where
     T: Absorb<O> + Clone,
 {
-    let epochs = Default::default();
-
-    let r = ReadHandle::new(t.clone(), Arc::clone(&epochs));
-    let w = WriteHandle::new(t, epochs, r.clone());
-    (w, r)
+    new_from_empty_with_yield(t, std::thread::yield_now)
 }
 
-/// TODO
+/// Construct a new write and read handle pair from an empty data structure.
+///
+/// The type must implement `Clone` so we can construct the second copy from the first.
+///
+/// The `yield_fn` will be called by the writer while its waiting for all the readers to move on
+/// after a refresh. This allows for more efficient waiting instead of simply spinning.
 pub fn new_from_empty_with_yield<T, O>(t: T, yield_fn: fn()) -> (WriteHandle<T, O>, ReadHandle<T>)
 where
     T: Absorb<O> + Clone,
@@ -287,6 +289,17 @@ where
     let r = ReadHandle::new(t.clone(), Arc::clone(&epochs));
     let w = WriteHandle::new_with_yield(t, epochs, r.clone(), yield_fn);
     (w, r)
+}
+
+/// Construct a new write and read handle pair from the data structure default, with
+/// [yield_now](std::thread::yield_now) as the yield function.
+///
+/// See [new_with_yield] for a more detailed explaination
+pub fn new<T, O>() -> (WriteHandle<T, O>, ReadHandle<T>)
+where
+    T: Absorb<O> + Default,
+{
+    new_with_yield(std::thread::yield_now)
 }
 
 /// Construct a new write and read handle pair from the data structure default.
@@ -299,18 +312,9 @@ where
 ///
 /// If your type's `Default` implementation does not guarantee this, you can use `new_from_empty`,
 /// which relies on `Clone` instead of `Default`.
-pub fn new<T, O>() -> (WriteHandle<T, O>, ReadHandle<T>)
-where
-    T: Absorb<O> + Default,
-{
-    let epochs = Default::default();
-
-    let r = ReadHandle::new(T::default(), Arc::clone(&epochs));
-    let w = WriteHandle::new(T::default(), epochs, r.clone());
-    (w, r)
-}
-
-/// TODO
+///
+/// The `yield_fn` will be called by the writer while its waiting for all the readers to move on
+/// after a refresh. This allows for more efficient waiting instead of simply spinning.
 pub fn new_with_yield<T, O>(yield_fn: fn()) -> (WriteHandle<T, O>, ReadHandle<T>)
 where
     T: Absorb<O> + Default,
