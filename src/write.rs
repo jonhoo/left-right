@@ -2,11 +2,11 @@ use crate::read::ReadHandle;
 use crate::Absorb;
 
 use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
-use std::collections::VecDeque;
-use std::fmt;
-use std::marker::PhantomData;
-use std::ops::DerefMut;
-use std::ptr::NonNull;
+use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::DerefMut;
+use core::ptr::NonNull;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
 
@@ -86,7 +86,7 @@ pub struct Taken<T: Absorb<O>, O> {
     _marker: PhantomData<O>,
 }
 
-impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for Taken<T, O> {
+impl<T: Absorb<O> + core::fmt::Debug, O> core::fmt::Debug for Taken<T, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Taken")
             .field(
@@ -148,7 +148,7 @@ where
     /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
     /// returns the other copy as a [`Taken`] smart pointer.
     fn take_inner(&mut self) -> Option<Taken<T, O>> {
-        use std::ptr;
+        use core::ptr;
         // Can only take inner once.
         if self.taken {
             return None;
@@ -215,10 +215,6 @@ impl<T, O> WriteHandle<T, O>
 where
     T: Absorb<O>,
 {
-    pub(crate) fn new(w_handle: T, epochs: crate::Epochs, r_handle: ReadHandle<T>) -> Self {
-        Self::new_with_yield(w_handle, epochs, r_handle, std::thread::yield_now)
-    }
-
     pub(crate) fn new_with_yield(
         w_handle: T,
         epochs: crate::Epochs,
@@ -422,7 +418,7 @@ where
     ///
     /// Its effects will not be exposed to readers until you call [`publish`](Self::publish).
     pub fn append(&mut self, op: O) -> &mut Self {
-        self.extend(std::iter::once(op));
+        self.extend(core::iter::once(op));
         self
     }
 
@@ -455,7 +451,7 @@ where
 }
 
 // allow using write handle for reads
-use std::ops::Deref;
+use core::ops::Deref;
 impl<T, O> Deref for WriteHandle<T, O>
 where
     T: Absorb<O>,

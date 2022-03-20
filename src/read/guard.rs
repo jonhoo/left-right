@@ -1,6 +1,6 @@
 use crate::sync::{AtomicUsize, Ordering};
-use std::cell::Cell;
-use std::mem;
+use core::cell::Cell;
+use core::mem;
 
 #[derive(Debug, Copy, Clone)]
 pub(super) struct ReadHandleState<'rh> {
@@ -107,7 +107,7 @@ impl<'rh, T: ?Sized> AsRef<T> for ReadGuard<'rh, T> {
     }
 }
 
-impl<'rh, T: ?Sized> std::ops::Deref for ReadGuard<'rh, T> {
+impl<'rh, T: ?Sized> core::ops::Deref for ReadGuard<'rh, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         self.t

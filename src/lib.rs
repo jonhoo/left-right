@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 //! A concurrency primitive for high concurrency reads over a single-writer data structure.
 //!
 //! The primitive keeps two copies of the backing data structure, one that is accessed by readers,
@@ -174,9 +175,13 @@
 )]
 #![allow(clippy::type_complexity)]
 
+// Needed for no_std support
+extern crate alloc;
+
 mod sync;
 
 use crate::sync::{Arc, AtomicUsize, Mutex};
+use alloc::boxed::Box;
 
 type Epochs = Arc<Mutex<slab::Slab<Arc<AtomicUsize>>>>;
 
@@ -267,6 +272,7 @@ pub trait Absorb<O> {
 /// [yield_now](std::thread::yield_now) as the yield function.
 ///
 /// See [new_from_empty_with_yield] for a more detailed explaination
+#[cfg(feature = "std")]
 pub fn new_from_empty<T, O>(t: T) -> (WriteHandle<T, O>, ReadHandle<T>)
 where
     T: Absorb<O> + Clone,
@@ -295,6 +301,7 @@ where
 /// [yield_now](std::thread::yield_now) as the yield function.
 ///
 /// See [new_with_yield] for a more detailed explaination
+#[cfg(feature = "std")]
 pub fn new<T, O>() -> (WriteHandle<T, O>, ReadHandle<T>)
 where
     T: Absorb<O> + Default,

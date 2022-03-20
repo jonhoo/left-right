@@ -1,8 +1,9 @@
 use crate::sync::{fence, Arc, AtomicPtr, AtomicUsize, Ordering};
-use std::cell::Cell;
-use std::fmt;
-use std::marker::PhantomData;
-use std::ptr::NonNull;
+use alloc::boxed::Box;
+use core::cell::Cell;
+use core::fmt;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 // To make [`WriteHandle`] and friends work.
 #[cfg(doc)]

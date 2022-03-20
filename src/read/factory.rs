@@ -1,6 +1,6 @@
 use super::ReadHandle;
 use crate::sync::{Arc, AtomicPtr};
-use std::fmt;
+use core::fmt;
 
 /// A type that is both `Sync` and `Send` and lets you produce new [`ReadHandle`] instances.
 ///
