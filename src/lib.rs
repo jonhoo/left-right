@@ -192,6 +192,8 @@ pub use crate::write::WriteHandle;
 mod read;
 pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};
 
+mod handle_list;
+
 pub mod aliasing;
 
 /// Types that can incorporate operations of type `O`.
