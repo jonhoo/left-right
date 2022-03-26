@@ -1,4 +1,3 @@
-#![cfg_attr(not(feature = "std"), no_std)]
 //! A concurrency primitive for high concurrency reads over a single-writer data structure.
 //!
 //! The primitive keeps two copies of the backing data structure, one that is accessed by readers,
@@ -167,6 +166,7 @@
 //! closure instead. Instead, consider using [`ReadGuard::map`] and [`ReadGuard::try_map`], which
 //! (like `RefCell`'s [`Ref::map`](std::cell::Ref::map)) allow you to provide a guarded reference
 //! deeper into your data structure.
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(
     missing_docs,
     rust_2018_idioms,
@@ -269,9 +269,9 @@ pub trait Absorb<O> {
 }
 
 /// Construct a new write and read handle pair from an empty data structure with
-/// [yield_now](std::thread::yield_now) as the yield function.
+/// [`yield_now`](std::thread::yield_now) as the yield function.
 ///
-/// See [new_from_empty_with_yield] for a more detailed explaination
+/// See [`new_from_empty_with_yield`] for a more detailed explanation
 #[cfg(feature = "std")]
 pub fn new_from_empty<T, O>(t: T) -> (WriteHandle<T, O>, ReadHandle<T>)
 where
@@ -298,9 +298,9 @@ where
 }
 
 /// Construct a new write and read handle pair from the data structure default, with
-/// [yield_now](std::thread::yield_now) as the yield function.
+/// [`yield_now`](std::thread::yield_now) as the yield function.
 ///
-/// See [new_with_yield] for a more detailed explaination
+/// See [`new_with_yield`] for a more detailed explanation.
 #[cfg(feature = "std")]
 pub fn new<T, O>() -> (WriteHandle<T, O>, ReadHandle<T>)
 where
