@@ -41,7 +41,6 @@ pub struct ReadHandle<T> {
     pub(crate) inner: Arc<AtomicPtr<T>>,
     pub(crate) epochs: crate::Epochs,
     epoch: Arc<AtomicUsize>,
-    epoch_i: usize,
     enters: Cell<usize>,
 
     // `ReadHandle` is _only_ Send if T is Sync. If T is !Sync, then it's not okay for us to expose
@@ -56,16 +55,23 @@ impl<T> Drop for ReadHandle<T> {
     fn drop(&mut self) {
         // epoch must already be even for us to have &mut self,
         // so okay to lock since we're not holding up the epoch anyway.
+
+        // TODO
+        // * Update Documentation and also
+        /*
         let e = self.epochs.lock().unwrap().remove(self.epoch_i);
         assert!(Arc::ptr_eq(&e, &self.epoch));
         assert_eq!(self.enters.get(), 0);
+        */
     }
 }
 
 impl<T> fmt::Debug for ReadHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadHandle")
-            .field("epochs", &self.epochs)
+            // TODO
+            // Figure out a Debug version for self.epochs
+            //.field("epochs", &self.epochs)
             .field("epoch", &self.epoch)
             .finish()
     }
@@ -85,15 +91,12 @@ impl<T> ReadHandle<T> {
     }
 
     fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: crate::Epochs) -> Self {
-        // tell writer about our epoch tracker
-        let epoch = Arc::new(AtomicUsize::new(0));
-        // okay to lock, since we're not holding up the epoch
-        let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
+        // Obtain a new Epoch-Entry
+        let epoch = epochs.new_entry();
 
         Self {
             epochs,
             epoch,
-            epoch_i,
             enters: Cell::new(0),
             inner,
             _unimpl_send: PhantomData,
