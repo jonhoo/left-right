@@ -1,4 +1,7 @@
 #[cfg(test)]
+use alloc::boxed::Box;
+
+#[cfg(test)]
 #[derive(Debug)]
 pub struct CounterAddOp(pub i32);
 
