@@ -53,25 +53,15 @@ unsafe impl<T> Send for ReadHandle<T> where T: Sync {}
 
 impl<T> Drop for ReadHandle<T> {
     fn drop(&mut self) {
-        // epoch must already be even for us to have &mut self,
-        // so okay to lock since we're not holding up the epoch anyway.
-
-        // TODO
-        // * Update Documentation and also
-        /*
-        let e = self.epochs.lock().unwrap().remove(self.epoch_i);
-        assert!(Arc::ptr_eq(&e, &self.epoch));
-        assert_eq!(self.enters.get(), 0);
-        */
+        // We dont need a Drop implementation as of now, because the Epoch for this Handle will not
+        // be freed again
     }
 }
 
 impl<T> fmt::Debug for ReadHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadHandle")
-            // TODO
-            // Figure out a Debug version for self.epochs
-            //.field("epochs", &self.epochs)
+            .field("epochs", &self.epochs)
             .field("epoch", &self.epoch)
             .finish()
     }

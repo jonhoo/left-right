@@ -1,3 +1,5 @@
+use core::fmt::{Debug, Formatter};
+
 use crate::sync::{Arc, AtomicPtr, AtomicUsize, Ordering};
 use alloc::boxed::Box;
 
@@ -44,8 +46,12 @@ impl HandleList {
     pub fn new_entry(&self) -> Arc<AtomicUsize> {
         let count = Arc::new(AtomicUsize::new(0));
 
+        self.add_counter(count.clone());
+        count
+    }
+    fn add_counter(&self, count: Arc<AtomicUsize>) {
         let n_node = Box::new(ListEntry {
-            data: count.clone(),
+            data: count,
             next: core::ptr::null(),
         });
         let n_node_ptr = Box::into_raw(n_node);
@@ -65,7 +71,7 @@ impl HandleList {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => return count,
+                Ok(_) => return,
                 Err(n_head) => {
                     // Store the found Head-Ptr to avoid an extra load at the start of every loop
                     current_head = n_head;
@@ -80,11 +86,28 @@ impl HandleList {
             head: self.head.load(Ordering::SeqCst),
         }
     }
+
+    /// Inserts the Items of the Iterator, but in reverse order
+    pub fn extend<I>(&self, iter: I)
+    where
+        I: IntoIterator<Item = Arc<AtomicUsize>>,
+    {
+        for item in iter.into_iter() {
+            self.add_counter(item);
+        }
+    }
 }
 
 impl Default for HandleList {
     fn default() -> Self {
         Self::new()
+    }
+}
+impl Debug for HandleList {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        // TODO
+        // Figure out how exactly we want the Debug output to look
+        write!(f, "HandleList")
     }
 }
 

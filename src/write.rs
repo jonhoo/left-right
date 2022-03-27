@@ -67,9 +67,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WriteHandle")
-            // TODO
-            // Figure out a way to implement Debug for Epochs
-            //.field("epochs", &self.epochs)
+            .field("epochs", &self.epochs)
             .field("w_handle", &self.w_handle)
             .field("oplog", &self.oplog)
             .field("swap_index", &self.swap_index)
@@ -318,12 +316,6 @@ where
         // we need to wait until all epochs have changed since the swaps *or* until a "finished"
         // flag has been observed to be on for two subsequent iterations (there still may be some
         // readers present since we did the previous refresh)
-        //
-        // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
-        // only block on pre-existing readers, and they are never waiting to push onto epochs
-        // unless they have finished reading.
-        //let epochs = Arc::clone(&self.epochs);
-        //let mut epochs = epochs.lock().unwrap();
 
         let epoch_snapshot = self.epochs.snapshot();
 
@@ -575,6 +567,7 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
+
     use crate::sync::{AtomicUsize, Ordering};
     use crate::Absorb;
     use slab::Slab;
@@ -636,8 +629,6 @@ mod tests {
         assert_eq!(*w.take(), 2);
     }
 
-    // TODO
-    /*
     #[test]
     fn wait_test() {
         use std::sync::{Arc, Barrier};
@@ -669,11 +660,15 @@ mod tests {
         assert_eq!(false, is_waiting_v);
 
         let barrier2 = Arc::clone(&barrier);
-        let test_epochs = Arc::new(Mutex::new(epochs_slab));
+        let test_epochs: crate::Epochs = Default::default();
+        // We need to reverse the iterator here because when using `extend` it inserts the Items in reverse
+        test_epochs.extend(epochs_slab.into_iter().map(|(_, tmp)| tmp).rev());
+        assert_eq!(3, test_epochs.snapshot().iter().count());
+
         let wait_handle = thread::spawn(move || {
             barrier2.wait();
-            let test_epochs = test_epochs.snapshot();
-            w.wait(&test_epochs);
+            let test_epochs_snapshot = test_epochs.snapshot();
+            w.wait(&test_epochs_snapshot);
         });
 
         barrier.wait();
@@ -689,7 +684,6 @@ mod tests {
         // of held_epoch.
         let _ = wait_handle.join();
     }
-    */
 
     #[test]
     fn flush_noblock() {

@@ -16,8 +16,7 @@ pub struct ReadHandleFactory<T> {
 impl<T> fmt::Debug for ReadHandleFactory<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadHandleFactory")
-            // TODO
-            //.field("epochs", &self.epochs)
+            .field("epochs", &self.epochs)
             .finish()
     }
 }
