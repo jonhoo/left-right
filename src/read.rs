@@ -69,7 +69,7 @@ impl<T> fmt::Debug for ReadHandle<T> {
 
 impl<T> Clone for ReadHandle<T> {
     fn clone(&self) -> Self {
-        ReadHandle::new_with_arc(Arc::clone(&self.inner), Arc::clone(&self.epochs))
+        ReadHandle::new_with_arc(Arc::clone(&self.inner), self.epochs.clone())
     }
 }
 
@@ -98,7 +98,7 @@ impl<T> ReadHandle<T> {
     pub fn factory(&self) -> ReadHandleFactory<T> {
         ReadHandleFactory {
             inner: Arc::clone(&self.inner),
-            epochs: Arc::clone(&self.epochs),
+            epochs: self.epochs.clone(),
         }
     }
 }

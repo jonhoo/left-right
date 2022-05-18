@@ -2,7 +2,9 @@ use crate::handle_list::ListSnapshot;
 use crate::read::ReadHandle;
 use crate::Absorb;
 
-use crate::sync::{fence, Arc, Ordering};
+#[cfg(test)]
+use crate::sync::Arc;
+use crate::sync::{fence, Ordering};
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use core::fmt;
 use core::marker::PhantomData;

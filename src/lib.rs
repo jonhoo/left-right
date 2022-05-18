@@ -180,10 +180,9 @@ extern crate alloc;
 
 mod sync;
 
-use crate::sync::Arc;
 use alloc::boxed::Box;
 
-type Epochs = Arc<handle_list::HandleList>;
+type Epochs = handle_list::HandleList;
 
 mod write;
 pub use crate::write::Taken;
@@ -292,9 +291,9 @@ pub fn new_from_empty_with_yield<T, O>(t: T, yield_fn: fn()) -> (WriteHandle<T, 
 where
     T: Absorb<O> + Clone,
 {
-    let epochs = Default::default();
+    let epochs: Epochs = Default::default();
 
-    let r = ReadHandle::new(t.clone(), Arc::clone(&epochs));
+    let r = ReadHandle::new(t.clone(), epochs.clone());
     let w = WriteHandle::new_with_yield(t, epochs, r.clone(), yield_fn);
     (w, r)
 }
@@ -328,9 +327,9 @@ pub fn new_with_yield<T, O>(yield_fn: fn()) -> (WriteHandle<T, O>, ReadHandle<T>
 where
     T: Absorb<O> + Default,
 {
-    let epochs = Default::default();
+    let epochs: Epochs = Default::default();
 
-    let r = ReadHandle::new(T::default(), Arc::clone(&epochs));
+    let r = ReadHandle::new(T::default(), epochs.clone());
     let w = WriteHandle::new_with_yield(T::default(), epochs, r.clone(), yield_fn);
     (w, r)
 }

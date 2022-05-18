@@ -9,6 +9,10 @@ use alloc::boxed::Box;
 
 /// A Lock-Free List of Handles
 pub struct HandleList {
+    inner: Arc<InnerList>,
+}
+
+struct InnerList {
     // The Head of the List
     head: AtomicPtr<ListEntry>,
 }
@@ -19,6 +23,9 @@ pub struct HandleList {
 pub struct ListSnapshot {
     // The Head-Ptr at the time of creation
     head: *const ListEntry,
+
+    // This entry exists to make sure that we keep the inner List alive and it wont be freed from under us
+    _list: Arc<InnerList>,
 }
 
 /// An Iterator over the Entries in a Snapshot
@@ -36,9 +43,11 @@ struct ListEntry {
 
 impl HandleList {
     /// Creates a new empty HandleList
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            head: AtomicPtr::new(core::ptr::null_mut()),
+            inner: Arc::new(InnerList {
+                head: AtomicPtr::new(core::ptr::null_mut()),
+            }),
         }
     }
 
@@ -56,7 +65,7 @@ impl HandleList {
         });
         let n_node_ptr = Box::into_raw(n_node);
 
-        let mut current_head = self.head.load(Ordering::SeqCst);
+        let mut current_head = self.inner.head.load(Ordering::SeqCst);
         loop {
             // Safety
             // This is save, because we have not stored the Ptr elsewhere so we have exclusive
@@ -65,7 +74,7 @@ impl HandleList {
             unsafe { (*n_node_ptr).next = current_head };
 
             // Attempt to add the Entry to the List by setting it as the new Head
-            match self.head.compare_exchange(
+            match self.inner.head.compare_exchange(
                 current_head,
                 n_node_ptr,
                 Ordering::SeqCst,
@@ -83,11 +92,13 @@ impl HandleList {
     /// Creates a new Snapshot of the List at this Point in Time
     pub fn snapshot(&self) -> ListSnapshot {
         ListSnapshot {
-            head: self.head.load(Ordering::SeqCst),
+            head: self.inner.head.load(Ordering::SeqCst),
+            _list: self.inner.clone(),
         }
     }
 
     /// Inserts the Items of the Iterator, but in reverse order
+    #[cfg(test)]
     pub fn extend<I>(&self, iter: I)
     where
         I: IntoIterator<Item = Arc<AtomicUsize>>,
@@ -108,6 +119,13 @@ impl Debug for HandleList {
         // TODO
         // Figure out how exactly we want the Debug output to look
         write!(f, "HandleList")
+    }
+}
+impl Clone for HandleList {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
     }
 }
 
@@ -138,6 +156,29 @@ impl Iterator for SnapshotIter {
         self.current = entry.next;
 
         Some(entry.data.clone())
+    }
+}
+
+impl Drop for InnerList {
+    fn drop(&mut self) {
+        // We iterate over all the Entries of the List and free every Entry of the List
+        let mut current = self.head.load(Ordering::SeqCst);
+        while !current.is_null() {
+            // # Safety
+            // This is safe, because we only enter the loop body if the Pointer is not null and we
+            // also know that the Entry is not yet freed because we only free them once we are dropped
+            // and because we are now in Drop, noone before us has freed any Entry on the List
+            let current_r = unsafe { &*current };
+
+            let next = current_r.next as *mut ListEntry;
+
+            // # Safety
+            // This is safe, because of the same garantuees detailed above for `current_r`
+            let entry = unsafe { Box::from_raw(current) };
+            drop(entry);
+
+            current = next;
+        }
     }
 }
 
