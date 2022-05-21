@@ -1,4 +1,7 @@
-use core::fmt::{Debug, Formatter};
+use core::{
+    fmt::{Debug, Formatter},
+    marker::PhantomData,
+};
 
 use crate::sync::{Arc, AtomicPtr, AtomicUsize, Ordering};
 use alloc::boxed::Box;
@@ -29,9 +32,10 @@ pub struct ListSnapshot {
 }
 
 /// An Iterator over the Entries in a Snapshot
-pub struct SnapshotIter {
+pub struct SnapshotIter<'s> {
     // A Pointer to the next Entry that will be yielded
     current: *const ListEntry,
+    _marker: PhantomData<&'s ()>,
 }
 
 struct ListEntry {
@@ -131,49 +135,57 @@ impl Clone for HandleList {
 
 impl ListSnapshot {
     /// Obtain an iterator over the Entries in this Snapshot
-    pub fn iter(&self) -> SnapshotIter {
-        SnapshotIter { current: self.head }
+    pub fn iter(&self) -> SnapshotIter<'_> {
+        SnapshotIter {
+            current: self.head,
+            _marker: PhantomData {},
+        }
     }
 }
 
-impl Iterator for SnapshotIter {
+impl<'s> Iterator for SnapshotIter<'s> {
     // TODO
     // Maybe don't return an owned Value here
-    type Item = Arc<AtomicUsize>;
+    type Item = &'s AtomicUsize;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current.is_null() {
             return None;
         }
 
-        // Safety
+        // # Safety
         // The Ptr is not null, because of the previous if-statement.
-        // The Data is also not freed, because we never free Entries on the List.
-        // We also have no one mutating Entries on the List and therefore we can access this without
-        // any extra synchronization needed.
+        //
+        // The Data is also not freed yet, because we know that at least one snapshot is still
+        // alive (because we bind to it through the lifetime) and as long as at least one
+        // snapshot exists, the InnerList will not be freed or dropped. This means that the entries
+        // in the List are also not yet freed and therefore its safe to still access them
         let entry = unsafe { &*self.current };
 
         self.current = entry.next;
 
-        Some(entry.data.clone())
+        Some(&entry.data)
     }
 }
 
 impl Drop for InnerList {
     fn drop(&mut self) {
         // We iterate over all the Entries of the List and free every Entry of the List
-        let mut current = self.head.load(Ordering::SeqCst);
+        let mut current = *self.head.get_mut();
         while !current.is_null() {
             // # Safety
             // This is safe, because we only enter the loop body if the Pointer is not null and we
             // also know that the Entry is not yet freed because we only free them once we are dropped
             // and because we are now in Drop, noone before us has freed any Entry on the List
-            let current_r = unsafe { &*current };
-
-            let next = current_r.next as *mut ListEntry;
+            let next = unsafe { &*current }.next as *mut ListEntry;
 
             // # Safety
-            // This is safe, because of the same garantuees detailed above for `current_r`
+            // 1. We know that the Pointer was allocated using Box::new
+            // 2. We are the only ones to convert it back into a Box again, because we only ever do
+            // this when the InnerList is dropped (now) and then also free all the Entries so there
+            // is no chance of one entry surviving or still being stored somewhere for later use.
+            // 3. There is also no other reference to the Element, because otherwise the InnerList
+            // could not be dropped and we would not be in this section
             let entry = unsafe { Box::from_raw(current) };
             drop(entry);
 
