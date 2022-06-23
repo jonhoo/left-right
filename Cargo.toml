@@ -15,4 +15,4 @@ categories = ["concurrency"]
 slab = "0.4"
 
 [target.'cfg(loom)'.dependencies]
-loom = "0.4.0"
+loom = "0.5.6"
