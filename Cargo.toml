@@ -12,7 +12,7 @@ keywords = ["concurrency","lock-free"]
 categories = ["concurrency"]
 
 [dependencies]
-slab = "0.4"
+slab = "0.4.1"
 
 [target.'cfg(loom)'.dependencies]
 loom = "0.5.6"
