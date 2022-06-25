@@ -1,4 +1,4 @@
-[![Codecov](https://codecov.io/github/jonhoo/left-right/coverage.svg?branch=master)](https://codecov.io/gh/jonhoo/left-right)
+[![Codecov](https://codecov.io/github/jonhoo/left-right/coverage.svg?branch=main)](https://codecov.io/gh/jonhoo/left-right)
 [![Crates.io](https://img.shields.io/crates/v/left-right.svg)](https://crates.io/crates/left-right)
 [![Documentation](https://docs.rs/left-right/badge.svg)](https://docs.rs/left-right/)
 
