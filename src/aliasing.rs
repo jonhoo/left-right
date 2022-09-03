@@ -89,7 +89,7 @@
 //! &mut DataStructure<Aliased<T, D2>>
 //! ```
 //!
-//! That cast is unsafe, and rightly so! While it is _likely that the cast is safe, that is far
+//! That cast is unsafe, and rightly so! While it is _likely_ that the cast is safe, that is far
 //! from obvious, and it's worth spending some time on why, since it has implications for how you
 //! use `Aliased` in your own crate.
 //!
@@ -113,7 +113,7 @@
 //! wrapper around one type and that same wrapper around a different type with the same layout! You
 //! can see this discussed in far more detail here if you're curious:
 //!
-//!   https://github.com/jonhoo/rust-evmap/pull/83#issuecomment-735504638
+//! <https://github.com/jonhoo/rust-evmap/pull/83#issuecomment-735504638>
 //!
 //! Now, if we can find a way to _guarantee_ that the types have the same layout, this problem
 //! changes, but how might we go about this? Our saving grace is that we are casting between
