@@ -1,0 +1,19 @@
+on:
+  push:
+    branches: [master]
+  pull_request:
+name: Minimum Supported Rust Version
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: 1.48.0 # nom 7
+          override: true
+      - uses: actions/checkout@v2
+      - name: cargo +1.48.0 check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
