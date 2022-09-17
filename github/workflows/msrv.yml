@@ -13,6 +13,8 @@ jobs:
           toolchain: 1.56.1 # 2021 edition requires 1.56
           override: true
       - uses: actions/checkout@v2
+        with:
+          submodules: true
       - name: cargo +1.56.1 check
         uses: actions-rs/cargo@v1
         with:
