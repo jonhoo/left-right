@@ -15,11 +15,7 @@ jobs:
         with:
           submodules: true
       - name: Install cargo-hack
-        uses: actions-rs/install@v0.1
-        with:
-          crate: cargo-hack
-          version: latest
-          use-tool-cache: true
+        uses: taiki-e/install-action@cargo-hack
       - name: cargo hack
         uses: actions-rs/cargo@v1
         with:
