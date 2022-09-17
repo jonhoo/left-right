@@ -1,0 +1,22 @@
+on:
+  push:
+    branches: [main]
+  pull_request:
+name: Loom
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+      - uses: actions/checkout@v2
+      - name: cargo test --test loom
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --release --test loom
+        env:
+          LOOM_MAX_PREEMPTIONS: 2
+          RUSTFLAGS: "--cfg loom"
