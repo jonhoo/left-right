@@ -17,7 +17,7 @@ jobs:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           submodules: true
       - name: cargo fmt --check
@@ -37,7 +37,7 @@ jobs:
         with:
           profile: minimal
           toolchain: nightly
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: cargo doc
         uses: actions-rs/cargo@v1
         with:
