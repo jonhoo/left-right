@@ -24,4 +24,4 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: hack
-          args: --feature-powerset --exclude-no-default-features check
+          args: --feature-powerset check
