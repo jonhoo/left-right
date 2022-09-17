@@ -10,10 +10,10 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: 1.56.0 # 2021 edition requires 1.56
+          toolchain: 1.56.1 # 2021 edition requires 1.56
           override: true
       - uses: actions/checkout@v2
-      - name: cargo +1.56.0 check
+      - name: cargo +1.56.1 check
         uses: actions-rs/cargo@v1
         with:
           command: check
