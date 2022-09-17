@@ -5,24 +5,17 @@ on:
 name: cargo test
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os }} / ${{ matrix.toolchain }}
+    runs-on: ubuntu-latest
+    name: ubuntu / ${{ matrix.toolchain }}
     strategy:
-      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        toolchain: [stable]
-        include:
-          - os: ubuntu-latest
-            toolchain: beta
-          - os: ubuntu-latest
-            toolchain: nightly
+        toolchain: [stable, beta, nightly]
     steps:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: ${{ matrix.toolchain }}
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           submodules: true
       - name: cargo test
