@@ -1,0 +1,36 @@
+on:
+  push:
+    branches: [main]
+  pull_request:
+name: lint
+jobs:
+  style:
+    runs-on: ubuntu-latest
+    name: ${{ matrix.toolchain }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta]
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+      - uses: actions/checkout@v2
+      - name: cargo fmt --check
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --check
+      - name: cargo doc
+        uses: actions-rs/cargo@v1
+        if: always()
+        with:
+          command: doc
+          args: --no-deps --all-features
+      - name: cargo clippy
+        uses: actions-rs/clippy-check@v1
+        if: always()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
