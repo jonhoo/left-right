@@ -23,14 +23,24 @@ jobs:
         with:
           command: fmt
           args: --check
-      - name: cargo doc
-        uses: actions-rs/cargo@v1
-        if: always()
-        with:
-          command: doc
-          args: --no-deps --all-features
       - name: cargo clippy
         uses: actions-rs/clippy-check@v1
         if: always()
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+  doc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+      - uses: actions/checkout@v2
+      - name: cargo doc
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: nightly
+          command: doc
+          args: --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: --cfg docsrs
