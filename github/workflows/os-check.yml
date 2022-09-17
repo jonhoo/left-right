@@ -1,0 +1,24 @@
+on:
+  push:
+    branches: [master]
+  pull_request:
+name: cargo check
+jobs:
+  os-check:
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+      - uses: actions/checkout@v2
+      - name: cargo check
+        uses: actions-rs/cargo@v1
+        with:
+          command: check
+          args: --all-features --all-targets
