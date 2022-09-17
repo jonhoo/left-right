@@ -18,6 +18,8 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
       - uses: actions/checkout@v2
+        with:
+          submodules: true
       - name: cargo fmt --check
         uses: actions-rs/cargo@v1
         with:
