@@ -82,7 +82,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: hack
-          args: --feature-powerset check --all-targets
+          args: --feature-powerset check --lib --tests
   msrv:
     runs-on: ubuntu-latest
     # we use a matrix here just because env can't be used in job names
