@@ -4,7 +4,7 @@ on:
   pull_request:
   schedule:
     - cron:  '7 7 * * *'
-name: cargo test (rolling)
+name: rolling
 jobs:
   # https://twitter.com/mycoliza/status/1571295690063753218
   nightly:
