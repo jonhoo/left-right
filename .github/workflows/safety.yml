@@ -82,5 +82,5 @@ jobs:
           command: test
           args: --release --test loom
         env:
-          LOOM_MAX_PREEMPTIONS: 2
+          LOOM_MAX_PREEMPTIONS: 3
           RUSTFLAGS: "--cfg loom"
