@@ -5,9 +5,9 @@ updates:
     schedule:
       interval: daily
     ignore:
-      dependency-name: "*"
-      # patch and minor updates don't matter for libraries
-      # remove this ignore rule if your package has binaries
-      update-types:
-        - "version-update:semver-patch"
-        - "version-update:semver-minor"
+      - dependency-name: "*"
+        # patch and minor updates don't matter for libraries
+        # remove this ignore rule if your package has binaries
+        update-types:
+          - "version-update:semver-patch"
+          - "version-update:semver-minor"
