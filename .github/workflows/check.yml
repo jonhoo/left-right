@@ -12,10 +12,8 @@ jobs:
         with:
           submodules: true
       - name: Install stable
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
           components: rustfmt
       - name: cargo fmt --check
         uses: actions-rs/cargo@v1
@@ -34,11 +32,9 @@ jobs:
         with:
           submodules: true
       - name: Install ${{ matrix.toolchain }}
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.toolchain }}
-          default: true
           components: clippy
       - name: cargo clippy
         uses: actions-rs/clippy-check@v1
@@ -52,11 +48,7 @@ jobs:
         with:
           submodules: true
       - name: Install nightly
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          default: true
+        uses: dtolnay/rust-toolchain@nightly
       - name: cargo doc
         uses: actions-rs/cargo@v1
         with:
@@ -72,10 +64,7 @@ jobs:
         with:
           submodules: true
       - name: Install stable
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - name: cargo hack
@@ -96,11 +85,9 @@ jobs:
         with:
           submodules: true
       - name: Install ${{ matrix.toolchain }}
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.msrv }}
-          default: true
       - name: cargo +${{ matrix.msrv }} check
         uses: actions-rs/cargo@v1
         with:

@@ -15,11 +15,7 @@ jobs:
         with:
           submodules: true
       - name: Install nightly
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          default: true
+        uses: dtolnay/rust-toolchain@nightly
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
         uses: actions-rs/cargo@v1
@@ -44,11 +40,7 @@ jobs:
           submodules: true
       - name: Install beta
         if: hashFiles('Cargo.lock') != ''
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: beta
-          default: true
+        uses: dtolnay/rust-toolchain@beta
       - name: cargo update
         if: hashFiles('Cargo.lock') != ''
         uses: actions-rs/cargo@v1

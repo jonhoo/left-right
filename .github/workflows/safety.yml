@@ -11,11 +11,7 @@ jobs:
         with:
           submodules: true
       - name: Install nightly
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          default: true
+        uses: dtolnay/rust-toolchain@nightly
       - run: |
             # to get the symbolizer for debug symbol resolution
             sudo apt install llvm
@@ -52,11 +48,9 @@ jobs:
       - run: |
           echo "NIGHTLY=nightly-$(curl -s https://rust-lang.github.io/rustup-components-history/x86_64-unknown-linux-gnu/miri)" >> $GITHUB_ENV
       - name: Install ${{ env.NIGHTLY }}
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ env.NIGHTLY }}
-          default: true
           components: miri
       - name: cargo miri test
         uses: actions-rs/cargo@v1
@@ -72,10 +66,7 @@ jobs:
         with:
           submodules: true
       - name: Install stable
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
+        uses: dtolnay/rust-toolchain@stable
       - name: cargo test --test loom
         uses: actions-rs/cargo@v1
         with:
