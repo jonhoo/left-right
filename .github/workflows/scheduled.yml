@@ -18,14 +18,9 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
-        uses: actions-rs/cargo@v1
-        with:
-          command: generate-lockfile
+        run: cargo generate-lockfile
       - name: cargo test --locked
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --locked --all-features --all-targets
+        run: cargo test --locked --all-features --all-targets
   # https://twitter.com/alcuadrado/status/1571291687837732873
   update:
     runs-on: ubuntu-latest
@@ -43,14 +38,9 @@ jobs:
         uses: dtolnay/rust-toolchain@beta
       - name: cargo update
         if: hashFiles('Cargo.lock') != ''
-        uses: actions-rs/cargo@v1
-        with:
-          command: update
+        run: cargo update
       - name: cargo test
         if: hashFiles('Cargo.lock') != ''
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --locked --all-features --all-targets
+        run: cargo test --locked --all-features --all-targets
         env:
           RUSTFLAGS: -D deprecated

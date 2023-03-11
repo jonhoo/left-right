@@ -20,15 +20,10 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
-        uses: actions-rs/cargo@v1
-        with:
-          command: generate-lockfile
+        run: cargo generate-lockfile
       # https://twitter.com/jonhoo/status/1571290371124260865
       - name: cargo test --locked
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --locked --all-features --all-targets
+        run: cargo test --locked --all-features --all-targets
   minimal:
     runs-on: ubuntu-latest
     name: ubuntu / stable / minimal-versions
@@ -43,16 +38,9 @@ jobs:
       - name: rustup default stable
         run: rustup default stable
       - name: cargo update -Zminimal-versions
-        uses: actions-rs/cargo@v1
-        with:
-          command: update
-          toolchain: nightly
-          args: -Zminimal-versions
+        run: cargo +nightly update -Zminimal-versions
       - name: cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --locked --all-features --all-targets
+        run: cargo test --locked --all-features --all-targets
   os-check:
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} / stable
@@ -68,14 +56,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
-        uses: actions-rs/cargo@v1
-        with:
-          command: generate-lockfile
+        run: cargo generate-lockfile
       - name: cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --locked --all-features --all-targets
+        run: cargo test --locked --all-features --all-targets
   coverage:
     runs-on: ubuntu-latest
     name: ubuntu / stable / coverage
@@ -91,9 +74,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: cargo generate-lockfile
         if: hashFiles('Cargo.lock') == ''
-        uses: actions-rs/cargo@v1
-        with:
-          command: generate-lockfile
+        run: cargo generate-lockfile
       - name: cargo llvm-cov
         run: cargo llvm-cov --locked --all-features --lcov --output-path lcov.info
       - name: Upload to codecov.io
