@@ -51,7 +51,7 @@ jobs:
       - name: cargo miri test
         run: cargo miri test
         env:
-          MIRIFLAGS: "-Zmiri-tag-raw-pointers"
+          MIRIFLAGS: ""
   loom:
     runs-on: ubuntu-latest
     steps:
