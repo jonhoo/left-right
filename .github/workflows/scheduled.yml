@@ -6,6 +6,10 @@ on:
   pull_request:
   schedule:
     - cron:  '7 7 * * *'
+# Spend CI time only on latest ref: https://github.com/jonhoo/rust-ci-conf/pull/5
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 name: rolling
 jobs:
   # https://twitter.com/mycoliza/status/1571295690063753218
