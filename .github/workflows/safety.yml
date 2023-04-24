@@ -23,8 +23,15 @@ jobs:
             sudo apt install llvm
             # to fix buggy leak analyzer:
             # https://github.com/japaric/rust-san#unrealiable-leaksanitizer
-            sed -i '/\[features\]/i [profile.dev]' Cargo.toml
-            sed -i '/profile.dev/a opt-level = 1' Cargo.toml
+            # ensure there's a profile.dev section
+            if ! grep -qE '^[ \t]*[profile.dev]' Cargo.toml; then
+                echo >> Cargo.toml
+                echo '[profile.dev]' >> Cargo.toml
+            fi
+            # remove pre-existing opt-levels in profile.dev
+            sed -i '/^\s*\[profile.dev\]/,/^\s*\[/ {/^\s*opt-level/d}' Cargo.toml
+            # now set opt-level to 1
+            sed -i '/^\s*\[profile.dev\]/a opt-level = 1' Cargo.toml
             cat Cargo.toml
         name: Enable debug symbols
       - name: cargo test -Zsanitizer=address
