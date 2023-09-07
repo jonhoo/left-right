@@ -40,6 +40,8 @@ pub struct SnapshotIter<'s> {
 
 struct ListEntry {
     data: Arc<AtomicUsize>,
+    // Stores the number of following entries in the list
+    followers: usize,
     // We can use a normal Ptr here because we never append or remove Entries and only add new Entries
     // by changing the Head, so we never modify this Ptr and therefore dont need an AtomicPtr
     next: *const Self,
@@ -62,9 +64,12 @@ impl HandleList {
         self.add_counter(count.clone());
         count
     }
+
+    /// Adds a new Counter to the List of Entries, increasing the size of the List
     fn add_counter(&self, count: Arc<AtomicUsize>) {
         let n_node = Box::new(ListEntry {
             data: count,
+            followers: 0,
             next: core::ptr::null(),
         });
         let n_node_ptr = Box::into_raw(n_node);
@@ -76,6 +81,15 @@ impl HandleList {
             // access.
             // The Ptr is also still valid, because we never free Entries on the List
             unsafe { (*n_node_ptr).next = current_head };
+
+            // Update the follower count of the new entry
+            if !current_head.is_null() {
+                // Safety
+                // This is save, because we know the Ptr is not null and we know that
+                // Entries will never be deallocated, so the ptr still refers to a valid
+                // entry.
+                unsafe { (*n_node_ptr).followers = (*current_head).followers + 1 };
+            }
 
             // Attempt to add the Entry to the List by setting it as the new Head
             match self.inner.head.compare_exchange(
@@ -140,6 +154,15 @@ impl ListSnapshot {
             current: self.head,
             _marker: PhantomData {},
         }
+    }
+
+    /// Get the Length of the current List of entries
+    pub fn len(&self) -> usize {
+        if self.head.is_null() {
+            return 0;
+        }
+
+        unsafe { (*self.head).followers + 1 }
     }
 }
 

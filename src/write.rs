@@ -250,7 +250,8 @@ where
         }
 
         // make sure we have enough space for all the epochs in the current snapshot
-        self.last_epochs.resize(epochs.iter().count(), 0);
+        self.last_epochs.resize(epochs.len(), 0);
+
         'retry: loop {
             // read all and see if all have changed (which is likely)
             for (ii, (ri, epoch)) in epochs.iter().enumerate().enumerate().skip(starti) {
