@@ -1,6 +1,7 @@
 use core::{
     fmt::{Debug, Formatter},
     marker::PhantomData,
+    sync::atomic::AtomicBool,
 };
 
 use crate::sync::{Arc, AtomicPtr, AtomicUsize, Ordering};
@@ -40,11 +41,19 @@ pub struct SnapshotIter<'s> {
 
 struct ListEntry {
     data: Arc<AtomicUsize>,
+    used: AtomicBool,
     // Stores the number of following entries in the list
     followers: usize,
     // We can use a normal Ptr here because we never append or remove Entries and only add new Entries
     // by changing the Head, so we never modify this Ptr and therefore dont need an AtomicPtr
     next: *const Self,
+}
+
+/// The EntryHandle is needed to allow for reuse of entries, after a handle is dropped
+#[derive(Debug)]
+pub struct EntryHandle {
+    counter: Arc<AtomicUsize>,
+    elem: *const ListEntry,
 }
 
 impl HandleList {
@@ -57,18 +66,67 @@ impl HandleList {
         }
     }
 
+    fn len(&self) -> usize {
+        let head = self.inner.head.load(Ordering::SeqCst);
+        if head.is_null() {
+            return 0;
+        }
+
+        // Safety
+        // The prt is not null and as entries are never deallocated, so the ptr should always be
+        // valid
+        unsafe { (*head).followers + 1 }
+    }
+
+    /// Obtains a new Entry
+    pub fn get_entry(&self) -> EntryHandle {
+        if let Some(entry) = self.try_acquire() {
+            return entry;
+        }
+
+        self.new_entry()
+    }
+
+    fn try_acquire(&self) -> Option<EntryHandle> {
+        let mut current: *const ListEntry = self.inner.head.load(Ordering::SeqCst);
+        while !current.is_null() {
+            // Safety
+            // The ptr is not null and entries are never deallocated
+            let current_entry = unsafe { &*current };
+
+            if !current_entry.used.load(Ordering::SeqCst) {
+                if current_entry
+                    .used
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    return Some(EntryHandle {
+                        counter: current_entry.data.clone(),
+                        elem: current,
+                    });
+                }
+            }
+
+            current = current_entry.next;
+        }
+
+        None
+    }
+
     /// Adds a new Entry to the List and returns the Counter for the Entry
-    pub fn new_entry(&self) -> Arc<AtomicUsize> {
+    fn new_entry(&self) -> EntryHandle {
         let count = Arc::new(AtomicUsize::new(0));
 
-        self.add_counter(count.clone());
-        count
+        self.add_counter(count)
     }
 
     /// Adds a new Counter to the List of Entries, increasing the size of the List
-    fn add_counter(&self, count: Arc<AtomicUsize>) {
+    fn add_counter(&self, count: Arc<AtomicUsize>) -> EntryHandle {
+        let counter = count.clone();
+
         let n_node = Box::new(ListEntry {
             data: count,
+            used: AtomicBool::new(true),
             followers: 0,
             next: core::ptr::null(),
         });
@@ -98,7 +156,12 @@ impl HandleList {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             ) {
-                Ok(_) => return,
+                Ok(_) => {
+                    return EntryHandle {
+                        counter,
+                        elem: n_node_ptr,
+                    }
+                }
                 Err(n_head) => {
                     // Store the found Head-Ptr to avoid an extra load at the start of every loop
                     current_head = n_head;
@@ -217,6 +280,18 @@ impl Drop for InnerList {
     }
 }
 
+impl EntryHandle {
+    pub fn counter(&self) -> &AtomicUsize {
+        &self.counter
+    }
+}
+impl Drop for EntryHandle {
+    fn drop(&mut self) {
+        let elem = unsafe { &*self.elem };
+        elem.used.store(false, Ordering::SeqCst);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,7 +320,7 @@ mod tests {
         assert_eq!(0, empty_snapshot.iter().count());
 
         let entry = list.new_entry();
-        entry.store(1, Ordering::SeqCst);
+        entry.counter().store(1, Ordering::SeqCst);
 
         // Make sure that the Snapshot we got before adding a new Entry is still empty
         assert_eq!(0, empty_snapshot.iter().count());
@@ -255,8 +330,22 @@ mod tests {
 
         let snapshot_entry = second_snapshot.iter().next().unwrap();
         assert_eq!(
-            entry.load(Ordering::SeqCst),
+            entry.counter().load(Ordering::SeqCst),
             snapshot_entry.load(Ordering::SeqCst)
         );
+    }
+
+    #[test]
+    fn entry_reuse() {
+        let list = HandleList::new();
+
+        assert_eq!(0, list.len());
+
+        let entry1 = list.get_entry();
+        assert_eq!(1, list.len());
+        drop(entry1);
+
+        let entry2 = list.get_entry();
+        assert_eq!(1, list.len());
     }
 }

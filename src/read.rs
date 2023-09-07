@@ -40,7 +40,8 @@ pub use factory::ReadHandleFactory;
 pub struct ReadHandle<T> {
     pub(crate) inner: Arc<AtomicPtr<T>>,
     pub(crate) epochs: crate::Epochs,
-    epoch: Arc<AtomicUsize>,
+    // epoch: Arc<AtomicUsize>,
+    epoch: crate::handle_list::EntryHandle,
     enters: Cell<usize>,
 
     // `ReadHandle` is _only_ Send if T is Sync. If T is !Sync, then it's not okay for us to expose
@@ -62,7 +63,7 @@ impl<T> fmt::Debug for ReadHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadHandle")
             .field("epochs", &self.epochs)
-            .field("epoch", &self.epoch)
+            .field("epoch", &self.epoch.counter())
             .finish()
     }
 }
@@ -82,7 +83,7 @@ impl<T> ReadHandle<T> {
 
     fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: crate::Epochs) -> Self {
         // Obtain a new Epoch-Entry
-        let epoch = epochs.new_entry();
+        let epoch = epochs.get_entry();
 
         Self {
             epochs,
@@ -159,7 +160,7 @@ impl<T> ReadHandle<T> {
         // in all cases, using a pointer we read *after* updating our epoch is safe.
 
         // so, update our epoch tracker.
-        self.epoch.fetch_add(1, Ordering::AcqRel);
+        self.epoch.counter().fetch_add(1, Ordering::AcqRel);
 
         // ensure that the pointer read happens strictly after updating the epoch
         fence(Ordering::SeqCst);
@@ -181,7 +182,7 @@ impl<T> ReadHandle<T> {
         } else {
             // the writehandle has been dropped, and so has both copies,
             // so restore parity and return None
-            self.epoch.fetch_add(1, Ordering::AcqRel);
+            self.epoch.counter().fetch_add(1, Ordering::AcqRel);
             None
         }
     }
