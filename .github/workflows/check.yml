@@ -1,14 +1,20 @@
+permissions:
+  contents: read
 on:
   push:
     branches: [main]
   pull_request:
+# Spend CI time only on latest ref: https://github.com/jonhoo/rust-ci-conf/pull/5
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 name: check
 jobs:
   fmt:
     runs-on: ubuntu-latest
     name: stable / fmt
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install stable
@@ -16,19 +22,19 @@ jobs:
         with:
           components: rustfmt
       - name: cargo fmt --check
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --check
+        run: cargo fmt --check
   clippy:
     runs-on: ubuntu-latest
     name: ${{ matrix.toolchain }} / clippy
+    permissions:
+      contents: read
+      checks: write
     strategy:
       fail-fast: false
       matrix:
         toolchain: [stable, beta]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install ${{ matrix.toolchain }}
@@ -44,44 +50,39 @@ jobs:
     runs-on: ubuntu-latest
     name: nightly / doc
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: cargo doc
-        uses: actions-rs/cargo@v1
-        with:
-          command: doc
-          args: --no-deps --all-features
+        run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: --cfg docsrs
   hack:
     runs-on: ubuntu-latest
     name: ubuntu / stable / features
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
+      # intentionally no target specifier; see https://github.com/jonhoo/rust-ci-conf/pull/4
       - name: cargo hack
-        uses: actions-rs/cargo@v1
-        with:
-          command: hack
-          args: --feature-powerset check --lib --tests
+        run: cargo hack --feature-powerset check
   msrv:
     runs-on: ubuntu-latest
     # we use a matrix here just because env can't be used in job names
     # https://docs.github.com/en/actions/learn-github-actions/contexts#context-availability
     strategy:
       matrix:
-        msrv: [1.40.0]
+        msrv: ["1.40.0"]
     name: ubuntu / ${{ matrix.msrv }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install ${{ matrix.msrv }}
@@ -89,6 +90,4 @@ jobs:
         with:
           toolchain: ${{ matrix.msrv }}
       - name: cargo +${{ matrix.msrv }} check
-        uses: actions-rs/cargo@v1
-        with:
-          command: check
+        run: cargo check
