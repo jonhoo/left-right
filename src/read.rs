@@ -1,8 +1,9 @@
 use crate::sync::{fence, Arc, AtomicPtr, AtomicUsize, Ordering};
-use std::cell::Cell;
-use std::fmt;
-use std::marker::PhantomData;
-use std::ptr::NonNull;
+use alloc::boxed::Box;
+use core::cell::Cell;
+use core::fmt;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 // To make [`WriteHandle`] and friends work.
 #[cfg(doc)]
@@ -39,8 +40,8 @@ pub use factory::ReadHandleFactory;
 pub struct ReadHandle<T> {
     pub(crate) inner: Arc<AtomicPtr<T>>,
     pub(crate) epochs: crate::Epochs,
-    epoch: Arc<AtomicUsize>,
-    epoch_i: usize,
+    // epoch: Arc<AtomicUsize>,
+    epoch: crate::handle_list::EntryHandle,
     enters: Cell<usize>,
 
     // `ReadHandle` is _only_ Send if T is Sync. If T is !Sync, then it's not okay for us to expose
@@ -53,11 +54,8 @@ unsafe impl<T> Send for ReadHandle<T> where T: Sync {}
 
 impl<T> Drop for ReadHandle<T> {
     fn drop(&mut self) {
-        // epoch must already be even for us to have &mut self,
-        // so okay to lock since we're not holding up the epoch anyway.
-        let e = self.epochs.lock().unwrap().remove(self.epoch_i);
-        assert!(Arc::ptr_eq(&e, &self.epoch));
-        assert_eq!(self.enters.get(), 0);
+        // We dont need a Drop implementation as of now, because the Epoch for this Handle will not
+        // be freed again
     }
 }
 
@@ -65,14 +63,14 @@ impl<T> fmt::Debug for ReadHandle<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadHandle")
             .field("epochs", &self.epochs)
-            .field("epoch", &self.epoch)
+            .field("epoch", &self.epoch.counter())
             .finish()
     }
 }
 
 impl<T> Clone for ReadHandle<T> {
     fn clone(&self) -> Self {
-        ReadHandle::new_with_arc(Arc::clone(&self.inner), Arc::clone(&self.epochs))
+        ReadHandle::new_with_arc(Arc::clone(&self.inner), self.epochs.clone())
     }
 }
 
@@ -84,15 +82,12 @@ impl<T> ReadHandle<T> {
     }
 
     fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: crate::Epochs) -> Self {
-        // tell writer about our epoch tracker
-        let epoch = Arc::new(AtomicUsize::new(0));
-        // okay to lock, since we're not holding up the epoch
-        let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
+        // Obtain a new Epoch-Entry
+        let epoch = epochs.get_entry();
 
         Self {
             epochs,
             epoch,
-            epoch_i,
             enters: Cell::new(0),
             inner,
             _unimpl_send: PhantomData,
@@ -104,7 +99,7 @@ impl<T> ReadHandle<T> {
     pub fn factory(&self) -> ReadHandleFactory<T> {
         ReadHandleFactory {
             inner: Arc::clone(&self.inner),
-            epochs: Arc::clone(&self.epochs),
+            epochs: self.epochs.clone(),
         }
     }
 }
@@ -165,7 +160,7 @@ impl<T> ReadHandle<T> {
         // in all cases, using a pointer we read *after* updating our epoch is safe.
 
         // so, update our epoch tracker.
-        self.epoch.fetch_add(1, Ordering::AcqRel);
+        self.epoch.counter().fetch_add(1, Ordering::AcqRel);
 
         // ensure that the pointer read happens strictly after updating the epoch
         fence(Ordering::SeqCst);
@@ -187,7 +182,7 @@ impl<T> ReadHandle<T> {
         } else {
             // the writehandle has been dropped, and so has both copies,
             // so restore parity and return None
-            self.epoch.fetch_add(1, Ordering::AcqRel);
+            self.epoch.counter().fetch_add(1, Ordering::AcqRel);
             None
         }
     }

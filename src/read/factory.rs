@@ -1,6 +1,6 @@
 use super::ReadHandle;
 use crate::sync::{Arc, AtomicPtr};
-use std::fmt;
+use core::fmt;
 
 /// A type that is both `Sync` and `Send` and lets you produce new [`ReadHandle`] instances.
 ///
@@ -25,7 +25,7 @@ impl<T> Clone for ReadHandleFactory<T> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
-            epochs: Arc::clone(&self.epochs),
+            epochs: self.epochs.clone(),
         }
     }
 }
@@ -34,6 +34,6 @@ impl<T> ReadHandleFactory<T> {
     /// Produce a new [`ReadHandle`] to the same left-right data structure as this factory was
     /// originally produced from.
     pub fn handle(&self) -> ReadHandle<T> {
-        ReadHandle::new_with_arc(Arc::clone(&self.inner), Arc::clone(&self.epochs))
+        ReadHandle::new_with_arc(Arc::clone(&self.inner), self.epochs.clone())
     }
 }

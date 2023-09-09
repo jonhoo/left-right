@@ -1,14 +1,15 @@
+use crate::handle_list::ListSnapshot;
 use crate::read::ReadHandle;
 use crate::Absorb;
 
-use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
-use std::collections::VecDeque;
-use std::marker::PhantomData;
-use std::ops::DerefMut;
-use std::ptr::NonNull;
+use crate::sync::{fence, Arc, Ordering};
+use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
+use core::fmt;
+use core::marker::PhantomData;
+use core::ops::DerefMut;
+use core::ptr::NonNull;
 #[cfg(test)]
-use std::sync::atomic::AtomicBool;
-use std::{fmt, thread};
+use core::sync::atomic::AtomicBool;
 
 /// A writer handle to a left-right guarded data structure.
 ///
@@ -42,6 +43,9 @@ where
     second: bool,
     /// If we call `Self::take` the drop needs to be different.
     taken: bool,
+    /// This function will be used to yield the current execution instead of just spinning while
+    /// waiting for all readers to move on
+    yield_fn: fn(),
 }
 
 // safety: if a `WriteHandle` is sent across a thread boundary, we need to be able to take
@@ -83,7 +87,7 @@ pub struct Taken<T: Absorb<O>, O> {
     _marker: PhantomData<O>,
 }
 
-impl<T: Absorb<O> + std::fmt::Debug, O> std::fmt::Debug for Taken<T, O> {
+impl<T: Absorb<O> + core::fmt::Debug, O> core::fmt::Debug for Taken<T, O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Taken")
             .field(
@@ -145,7 +149,7 @@ where
     /// have departed. Then it uses [`Absorb::drop_first`] to drop one of the copies of the data and
     /// returns the other copy as a [`Taken`] smart pointer.
     fn take_inner(&mut self) -> Option<Taken<T, O>> {
-        use std::ptr;
+        use core::ptr;
         // Can only take inner once.
         if self.taken {
             return None;
@@ -168,9 +172,8 @@ where
         let r_handle = self.r_handle.inner.swap(ptr::null_mut(), Ordering::Release);
 
         // now, wait for all readers to depart
-        let epochs = Arc::clone(&self.epochs);
-        let mut epochs = epochs.lock().unwrap();
-        self.wait(&mut epochs);
+        let epoch_snapshot = self.epochs.snapshot();
+        self.wait(&epoch_snapshot);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         fence(Ordering::SeqCst);
@@ -212,7 +215,12 @@ impl<T, O> WriteHandle<T, O>
 where
     T: Absorb<O>,
 {
-    pub(crate) fn new(w_handle: T, epochs: crate::Epochs, r_handle: ReadHandle<T>) -> Self {
+    pub(crate) fn new_with_yield(
+        w_handle: T,
+        epochs: crate::Epochs,
+        r_handle: ReadHandle<T>,
+        yield_fn: fn(),
+    ) -> Self {
         Self {
             epochs,
             // safety: Box<T> is not null and covariant.
@@ -228,10 +236,11 @@ where
             first: true,
             second: true,
             taken: false,
+            yield_fn,
         }
     }
 
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>) {
+    fn wait(&mut self, epochs: &ListSnapshot) {
         let mut iter = 0;
         let mut starti = 0;
 
@@ -239,11 +248,13 @@ where
         {
             self.is_waiting.store(true, Ordering::Relaxed);
         }
-        // we're over-estimating here, but slab doesn't expose its max index
-        self.last_epochs.resize(epochs.capacity(), 0);
+
+        // make sure we have enough space for all the epochs in the current snapshot
+        self.last_epochs.resize(epochs.len(), 0);
+
         'retry: loop {
             // read all and see if all have changed (which is likely)
-            for (ii, (ri, epoch)) in epochs.iter().enumerate().skip(starti) {
+            for (ii, (ri, epoch)) in epochs.iter().enumerate().enumerate().skip(starti) {
                 // if the reader's epoch was even last we read it (which was _after_ the swap),
                 // then they either do not have the pointer, or must have read the pointer strictly
                 // after the swap. in either case, they cannot be using the old pointer value (what
@@ -275,7 +286,7 @@ where
                         if iter != 20 {
                             iter += 1;
                         } else {
-                            thread::yield_now();
+                            (self.yield_fn)();
                         }
                     }
 
@@ -304,13 +315,12 @@ where
         // flag has been observed to be on for two subsequent iterations (there still may be some
         // readers present since we did the previous refresh)
         //
-        // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
-        // only block on pre-existing readers, and they are never waiting to push onto epochs
-        // unless they have finished reading.
-        let epochs = Arc::clone(&self.epochs);
-        let mut epochs = epochs.lock().unwrap();
-
-        self.wait(&mut epochs);
+        // NOTE:
+        // Here we take a Snapshot of the currently existing Readers and only consider these
+        // as all new readers will already be on the other copy, so there is no need to wait for
+        // them
+        let epoch_snapshot = self.epochs.snapshot();
+        self.wait(&epoch_snapshot);
 
         if !self.first {
             // all the readers have left!
@@ -375,7 +385,7 @@ where
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         fence(Ordering::SeqCst);
 
-        for (ri, epoch) in epochs.iter() {
+        for (ri, epoch) in epoch_snapshot.iter().enumerate() {
             self.last_epochs[ri] = epoch.load(Ordering::Acquire);
         }
 
@@ -409,7 +419,7 @@ where
     ///
     /// Its effects will not be exposed to readers until you call [`publish`](Self::publish).
     pub fn append(&mut self, op: O) -> &mut Self {
-        self.extend(std::iter::once(op));
+        self.extend(core::iter::once(op));
         self
     }
 
@@ -442,7 +452,7 @@ where
 }
 
 // allow using write handle for reads
-use std::ops::Deref;
+use core::ops::Deref;
 impl<T, O> Deref for WriteHandle<T, O>
 where
     T: Absorb<O>,
@@ -558,14 +568,17 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
-    use crate::sync::{AtomicUsize, Mutex, Ordering};
+
+    use crate::sync::{AtomicUsize, Ordering};
     use crate::Absorb;
     use slab::Slab;
     include!("./utilities.rs");
 
+    fn test_yield() {}
+
     #[test]
     fn append_test() {
-        let (mut w, _r) = crate::new::<i32, _>();
+        let (mut w, _r) = crate::new_with_yield::<i32, _>(test_yield);
         assert_eq!(w.first, true);
         w.append(CounterAddOp(1));
         assert_eq!(w.oplog.len(), 0);
@@ -580,7 +593,7 @@ mod tests {
     #[test]
     fn take_test() {
         // publish twice then take with no pending operations
-        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        let (mut w, _r) = crate::new_from_empty_with_yield::<i32, _>(2, test_yield);
         w.append(CounterAddOp(1));
         w.publish();
         w.append(CounterAddOp(1));
@@ -588,7 +601,7 @@ mod tests {
         assert_eq!(*w.take(), 4);
 
         // publish twice then pending operation published by take
-        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        let (mut w, _r) = crate::new_from_empty_with_yield::<i32, _>(2, test_yield);
         w.append(CounterAddOp(1));
         w.publish();
         w.append(CounterAddOp(1));
@@ -597,29 +610,30 @@ mod tests {
         assert_eq!(*w.take(), 6);
 
         // normal publish then pending operations published by take
-        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        let (mut w, _r) = crate::new_from_empty_with_yield::<i32, _>(2, test_yield);
         w.append(CounterAddOp(1));
         w.publish();
         w.append(CounterAddOp(1));
         assert_eq!(*w.take(), 4);
 
         // pending operations published by take
-        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        let (mut w, _r) = crate::new_from_empty_with_yield::<i32, _>(2, test_yield);
         w.append(CounterAddOp(1));
         assert_eq!(*w.take(), 3);
 
         // emptry op queue
-        let (mut w, _r) = crate::new_from_empty::<i32, _>(2);
+        let (mut w, _r) = crate::new_from_empty_with_yield::<i32, _>(2, test_yield);
         w.append(CounterAddOp(1));
         w.publish();
         assert_eq!(*w.take(), 3);
 
         // no operations
-        let (w, _r) = crate::new_from_empty::<i32, _>(2);
+        let (w, _r) = crate::new_from_empty_with_yield::<i32, _>(2, test_yield);
         assert_eq!(*w.take(), 2);
     }
 
     #[test]
+    #[cfg(feature = "std")]
     fn wait_test() {
         use std::sync::{Arc, Barrier};
         use std::thread;
@@ -627,9 +641,9 @@ mod tests {
 
         // Case 1: If epoch is set to default.
         let test_epochs: crate::Epochs = Default::default();
-        let mut test_epochs = test_epochs.lock().unwrap();
+        let test_snapshot = test_epochs.snapshot();
         // since there is no epoch to waiting for, wait function will return immediately.
-        w.wait(&mut test_epochs);
+        w.wait(&test_snapshot);
 
         // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
         // and wait has been called.
@@ -650,11 +664,15 @@ mod tests {
         assert_eq!(false, is_waiting_v);
 
         let barrier2 = Arc::clone(&barrier);
-        let test_epochs = Arc::new(Mutex::new(epochs_slab));
+        let test_epochs: crate::Epochs = Default::default();
+        // We need to reverse the iterator here because when using `extend` it inserts the Items in reverse
+        test_epochs.extend(epochs_slab.into_iter().map(|(_, tmp)| tmp).rev());
+        assert_eq!(3, test_epochs.snapshot().iter().count());
+
         let wait_handle = thread::spawn(move || {
             barrier2.wait();
-            let mut test_epochs = test_epochs.lock().unwrap();
-            w.wait(&mut test_epochs);
+            let test_epochs_snapshot = test_epochs.snapshot();
+            w.wait(&test_epochs_snapshot);
         });
 
         barrier.wait();
@@ -673,7 +691,7 @@ mod tests {
 
     #[test]
     fn flush_noblock() {
-        let (mut w, r) = crate::new::<i32, _>();
+        let (mut w, r) = crate::new_with_yield::<i32, _>(test_yield);
         w.append(CounterAddOp(42));
         w.publish();
         assert_eq!(*r.enter().unwrap(), 42);
@@ -687,7 +705,7 @@ mod tests {
 
     #[test]
     fn flush_no_refresh() {
-        let (mut w, _) = crate::new::<i32, _>();
+        let (mut w, _) = crate::new_with_yield::<i32, _>(test_yield);
 
         // Until we refresh, writes are written directly instead of going to the
         // oplog (because there can't be any readers on the w_handle table).

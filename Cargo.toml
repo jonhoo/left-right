@@ -14,5 +14,9 @@ categories = ["concurrency"]
 [dependencies]
 slab = "0.4.1"
 
+[features]
+default = ["std"]
+std = []
+
 [target.'cfg(loom)'.dependencies]
 loom = "0.5.6"

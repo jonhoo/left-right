@@ -128,9 +128,10 @@
 //!
 //! But this warrants repeating: **your `D` types for `Aliased` _must_ be private**.
 
-use std::marker::PhantomData;
-use std::mem::MaybeUninit;
-use std::ops::Deref;
+use alloc::{boxed::Box, string::String, vec::Vec};
+use core::marker::PhantomData;
+use core::mem::MaybeUninit;
+use core::ops::Deref;
 
 // Just to make the doc comment linking work.
 #[allow(unused_imports)]
@@ -183,7 +184,7 @@ where
         //    a) the T is behind a MaybeUninit, and so will cannot be accessed safely; and
         //    b) we only expose _either_ &T while aliased, or &mut after the aliasing ends.
         Aliased {
-            aliased: std::ptr::read(&self.aliased),
+            aliased: core::ptr::read(&self.aliased),
             drop_behavior: PhantomData,
             _no_auto_send: PhantomData,
         }
@@ -211,7 +212,7 @@ where
     pub unsafe fn change_drop<D2: DropBehavior>(self) -> Aliased<T, D2> {
         Aliased {
             // safety:
-            aliased: std::ptr::read(&self.aliased),
+            aliased: core::ptr::read(&self.aliased),
             drop_behavior: PhantomData,
             _no_auto_send: PhantomData,
         }
@@ -247,7 +248,7 @@ where
             //   That T has not been dropped (getting a Aliased<T, DoDrop> is unsafe).
             //   T is no longer aliased (by the safety assumption of getting a Aliased<T, DoDrop>),
             //   so we are allowed to re-take ownership of the T.
-            unsafe { std::ptr::drop_in_place(self.aliased.as_mut_ptr()) }
+            unsafe { core::ptr::drop_in_place(self.aliased.as_mut_ptr()) }
         }
     }
 }
@@ -276,7 +277,7 @@ where
     }
 }
 
-use std::hash::{Hash, Hasher};
+use core::hash::{Hash, Hasher};
 impl<T, D> Hash for Aliased<T, D>
 where
     D: DropBehavior,
@@ -290,7 +291,7 @@ where
     }
 }
 
-use std::fmt;
+use core::fmt;
 impl<T, D> fmt::Debug for Aliased<T, D>
 where
     D: DropBehavior,
@@ -323,7 +324,7 @@ where
     D: DropBehavior,
     T: PartialOrd,
 {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.as_ref().partial_cmp(other.as_ref())
     }
 
@@ -349,12 +350,12 @@ where
     D: DropBehavior,
     T: Ord,
 {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.as_ref().cmp(other.as_ref())
     }
 }
 
-use std::borrow::Borrow;
+use core::borrow::Borrow;
 impl<T, D> Borrow<T> for Aliased<T, D>
 where
     D: DropBehavior,
@@ -385,6 +386,8 @@ where
         self.as_ref()
     }
 }
+
+#[cfg(feature = "std")]
 impl<D> Borrow<std::path::Path> for Aliased<std::path::PathBuf, D>
 where
     D: DropBehavior,
@@ -410,7 +413,7 @@ where
         self.as_ref()
     }
 }
-impl<T, D> Borrow<T> for Aliased<std::sync::Arc<T>, D>
+impl<T, D> Borrow<T> for Aliased<alloc::sync::Arc<T>, D>
 where
     T: ?Sized,
     D: DropBehavior,
@@ -419,7 +422,7 @@ where
         self.as_ref()
     }
 }
-impl<T, D> Borrow<T> for Aliased<std::rc::Rc<T>, D>
+impl<T, D> Borrow<T> for Aliased<alloc::rc::Rc<T>, D>
 where
     T: ?Sized,
     D: DropBehavior,
