@@ -189,6 +189,29 @@ pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};
 
 pub mod aliasing;
 
+/// The result of calling [`Absorb::try_compress`](Absorb::try_compress).
+#[derive(Debug)]
+pub enum TryCompressResult<O> {
+    /// Returned when [`try_compress`](Absorb::try_compress) was successful.
+    ///
+    /// The expectation is that the `prev` argument to `try_compress` now represents the combined operation after consuming `next`.
+    ///
+    /// Compression will continue by attempting to combine the new `prev` with its predecessors.
+    Compressed,
+    /// The two operations passed to [`try_compress`](Absorb::try_compress) were not combined, but commute.
+    ///
+    /// Since `prev` and `next` commute, compression will continue attempting to merge `next` with operations that precede `prev` in the oplog, potentially changing the relative ordering of `prev` and `next`.
+    ///
+    /// Returns ownership of `next` so that compression can continue (or `next` can be restored).
+    Independent(O),
+    /// The two operations passed to [`try_compress`](Absorb::try_compress) were not combined, and do not commute.
+    ///
+    /// Since `prev` and `next` do not commute, `next` cannot be moved past `prev`, and must thus be left in its current location.
+    ///
+    /// Returns ownership of `next` so that it can be put back in the oplog (after `prev`).
+    Dependent(O),
+}
+
 /// Types that can incorporate operations of type `O`.
 ///
 /// This trait allows `left-right` to keep the two copies of the underlying data structure (see the
@@ -261,6 +284,27 @@ pub trait Absorb<O> {
     /// subtly affect results like the `RandomState` of a `HashMap` which can change iteration
     /// order.
     fn sync_with(&mut self, first: &Self);
+
+    /// Range at which [`WriteHandle`] tries to compress the oplog, reset each time a compression succeeds.
+    ///
+    /// Can be used to avoid having insertion into the oplog be O(oplog.len * ops.len) if it is filled with mainly independent ops.
+    ///
+    /// Defaults to `0`, which disables compression and allows the usage of an efficient fallback.
+    const MAX_COMPRESS_RANGE: usize = 0;
+
+    /// Try to compress two ops into a single op and return a [`TryCompressResult`].
+    ///
+    /// Used to optimize the oplog while extending it, `prev` is the target inside the oplog, `next` is the op being inserted.
+    ///
+    /// Defaults to [`TryCompressResult::Dependent`], which sub-optimally disables compression.
+    /// Setting [`Self::MAX_COMPRESS_RANGE`](Absorb::MAX_COMPRESS_RANGE) to or leaving it at it's default of `0` is vastly more efficient for that.
+    fn try_compress(prev: &mut O, next: O) -> TryCompressResult<O> {
+        // yes, unnecessary, but: makes it so that prev is not an unused variable
+        // and really matches the mental model of 'all ops are dependent'.
+        match prev {
+            _ => TryCompressResult::Dependent(next),
+        }
+    }
 }
 
 /// Construct a new write and read handle pair from an empty data structure.
