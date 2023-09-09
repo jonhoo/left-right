@@ -17,7 +17,7 @@ jobs:
       matrix:
         toolchain: [stable, beta]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install ${{ matrix.toolchain }}
@@ -37,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     name: ubuntu / stable / minimal-versions
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install stable
@@ -64,7 +64,7 @@ jobs:
       #   if: runner.os == 'Windows'
       # - run: vcpkg install openssl:x64-windows-static-md
       #   if: runner.os == 'Windows'
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install stable
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     name: ubuntu / stable / coverage
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install stable

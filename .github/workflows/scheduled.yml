@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     name: ubuntu / nightly
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install nightly
@@ -36,7 +36,7 @@ jobs:
     # Unfortunately, hashFiles only works in if on steps, so we reepeat it.
     # if: hashFiles('Cargo.lock') != ''
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install beta
