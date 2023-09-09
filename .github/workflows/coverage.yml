@@ -10,10 +10,10 @@ jobs:
       image: xd009642/tarpaulin:develop-nightly
       options: --security-opt seccomp=unconfined
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Generate code coverage
         run: |
-          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --run-types Doctests --run-types Tests --out Xml
+          cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --run-types doctests --run-types lib --run-types tests --out xml
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v3
         with:

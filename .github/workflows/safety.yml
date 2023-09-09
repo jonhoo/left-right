@@ -1,13 +1,19 @@
+permissions:
+  contents: read
 on:
   push:
     branches: [main]
   pull_request:
+# Spend CI time only on latest ref: https://github.com/jonhoo/rust-ci-conf/pull/5
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 name: safety
 jobs:
   sanitizers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install nightly
@@ -17,32 +23,33 @@ jobs:
             sudo apt install llvm
             # to fix buggy leak analyzer:
             # https://github.com/japaric/rust-san#unrealiable-leaksanitizer
-            sed -i '/\[features\]/i [profile.dev]' Cargo.toml
-            sed -i '/profile.dev/a opt-level = 1' Cargo.toml
+            # ensure there's a profile.dev section
+            if ! grep -qE '^[ \t]*[profile.dev]' Cargo.toml; then
+                echo >> Cargo.toml
+                echo '[profile.dev]' >> Cargo.toml
+            fi
+            # remove pre-existing opt-levels in profile.dev
+            sed -i '/^\s*\[profile.dev\]/,/^\s*\[/ {/^\s*opt-level/d}' Cargo.toml
+            # now set opt-level to 1
+            sed -i '/^\s*\[profile.dev\]/a opt-level = 1' Cargo.toml
             cat Cargo.toml
         name: Enable debug symbols
       - name: cargo test -Zsanitizer=address
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          # only --lib --tests b/c of https://github.com/rust-lang/rust/issues/53945
-          args: --lib --tests --all-features --target x86_64-unknown-linux-gnu
+        # only --lib --tests b/c of https://github.com/rust-lang/rust/issues/53945
+        run: cargo test --lib --tests --all-features --target x86_64-unknown-linux-gnu
         env:
           ASAN_OPTIONS: "detect_odr_violation=0:detect_leaks=0"
           RUSTFLAGS: "-Z sanitizer=address"
       - name: cargo test -Zsanitizer=leak
         if: always()
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --target x86_64-unknown-linux-gnu
+        run: cargo test --all-features --target x86_64-unknown-linux-gnu
         env:
           LSAN_OPTIONS: "suppressions=lsan-suppressions.txt"
           RUSTFLAGS: "-Z sanitizer=leak"
   miri:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - run: |
@@ -53,25 +60,19 @@ jobs:
           toolchain: ${{ env.NIGHTLY }}
           components: miri
       - name: cargo miri test
-        uses: actions-rs/cargo@v1
-        with:
-          command: miri
-          args: test
+        run: cargo miri test
         env:
-          MIRIFLAGS: "-Zmiri-tag-raw-pointers"
+          MIRIFLAGS: ""
   loom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: Install stable
         uses: dtolnay/rust-toolchain@stable
       - name: cargo test --test loom
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --release --test loom
+        run: cargo test --release --test loom
         env:
           LOOM_MAX_PREEMPTIONS: 3
           RUSTFLAGS: "--cfg loom"
