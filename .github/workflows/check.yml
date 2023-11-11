@@ -1,10 +1,21 @@
+# This workflow runs whenever a PR is opened or updated, or a commit is pushed to main. It runs
+# several checks:
+# - fmt: checks that the code is formatted according to rustfmt
+# - clippy: checks that the code does not contain any clippy warnings
+# - doc: checks that the code can be documented without errors
+# - hack: check combinations of feature flags
+# - msrv: check that the msrv specified in the crate is correct
 permissions:
   contents: read
+# This configuration allows maintainers of this repo to create a branch and pull request based on
+# the new branch. Restricting the push trigger to the main branch ensures that the PR only gets
+# built once.
 on:
   push:
     branches: [main]
   pull_request:
-# Spend CI time only on latest ref: https://github.com/jonhoo/rust-ci-conf/pull/5
+# If new code is pushed to a PR branch, then cancel in progress workflows for that PR. Ensures that
+# we don't waste CI time, and returns results quicker https://github.com/jonhoo/rust-ci-conf/pull/5
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -32,6 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Get early warning of new lints which are regularly introduced in beta channels.
         toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +59,9 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
   doc:
+    # run docs generation on nightly rather than stable. This enables features like
+    # https://doc.rust-lang.org/beta/unstable-book/language-features/doc-cfg.html which allows an
+    # API be documented as only available in some specific platforms.
     runs-on: ubuntu-latest
     name: nightly / doc
     steps:
@@ -60,6 +75,8 @@ jobs:
         env:
           RUSTDOCFLAGS: --cfg docsrs
   hack:
+    # cargo-hack checks combinations of feature flags to ensure that features are all additive
+    # which is required for feature unification
     runs-on: ubuntu-latest
     name: ubuntu / stable / features
     steps:
@@ -71,9 +88,11 @@ jobs:
       - name: cargo install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       # intentionally no target specifier; see https://github.com/jonhoo/rust-ci-conf/pull/4
+      # --feature-powerset runs for every combination of features
       - name: cargo hack
         run: cargo hack --feature-powerset check
   msrv:
+    # check that we can build using the minimal rust version that is specified by this crate
     runs-on: ubuntu-latest
     # we use a matrix here just because env can't be used in job names
     # https://docs.github.com/en/actions/learn-github-actions/contexts#context-availability

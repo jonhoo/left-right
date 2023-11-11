@@ -1,10 +1,17 @@
+# This is the main CI workflow that runs the test suite on all pushes to main and all pull requests.
+# It runs the following jobs:
+# - required: runs the test suite on ubuntu with stable and beta rust toolchains
+# - minimal: runs the test suite with the minimal versions of the dependencies that satisfy the
+#   requirements of this crate, and its dependencies
+# - os-check: runs the test suite on mac and windows
+# - coverage: runs the test suite and collects coverage information
+# See check.yml for information about how the concurrency cancelation and workflow triggering works
 permissions:
   contents: read
 on:
   push:
     branches: [main]
   pull_request:
-# Spend CI time only on latest ref: https://github.com/jonhoo/rust-ci-conf/pull/5
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -15,6 +22,8 @@ jobs:
     name: ubuntu / ${{ matrix.toolchain }}
     strategy:
       matrix:
+        # run on stable and beta to ensure that tests won't break on the next version of the rust
+        # toolchain
         toolchain: [stable, beta]
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +34,7 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
       - name: cargo generate-lockfile
+        # enable this ci template to run regardless of whether the lockfile is checked in or not
         if: hashFiles('Cargo.lock') == ''
         run: cargo generate-lockfile
       # https://twitter.com/jonhoo/status/1571290371124260865
@@ -34,6 +44,28 @@ jobs:
       - name: cargo test --doc
         run: cargo test --locked --all-features --doc
   minimal:
+    # This action chooses the oldest version of the dependencies permitted by Cargo.toml to ensure
+    # that this crate is compatible with the minimal version that this crate and its dependencies
+    # require. This will pickup issues where this create relies on functionality that was introduced
+    # later than the actual version specified (e.g., when we choose just a major version, but a
+    # method was added after this version).
+    #
+    # This particular check can be difficult to get to succeed as often transitive dependencies may
+    # be incorrectly specified (e.g., a dependency specifies 1.0 but really requires 1.1.5). There
+    # is an alternative flag available -Zminimal-direct that uses the minimal versions for direct
+    # dependencies of this crate, while selecting the maximal versions for the transitive
+    # dependencies. Alternatively, you can add a line in your Cargo.toml to artificially increase
+    # the minimal dependency, which you do with e.g.:
+    # ```toml
+    # # for minimal-versions  
+    # [target.'cfg(any())'.dependencies]  
+    # openssl = { version = "0.10.55", optional = true } # needed to allow foo to build with -Zminimal-versions  
+    # ```
+    # The optional = true is necessary in case that dependency isn't otherwise transitively required
+    # by your library, and the target bit is so that this dependency edge never actually affects
+    # Cargo build order. See also
+    # https://github.com/jonhoo/fantoccini/blob/fde336472b712bc7ebf5b4e772023a7ba71b2262/Cargo.toml#L47-L49.
+    # This action is run on ubuntu with the stable toolchain, as it is not expected to fail
     runs-on: ubuntu-latest
     name: ubuntu / stable / minimal-versions
     steps:
@@ -51,6 +83,7 @@ jobs:
       - name: cargo test
         run: cargo test --locked --all-features --all-targets
   os-check:
+    # run cargo test on mac and windows
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }} / stable
     strategy:
@@ -75,6 +108,8 @@ jobs:
       - name: cargo test
         run: cargo test --locked --all-features --all-targets
   coverage:
+    # use llvm-cov to build and collect coverage and outputs in a format that is compatible with
+    # codecov.io
     runs-on: ubuntu-latest
     name: ubuntu / stable / coverage
     steps:

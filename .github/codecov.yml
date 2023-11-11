@@ -18,4 +18,4 @@ ignore:
 # Make comments less noisy
 comment:
   layout: "files"
-  require_changes: yes
+  require_changes: true
