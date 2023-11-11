@@ -52,14 +52,14 @@ jobs:
     #
     # This particular check can be difficult to get to succeed as often transitive dependencies may
     # be incorrectly specified (e.g., a dependency specifies 1.0 but really requires 1.1.5). There
-    # is an alternative flag available -Zminimal-direct that uses the minimal versions for direct
-    # dependencies of this crate, while selecting the maximal versions for the transitive
+    # is an alternative flag available -Zdirect-minimal-versions that uses the minimal versions for
+    # direct dependencies of this crate, while selecting the maximal versions for the transitive
     # dependencies. Alternatively, you can add a line in your Cargo.toml to artificially increase
     # the minimal dependency, which you do with e.g.:
     # ```toml
     # # for minimal-versions  
     # [target.'cfg(any())'.dependencies]  
-    # openssl = { version = "0.10.55", optional = true } # needed to allow foo to build with -Zminimal-versions  
+    # openssl = { version = "0.10.55", optional = true } # needed to allow foo to build with -Zminimal-versions
     # ```
     # The optional = true is necessary in case that dependency isn't otherwise transitively required
     # by your library, and the target bit is so that this dependency edge never actually affects
