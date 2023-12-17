@@ -1,6 +1,6 @@
 # Run scheduled (rolling) jobs on a nightly basis, as your crate may break independently of any
 # given PR. E.g., updates to rust nightly and updates to this crates dependencies. See check.yml for
-# information about how the concurrency cancelation and workflow triggering works
+# information about how the concurrency cancellation and workflow triggering works
 permissions:
   contents: read
 on:

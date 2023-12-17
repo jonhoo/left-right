@@ -1,10 +1,10 @@
 # This workflow runs checks for unsafe code. In crates that don't have any unsafe code, this can be
 # removed. Runs:
 # - miri - detects undefined behavior and memory leaks
-# - address santizer - detects memory errors
+# - address sanitizer - detects memory errors
 # - leak sanitizer - detects memory leaks
 # - loom - Permutation testing for concurrent code https://crates.io/crates/loom
-# See check.yml for information about how the concurrency cancelation and workflow triggering works
+# See check.yml for information about how the concurrency cancellation and workflow triggering works
 permissions:
   contents: read
 on:
