@@ -146,7 +146,7 @@ jobs:
         run: cargo generate-lockfile
       - name: cargo llvm-cov
         run: cargo llvm-cov --locked --all-features --lcov --output-path lcov.info
-      - name: record Rust version
+      - name: Record Rust version
         run: echo "RUST=$(rustc --version)" >> "$GITHUB_ENV"
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v4
