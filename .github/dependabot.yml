@@ -4,16 +4,63 @@ updates:
     directory: /
     schedule:
       interval: daily
+  # Cargo major version update notifications (PRs) we always want
   - package-ecosystem: cargo
     directory: /
-    schedule:
-      interval: daily
     ignore:
       - dependency-name: "*"
-        # patch and minor updates don't matter for libraries as consumers of this library build
-        # with their own lockfile, rather than the version specified in this library's lockfile
-        # remove this ignore rule if your package has binaries to ensure that the binaries are
-        # built with the exact set of dependencies and those are up to date.
         update-types:
           - "version-update:semver-patch"
           - "version-update:semver-minor"
+    schedule:
+      # we want to know about them immediately
+      interval: daily
+    groups:
+      # we group major bumps for dev-dependencies together in case there are
+      # related groups of breaking changes. that _can_ be the case for
+      # production dependencies too, but there one should be more diligent
+      # about each major bump in case it constitutes a breaking change to the
+      # current crate too.
+      major-dev:
+        dependency-type: "development"
+        update-types:
+          - "major"
+  # patch and minor updates don't matter for libraries, as consumers of a
+  # library build with their own lockfile, rather than the version specified in
+  # this library's lockfile. so for libraries (which is most crates), we should
+  # never update non-major versions, and so the following rule is disabled by
+  # default.
+  #
+  # if your package has binaries, enable this rule by commenting out the
+  # `open-pull-requests-limit` line. this will open a PR once a month that
+  # effectively runs `cargo update` to ensure that the binaries are built with
+  # the exact set of dependencies and those are up to date.
+  - package-ecosystem: cargo
+    # this rule is disabled by default; comment out this line to re-enable:
+    open-pull-requests-limit: 0
+    directory: /
+    schedule:
+      interval: monthly
+    # select only minor + patch by excluding major. dependabot doesn't appear
+    # to have an include-only rule, so we have to do it by exclusion.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+    # never bump the version in `Cargo.toml` for minor/patch upgrades; it
+    # should only change when the major version changes to avoid requiring
+    # downstream packages from also running a `cargo update` (and possibly
+    # bumping MSRV unnecessarily as a result).
+    #
+    # TODO: https://github.com/dependabot/dependabot-core/issues/4009
+    # versioning-strategy: "increase-if-necessary"
+    versioning-strategy: "lockfile-only"
+    groups:
+      # note that since this is perfectly disjoint with the `ignore` rule, all
+      # minor/patch updates will end up in a single group, and thus in a single
+      # PR. grouping all of these together only (generally) works because the
+      # Rust community is fairly good about respecting semver.
+      cargo-update:
+        update-types:
+          - "minor"
+          - "patch"
