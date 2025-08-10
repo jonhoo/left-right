@@ -36,10 +36,6 @@ where
     refreshes: usize,
     #[cfg(test)]
     is_waiting: Arc<AtomicBool>,
-    /// Write directly to the write handle map, since no publish has happened.
-    first: bool,
-    /// A publish has happened, but the two copies have not been synchronized yet.
-    second: bool,
     /// If we call `Self::take` the drop needs to be different.
     taken: bool,
 }
@@ -68,8 +64,6 @@ where
             .field("oplog", &self.oplog)
             .field("swap_index", &self.swap_index)
             .field("r_handle", &self.r_handle)
-            .field("first", &self.first)
-            .field("second", &self.second)
             .finish()
     }
 }
@@ -156,12 +150,12 @@ where
 
         // first, ensure both copies are up to date
         // (otherwise safely dropping the possibly duplicated w_handle data is a pain)
-        if self.first || !self.oplog.is_empty() {
+
+        // Publishes all pending operations and ensures synchronization with the sibling pointer.
+        while !self.oplog.is_empty() {
             self.publish();
         }
-        if !self.oplog.is_empty() {
-            self.publish();
-        }
+
         assert!(self.oplog.is_empty());
 
         // next, grab the read handle and set it to NULL
@@ -225,8 +219,6 @@ where
             is_waiting: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             refreshes: 0,
-            first: true,
-            second: true,
             taken: false,
         }
     }
@@ -312,47 +304,38 @@ where
 
         self.wait(&mut epochs);
 
-        if !self.first {
-            // all the readers have left!
-            // safety: we haven't freed the Box, and no readers are accessing the w_handle
-            let w_handle = unsafe { self.w_handle.as_mut() };
+        // all the readers have left!
+        // safety: we haven't freed the Box, and no readers are accessing the w_handle
+        let w_handle = unsafe { self.w_handle.as_mut() };
 
-            // safety: we will not swap while we hold this reference
-            let r_handle = unsafe {
-                self.r_handle
-                    .inner
-                    .load(Ordering::Acquire)
-                    .as_ref()
-                    .unwrap()
-            };
+        // safety: we will not swap while we hold this reference
+        let r_handle = unsafe {
+            self.r_handle
+                .inner
+                .load(Ordering::Acquire)
+                .as_ref()
+                .unwrap()
+        };
 
-            if self.second {
-                Absorb::sync_with(w_handle, r_handle);
-                self.second = false
+        // the w_handle copy has not seen any of the writes in the oplog
+        // the r_handle copy has not seen any of the writes following swap_index
+        if self.swap_index != 0 {
+            // we can drain out the operations that only the w_handle copy needs
+            //
+            // NOTE: the if above is because drain(0..0) would remove 0
+            for op in self.oplog.drain(0..self.swap_index) {
+                T::absorb_second(w_handle, op, r_handle);
             }
-
-            // the w_handle copy has not seen any of the writes in the oplog
-            // the r_handle copy has not seen any of the writes following swap_index
-            if self.swap_index != 0 {
-                // we can drain out the operations that only the w_handle copy needs
-                //
-                // NOTE: the if above is because drain(0..0) would remove 0
-                for op in self.oplog.drain(0..self.swap_index) {
-                    T::absorb_second(w_handle, op, r_handle);
-                }
-            }
-            // we cannot give owned operations to absorb_first
-            // since they'll also be needed by the r_handle copy
-            for op in self.oplog.iter_mut() {
-                T::absorb_first(w_handle, op, r_handle);
-            }
-            // the w_handle copy is about to become the r_handle, and can ignore the oplog
-            self.swap_index = self.oplog.len();
+        }
+        // we cannot give owned operations to absorb_first
+        // since they'll also be needed by the r_handle copy
+        for op in self.oplog.iter_mut() {
+            T::absorb_first(w_handle, op, r_handle);
+        }
+        // the w_handle copy is about to become the r_handle, and can ignore the oplog
+        self.swap_index = self.oplog.len();
 
         // w_handle (the old r_handle) is now fully up to date!
-        } else {
-            self.first = false
-        }
 
         // at this point, we have exclusive access to w_handle, and it is up-to-date with all
         // writes. the stale r_handle is accessed by readers through an Arc clone of atomic pointer
@@ -464,20 +447,7 @@ where
     where
         I: IntoIterator<Item = O>,
     {
-        if self.first {
-            // Safety: we know there are no outstanding w_handle readers, since we haven't
-            // refreshed ever before, so we can modify it directly!
-            let mut w_inner = self.raw_write_handle();
-            let w_inner = unsafe { w_inner.as_mut() };
-            let r_handle = self.enter().expect("map has not yet been destroyed");
-            // Because we are operating directly on the map, and nothing is aliased, we do want
-            // to perform drops, so we invoke absorb_second.
-            for op in ops {
-                Absorb::absorb_second(w_inner, op, &*r_handle);
-            }
-        } else {
-            self.oplog.extend(ops);
-        }
+        self.oplog.extend(ops);
     }
 }
 
@@ -489,7 +459,6 @@ where
 /// struct Data;
 /// impl left_right::Absorb<()> for Data {
 ///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
-///     fn sync_with(&mut self, _: &Self) {}
 /// }
 ///
 /// fn is_send<T: Send>() {
@@ -566,14 +535,13 @@ mod tests {
     #[test]
     fn append_test() {
         let (mut w, _r) = crate::new::<i32, _>();
-        assert_eq!(w.first, true);
         w.append(CounterAddOp(1));
-        assert_eq!(w.oplog.len(), 0);
-        assert_eq!(w.first, true);
+        assert_eq!(w.oplog.len(), 1);
         w.publish();
-        assert_eq!(w.first, false);
         w.append(CounterAddOp(2));
         w.append(CounterAddOp(3));
+        assert_eq!(w.oplog.len(), 3);
+        w.publish();
         assert_eq!(w.oplog.len(), 2);
     }
 

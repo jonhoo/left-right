@@ -96,11 +96,6 @@ impl Absorb<Op> for Deque {
         }
     }
 
-    fn sync_with(&mut self, first: &Self) {
-        assert_eq!(self.len(), 0);
-        self.extend(first.iter().map(|v| unsafe { v.alias() }));
-    }
-
     fn drop_first(self: Box<Self>) {
         // The Deque type has NoDrop, so this will not drop any of the values.
     }
