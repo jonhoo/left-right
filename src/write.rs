@@ -293,10 +293,17 @@ where
         }
     }
 
-    /// Publishes if all writers have moved to other side without spinning.
+    /// Try to publish once without waiting.
     ///
-    /// This method needs is difftent then publish to only check the readers once and publish
-    /// if all readers have moved. Returns true if it was sucessfully
+    /// This performs a single, non-blocking check of reader epochs. If all current readers have
+    /// advanced since the last swap, it performs a publish and returns `true`. If any reader may
+    /// still be accessing the old copy, it does nothing and returns `false`.
+    ///
+    /// Unlike [`publish`](Self::publish), this never spins or waits. Use it on latency-sensitive
+    /// paths where skipping a publish is preferable to blocking; call again later or fall back to
+    /// [`publish`](Self::publish) if you must ensure visibility.
+    ///
+    /// Returns `true` if a publish occurred, `false` otherwise.
 
     pub fn try_publish(&mut self) -> bool {
         let epochs = Arc::clone(&self.epochs);
