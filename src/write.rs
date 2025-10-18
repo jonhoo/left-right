@@ -302,14 +302,14 @@ where
     /// Unlike [`publish`](Self::publish), this never spins or waits. Use it on latency-sensitive
     /// paths where skipping a publish is preferable to blocking; call again later or fall back to
     /// [`publish`](Self::publish) if you must ensure visibility.
-    ///
+    /// 
     /// Returns `true` if a publish occurred, `false` otherwise.
-
     pub fn try_publish(&mut self) -> bool {
         let epochs = Arc::clone(&self.epochs);
         let mut epochs = epochs.lock().unwrap();
 
-        // we're over-estimating here, but slab doesn't expose its max index
+        // This wait loop is exactly like the one in wait, except that if we find a reader that
+        // has not observed the latest swap, we return rather than spin-and-retry.
         self.last_epochs.resize(epochs.capacity(), 0);
         for (ri, epoch) in epochs.iter() {
             if self.last_epochs[ri] % 2 == 0 {
@@ -326,8 +326,13 @@ where
                 return false;
             }
         }
-        self.do_publish(&mut epochs);
-        return true;
+        #[cfg(test)]
+        {
+            self.is_waiting.store(false, Ordering::Relaxed);
+        }
+        self.update_and_swap(&mut epochs);
+
+        true
     }
 
     /// Publish all operations append to the log to reads.
@@ -349,11 +354,13 @@ where
 
         self.wait(&mut epochs);
 
-        self.do_publish(&mut epochs)
+        self.update_and_swap(&mut epochs)
     }
 
-    /// Actual doing the publishing
-    fn do_publish(
+    /// Brings `w_handle` up to date with the oplog, then swaps `r_handle` and `w_handle`.
+    ///
+    /// This method must only be called when all readers have exited `w_handle` (e.g., after `wait`)
+    fn update_and_swap(
         &mut self,
         epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>,
     ) -> &mut Self {
@@ -766,7 +773,7 @@ mod tests {
         // Case 1: A reader has not advanced (odd and unchanged) -> returns false
         let mut epochs_slab = Slab::new();
         let idx = epochs_slab.insert(Arc::new(AtomicUsize::new(1))); // odd epoch, "in read"
-        // Ensure last_epochs sees this reader as odd and unchanged
+                                                                     // Ensure last_epochs sees this reader as odd and unchanged
         w.last_epochs = vec![0; epochs_slab.capacity()];
         w.last_epochs[idx] = 1;
         w.epochs = Arc::new(Mutex::new(epochs_slab));

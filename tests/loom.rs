@@ -14,7 +14,7 @@ mod loom_tests {
             let (mut w, r) = left_right::new::<i32, _>();
 
             w.append(CounterAddOp(1));
-            w.publish();
+            assert!(w.try_publish());
 
             let jh = thread::spawn(move || *r.enter().unwrap());
 

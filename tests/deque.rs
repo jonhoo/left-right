@@ -135,7 +135,7 @@ fn deque() {
     expect(&r, &[1, 2, 3]);
 
     w.append(Op::PushBack(mkval(4)));
-    w.publish();
+    assert!(w.try_publish());
 
     registry.expect(4);
     expect(&r, &[1, 2, 3, 4]);
