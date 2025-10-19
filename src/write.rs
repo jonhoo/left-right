@@ -302,7 +302,7 @@ where
     /// Unlike [`publish`](Self::publish), this never spins or waits. Use it on latency-sensitive
     /// paths where skipping a publish is preferable to blocking; call again later or fall back to
     /// [`publish`](Self::publish) if you must ensure visibility.
-    /// 
+    ///
     /// Returns `true` if a publish occurred, `false` otherwise.
     pub fn try_publish(&mut self) -> bool {
         let epochs = Arc::clone(&self.epochs);
