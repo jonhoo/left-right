@@ -356,7 +356,8 @@ where
 
     /// Brings `w_handle` up to date with the oplog, then swaps `r_handle` and `w_handle`.
     ///
-    /// This method must only be called when all readers have exited `w_handle` (e.g., after `wait`)
+    /// This method must only be called when all readers have exited `w_handle` (e.g., after
+    /// `wait`).
     fn update_and_swap(
         &mut self,
         epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>,
