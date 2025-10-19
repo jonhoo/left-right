@@ -318,9 +318,6 @@ where
 
             let now = epoch.load(Ordering::Acquire);
             if now != self.last_epochs[ri] {
-                // reader must have seen the last swap, since they have done at least one
-                // operation since we last looked at their epoch, which _must_ mean that they
-                // are no longer using the old pointer value.
                 continue;
             } else {
                 return false;
