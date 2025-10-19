@@ -22,19 +22,20 @@
 //! primitive are:
 //!
 //!  - **Increased memory use**: since we keep two copies of the backing data structure, we are
-//!  effectively doubling the memory use of the underlying data. With some clever de-duplication,
-//!  this cost can be ameliorated to some degree, but it's something to be aware of. Furthermore,
-//!  if writers only call `publish` infrequently despite adding many writes to the operational log,
-//!  the operational log itself may grow quite large, which adds additional overhead.
+//!    effectively doubling the memory use of the underlying data. With some clever de-duplication,
+//!    this cost can be ameliorated to some degree, but it's something to be aware of. Furthermore,
+//!    if writers only call `publish` infrequently despite adding many writes to the operational
+//!    log, the operational log itself may grow quite large, which adds additional overhead.
 //!  - **Deterministic operations**: as the entries in the operational log are applied twice, once
-//!  to each copy of the data, it is essential that the operations are deterministic. If they are
-//!  not, the two copies will no longer mirror one another, and will continue to diverge over time.
+//!    to each copy of the data, it is essential that the operations are deterministic. If they are
+//!    not, the two copies will no longer mirror one another, and will continue to diverge over
+//!    time.
 //!  - **Single writer**: left-right only supports a single writer. To have multiple writers, you
-//!  need to ensure exclusive access to the [`WriteHandle`] through something like a
-//!  [`Mutex`](std::sync::Mutex).
+//!    need to ensure exclusive access to the [`WriteHandle`] through something like a
+//!    [`Mutex`](std::sync::Mutex).
 //!  - **Slow writes**: Writes through left-right are slower than they would be directly against
-//!  the backing datastructure. This is both because they have to go through the operational log,
-//!  and because they must each be applied twice.
+//!    the backing datastructure. This is both because they have to go through the operational log,
+//!    and because they must each be applied twice.
 //!
 //! # How does it work?
 //!

@@ -115,11 +115,12 @@ impl<T: Absorb<O>, O> DerefMut for Taken<T, O> {
 }
 
 impl<T: Absorb<O>, O> Taken<T, O> {
-    /// This is unsafe because you must call [`Absorb::drop_second`] in
-    /// case just dropping `T` is not safe and sufficient.
+    /// # Safety
     ///
-    /// If you used the default implementation of [`Absorb::drop_second`] (which just calls [`drop`](Drop::drop))
-    /// you don't need to call [`Absorb::drop_second`].
+    /// You must call [`Absorb::drop_second`] in case just dropping `T` is not safe and sufficient.
+    ///
+    /// If you used the default implementation of [`Absorb::drop_second`] (which just calls
+    /// [`drop`](Drop::drop)) you don't need to call [`Absorb::drop_second`].
     pub unsafe fn into_box(mut self) -> Box<T> {
         self.inner
             .take()
