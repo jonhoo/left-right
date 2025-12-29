@@ -611,7 +611,8 @@ struct CheckWriteHandleSend;
 #[cfg(test)]
 mod tests {
     use crate::sync::{Arc, AtomicUsize, Mutex, Ordering};
-    use crate::{read, Absorb};
+    use crate::Absorb;
+    use crossbeam_utils::CachePadded;
     use slab::Slab;
     include!("./utilities.rs");
 
@@ -685,12 +686,12 @@ mod tests {
 
         // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
         // and wait has been called.
-        let held_epoch = Arc::new(AtomicUsize::new(1));
+        let held_epoch = Arc::new(CachePadded::new(AtomicUsize::new(1)));
 
         w.last_epochs = vec![2, 2, 1];
         let mut epochs_slab = Slab::new();
-        epochs_slab.insert(Arc::new(AtomicUsize::new(2)));
-        epochs_slab.insert(Arc::new(AtomicUsize::new(2)));
+        epochs_slab.insert(Arc::new(CachePadded::new(AtomicUsize::new(2))));
+        epochs_slab.insert(Arc::new(CachePadded::new(AtomicUsize::new(2))));
         epochs_slab.insert(Arc::clone(&held_epoch));
 
         let barrier = Arc::new(Barrier::new(2));
@@ -772,8 +773,8 @@ mod tests {
 
         // Case 1: A reader has not advanced (odd and unchanged) -> returns false
         let mut epochs_slab = Slab::new();
-        let idx = epochs_slab.insert(Arc::new(AtomicUsize::new(1))); // odd epoch, "in read"
-                                                                     // Ensure last_epochs sees this reader as odd and unchanged
+        let idx = epochs_slab.insert(Arc::new(CachePadded::new(AtomicUsize::new(1)))); // odd epoch, "in read"
+                                                                                       // Ensure last_epochs sees this reader as odd and unchanged
         w.last_epochs = vec![0; epochs_slab.capacity()];
         w.last_epochs[idx] = 1;
         w.epochs = Arc::new(Mutex::new(epochs_slab));
@@ -781,7 +782,7 @@ mod tests {
 
         // Case 2: All readers have advanced since last swap -> returns true and publishes
         let mut epochs_slab_ok = Slab::new();
-        let idx_ok = epochs_slab_ok.insert(Arc::new(AtomicUsize::new(2))); // advanced
+        let idx_ok = epochs_slab_ok.insert(Arc::new(CachePadded::new(AtomicUsize::new(2)))); // advanced
         w.last_epochs = vec![0; epochs_slab_ok.capacity()];
         w.last_epochs[idx_ok] = 1; // previously odd
         w.epochs = Arc::new(Mutex::new(epochs_slab_ok));
