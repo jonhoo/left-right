@@ -1,14 +1,15 @@
 use crate::read::ReadHandle;
-use crate::Absorb;
-
 use crate::sync::{fence, Arc, AtomicUsize, MutexGuard, Ordering};
+use crate::Absorb;
+use crossbeam_utils::CachePadded;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::ops::DerefMut;
 use std::ptr::NonNull;
+use std::{fmt, thread};
+
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
-use std::{fmt, thread};
 
 /// A writer handle to a left-right guarded data structure.
 ///
@@ -232,7 +233,7 @@ where
         }
     }
 
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>) {
+    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<CachePadded<AtomicUsize>>>>) {
         let mut iter = 0;
         let mut starti = 0;
 
@@ -361,7 +362,7 @@ where
     /// `wait`).
     fn update_and_swap(
         &mut self,
-        epochs: &mut MutexGuard<'_, slab::Slab<Arc<AtomicUsize>>>,
+        epochs: &mut MutexGuard<'_, slab::Slab<Arc<CachePadded<AtomicUsize>>>>,
     ) -> &mut Self {
         if !self.first {
             // all the readers have left!

@@ -179,7 +179,7 @@ mod sync;
 
 use crate::sync::{Arc, AtomicUsize, Mutex};
 
-type Epochs = Arc<Mutex<slab::Slab<Arc<AtomicUsize>>>>;
+type Epochs = Arc<Mutex<slab::Slab<Arc<CachePadded<AtomicUsize>>>>>;
 
 mod write;
 pub use crate::write::Taken;
@@ -187,6 +187,7 @@ pub use crate::write::WriteHandle;
 
 mod read;
 pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};
+use crossbeam_utils::CachePadded;
 
 pub mod aliasing;
 

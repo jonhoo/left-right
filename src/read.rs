@@ -1,4 +1,5 @@
 use crate::sync::{fence, Arc, AtomicPtr, AtomicUsize, Ordering};
+use crossbeam_utils::CachePadded;
 use std::cell::Cell;
 use std::fmt;
 use std::marker::PhantomData;
@@ -39,7 +40,7 @@ pub use factory::ReadHandleFactory;
 pub struct ReadHandle<T> {
     pub(crate) inner: Arc<AtomicPtr<T>>,
     pub(crate) epochs: crate::Epochs,
-    epoch: Arc<AtomicUsize>,
+    epoch: Arc<CachePadded<AtomicUsize>>,
     epoch_i: usize,
     enters: Cell<usize>,
 
@@ -85,7 +86,7 @@ impl<T> ReadHandle<T> {
 
     fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: crate::Epochs) -> Self {
         // tell writer about our epoch tracker
-        let epoch = Arc::new(AtomicUsize::new(0));
+        let epoch = Arc::new(CachePadded::new(AtomicUsize::new(0)));
         // okay to lock, since we're not holding up the epoch
         let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
 
