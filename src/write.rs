@@ -258,7 +258,7 @@ where
                 // this is okay though, as a change still implies that the new reader must have
                 // arrived _after_ we did the atomic swap, and thus must also have seen the new
                 // pointer.
-                if self.last_epochs[ri] % 2 == 0 {
+                if self.last_epochs[ri].is_multiple_of(2) {
                     continue;
                 }
 
@@ -314,7 +314,7 @@ where
         // has not observed the latest swap, we return rather than spin-and-retry.
         self.last_epochs.resize(epochs.capacity(), 0);
         for (ri, epoch) in epochs.iter() {
-            if self.last_epochs[ri] % 2 == 0 {
+            if self.last_epochs[ri].is_multiple_of(2) {
                 continue;
             }
 
@@ -619,12 +619,12 @@ mod tests {
     #[test]
     fn append_test() {
         let (mut w, _r) = crate::new::<i32, _>();
-        assert_eq!(w.first, true);
+        assert!(w.first);
         w.append(CounterAddOp(1));
         assert_eq!(w.oplog.len(), 0);
-        assert_eq!(w.first, true);
+        assert!(w.first);
         w.publish();
-        assert_eq!(w.first, false);
+        assert!(!w.first);
         w.append(CounterAddOp(2));
         w.append(CounterAddOp(3));
         assert_eq!(w.oplog.len(), 2);
@@ -700,7 +700,7 @@ mod tests {
 
         // check writers waiting state before calling wait.
         let is_waiting_v = is_waiting.load(Ordering::Relaxed);
-        assert_eq!(false, is_waiting_v);
+        assert!(!is_waiting_v);
 
         let barrier2 = Arc::clone(&barrier);
         let test_epochs = Arc::new(Mutex::new(epochs_slab));
@@ -778,7 +778,7 @@ mod tests {
         w.last_epochs = vec![0; epochs_slab.capacity()];
         w.last_epochs[idx] = 1;
         w.epochs = Arc::new(Mutex::new(epochs_slab));
-        assert_eq!(w.try_publish(), false);
+        assert!(!w.try_publish());
 
         // Case 2: All readers have advanced since last swap -> returns true and publishes
         let mut epochs_slab_ok = Slab::new();
@@ -787,7 +787,7 @@ mod tests {
         w.last_epochs[idx_ok] = 1; // previously odd
         w.epochs = Arc::new(Mutex::new(epochs_slab_ok));
         let before = w.refreshes;
-        assert_eq!(w.try_publish(), true);
+        assert!(w.try_publish());
         assert_eq!(w.refreshes, before + 1);
     }
 }
