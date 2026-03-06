@@ -389,15 +389,19 @@ where
                 // we can drain out the operations that only the w_handle copy needs
                 //
                 // NOTE: the if above is because drain(0..0) would remove 0
+                let mut acc = <T as Absorb<O>>::Accumulator::default();
                 for op in self.oplog.drain(0..self.swap_index) {
-                    T::absorb_second(w_handle, op, r_handle);
+                    T::absorb_second(w_handle, op, r_handle, &mut acc);
                 }
+                T::finalize_absorb(w_handle, acc, r_handle);
             }
             // we cannot give owned operations to absorb_first
             // since they'll also be needed by the r_handle copy
+            let mut acc = <T as Absorb<O>>::Accumulator::default();
             for op in self.oplog.iter_mut() {
-                T::absorb_first(w_handle, op, r_handle);
+                T::absorb_first(w_handle, op, r_handle, &mut acc);
             }
+            T::finalize_absorb(w_handle, acc, r_handle);
             // the w_handle copy is about to become the r_handle, and can ignore the oplog
             self.swap_index = self.oplog.len();
 
@@ -524,9 +528,11 @@ where
             let r_handle = self.enter().expect("map has not yet been destroyed");
             // Because we are operating directly on the map, and nothing is aliased, we do want
             // to perform drops, so we invoke absorb_second.
+            let mut acc = <T as Absorb<O>>::Accumulator::default();
             for op in ops {
-                Absorb::absorb_second(w_inner, op, &*r_handle);
+                Absorb::absorb_second(w_inner, op, &*r_handle, &mut acc);
             }
+            T::finalize_absorb(w_inner, acc, &*r_handle);
         } else {
             self.oplog.extend(ops);
         }
@@ -540,7 +546,8 @@ where
 ///
 /// struct Data;
 /// impl left_right::Absorb<()> for Data {
-///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
+///     type Accumulator = ();
+///     fn absorb_first(&mut self, _: &mut (), _: &Self, _: &mut ()) {}
 ///     fn sync_with(&mut self, _: &Self) {}
 /// }
 ///
@@ -560,7 +567,9 @@ where
 ///
 /// struct Data(Rc<()>);
 /// impl left_right::Absorb<()> for Data {
-///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
+///     type Accumulator = ();
+///     fn absorb_first(&mut self, _: &mut (), _: &Self, _: &mut ()) {}
+///     fn sync_with(&mut self, _: &Self) {}
 /// }
 ///
 /// fn is_send<T: Send>() {
@@ -578,7 +587,9 @@ where
 ///
 /// struct Data;
 /// impl left_right::Absorb<Rc<()>> for Data {
-///     fn absorb_first(&mut self, _: &mut Rc<()>, _: &Self) {}
+///     type Accumulator = ();
+///     fn absorb_first(&mut self, _: &mut Rc<()>, _: &Self, _: &mut ()) {}
+///     fn sync_with(&mut self, _: &Self) {}
 /// }
 ///
 /// fn is_send<T: Send>() {
@@ -596,7 +607,9 @@ where
 ///
 /// struct Data(Cell<()>);
 /// impl left_right::Absorb<()> for Data {
-///     fn absorb_first(&mut self, _: &mut (), _: &Self) {}
+///     type Accumulator = ();
+///     fn absorb_first(&mut self, _: &mut (), _: &Self, _: &mut ()) {}
+///     fn sync_with(&mut self, _: &Self) {}
 /// }
 ///
 /// fn is_send<T: Send>() {
@@ -789,5 +802,93 @@ mod tests {
         let before = w.refreshes;
         assert!(w.try_publish());
         assert_eq!(w.refreshes, before + 1);
+    }
+
+    // A data structure that records which ops were accumulated per finalize call.
+    #[derive(Clone, Default)]
+    struct Accumulating {
+        value: i32,
+        // ops seen per finalize_absorb invocation, in order
+        finalize_batches: Vec<Vec<i32>>,
+    }
+
+    struct AddOp(i32);
+
+    impl Absorb<AddOp> for Accumulating {
+        type Accumulator = Vec<i32>;
+
+        fn absorb_first(&mut self, op: &mut AddOp, _: &Self, acc: &mut Vec<i32>) {
+            self.value += op.0;
+            acc.push(op.0);
+        }
+
+        fn absorb_second(&mut self, op: AddOp, _: &Self, acc: &mut Vec<i32>) {
+            self.value += op.0;
+            acc.push(op.0);
+        }
+
+        fn finalize_absorb(&mut self, acc: Vec<i32>, _: &Self) {
+            self.finalize_batches.push(acc);
+        }
+
+        fn sync_with(&mut self, first: &Self) {
+            self.value = first.value;
+            self.finalize_batches = first.finalize_batches.clone();
+        }
+    }
+
+    // Before the first publish, `extend` with multiple ops calls finalize_absorb once with
+    // all ops collected into a single batch.
+    #[test]
+    fn accumulator_extend_path() {
+        let (mut w, r) = crate::new::<Accumulating, AddOp>();
+
+        // first==true: extend applies directly to the write copy via absorb_second.
+        // One finalize_absorb call with all three ops in one accumulator.
+        w.extend([AddOp(3), AddOp(5), AddOp(7)]);
+        w.publish(); // first publish: swaps copies, no absorb loops
+
+        let data = r.enter().unwrap();
+        assert_eq!(data.value, 15);
+        assert_eq!(data.finalize_batches, vec![vec![3, 5, 7]]);
+    }
+
+    // After the first publish, appended ops enter the oplog. The next publish runs the
+    // absorb_first loop, which calls finalize_absorb once with all pending ops.
+    #[test]
+    fn accumulator_absorb_first_loop() {
+        let (mut w, r) = crate::new::<Accumulating, AddOp>();
+
+        w.publish(); // first publish: exits first==true mode, no absorb loops
+        w.append(AddOp(3));
+        w.append(AddOp(5));
+        w.append(AddOp(7));
+        w.publish(); // second publish: absorb_first loop over [3, 5, 7]
+
+        let data = r.enter().unwrap();
+        assert_eq!(data.value, 15);
+        assert_eq!(data.finalize_batches, vec![vec![3, 5, 7]]);
+    }
+
+    // A third publish exercises both the absorb_second drain loop (ops from the previous
+    // publish cycle that the new write copy hasn't seen) and the absorb_first loop (ops
+    // appended since). Each loop produces its own finalize_absorb call.
+    #[test]
+    fn accumulator_absorb_second_loop() {
+        let (mut w, r) = crate::new::<Accumulating, AddOp>();
+
+        w.publish(); // exit first==true mode
+        w.append(AddOp(3));
+        w.append(AddOp(5));
+        w.append(AddOp(7));
+        w.publish(); // absorb_first loop over [3, 5, 7]; swap_index becomes 3
+
+        w.append(AddOp(10));
+        w.append(AddOp(20));
+        w.publish(); // absorb_second loop over [3,5,7] then absorb_first loop over [10,20]
+
+        let data = r.enter().unwrap();
+        assert_eq!(data.value, 45);
+        assert_eq!(data.finalize_batches, vec![vec![3, 5, 7], vec![10, 20]]);
     }
 }

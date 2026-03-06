@@ -75,11 +75,13 @@
 //! // and provide the oplog type as the generic argument.
 //! // You can read this as "`i32` can absorb changes of type `CounterAddOp`".
 //! impl Absorb<CounterAddOp> for i32 {
+//!     type Accumulator = ();
+//!
 //!     // See the documentation of `Absorb::absorb_first`.
 //!     //
 //!     // Essentially, this is where you define what applying
 //!     // the oplog type to the datastructure does.
-//!     fn absorb_first(&mut self, operation: &mut CounterAddOp, _: &Self) {
+//!     fn absorb_first(&mut self, operation: &mut CounterAddOp, _: &Self, _acc: &mut ()) {
 //!         *self += operation.0;
 //!     }
 //!
@@ -88,7 +90,7 @@
 //!     // This may or may not be the same as `absorb_first`,
 //!     // depending on whether or not you de-duplicate values
 //!     // across the two copies of your data structure.
-//!     fn absorb_second(&mut self, operation: CounterAddOp, _: &Self) {
+//!     fn absorb_second(&mut self, operation: CounterAddOp, _: &Self, _acc: &mut ()) {
 //!         *self += operation.0;
 //!     }
 //!
@@ -215,12 +217,31 @@ pub mod aliasing;
 /// values rather than drop them so that they are not dropped twice when the second copy is
 /// dropped.
 pub trait Absorb<O> {
+    /// An accumulator type built up across all absorb calls in a single loop.
+    ///
+    /// Before each absorb loop a value of this type is created via [`Default::default`] and passed
+    /// by mutable reference to every [`absorb_first`](Self::absorb_first) /
+    /// [`absorb_second`](Self::absorb_second) call. After the loop completes,
+    /// [`finalize_absorb`](Self::finalize_absorb) is called once with the accumulated value.
+    ///
+    /// Set this to `()` (and leave [`finalize_absorb`](Self::finalize_absorb) as the default
+    /// no-op) if you do not need batch finalization.
+    type Accumulator: Default;
+
     /// Apply `O` to the first of the two copies.
     ///
     /// `other` is a reference to the other copy of the data, which has seen all operations up
     /// until the previous call to [`WriteHandle::publish`]. That is, `other` is one "publish
     /// cycle" behind.
-    fn absorb_first(&mut self, operation: &mut O, other: &Self);
+    ///
+    /// `accumulator` is shared across all calls in the same absorb loop and will be passed to
+    /// [`finalize_absorb`](Self::finalize_absorb) after the loop ends.
+    fn absorb_first(
+        &mut self,
+        operation: &mut O,
+        other: &Self,
+        accumulator: &mut Self::Accumulator,
+    );
 
     /// Apply `O` to the second of the two copies.
     ///
@@ -234,10 +255,27 @@ pub trait Absorb<O> {
     /// (like `Eq` and `Hash`), and of "hidden states" that subtly affect results like the
     /// `RandomState` of a `HashMap` which can change iteration order.
     ///
+    /// `accumulator` is shared across all calls in the same absorb loop and will be passed to
+    /// [`finalize_absorb`](Self::finalize_absorb) after the loop ends.
+    ///
     /// Defaults to calling `absorb_first`.
-    fn absorb_second(&mut self, mut operation: O, other: &Self) {
-        Self::absorb_first(self, &mut operation, other)
+    fn absorb_second(
+        &mut self,
+        mut operation: O,
+        other: &Self,
+        accumulator: &mut Self::Accumulator,
+    ) {
+        Self::absorb_first(self, &mut operation, other, accumulator)
     }
+
+    /// Called once after all [`absorb_first`](Self::absorb_first) or
+    /// [`absorb_second`](Self::absorb_second) calls in a loop complete.
+    ///
+    /// Use this to perform an aggregate computation that is more efficient to do once over all
+    /// absorbed operations rather than incrementally after each individual call.
+    ///
+    /// Defaults to a no-op.
+    fn finalize_absorb(&mut self, _accumulator: Self::Accumulator, _other: &Self) {}
 
     /// Drop the first of the two copies.
     ///
