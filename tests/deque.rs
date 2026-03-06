@@ -69,7 +69,9 @@ enum Op {
 }
 
 impl Absorb<Op> for Deque {
-    fn absorb_first(&mut self, operation: &mut Op, _other: &Self) {
+    type Accumulator = ();
+
+    fn absorb_first(&mut self, operation: &mut Op, _other: &Self, _acc: &mut ()) {
         match operation {
             Op::PushBack(value) => {
                 self.push_back(unsafe { value.alias() });
@@ -80,7 +82,7 @@ impl Absorb<Op> for Deque {
         }
     }
 
-    fn absorb_second(&mut self, operation: Op, _other: &Self) {
+    fn absorb_second(&mut self, operation: Op, _other: &Self, _acc: &mut ()) {
         // Cast the data structure to the variant that drops entries.
         // SAFETY: the Aliased type guarantees the same memory layout for NoDrop
         // vs DoDrop, so the cast is sound.
