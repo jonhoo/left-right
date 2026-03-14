@@ -61,7 +61,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "left-right"
-version = "0.11.7"
+version = "0.12.0"
 dependencies = [
  "crossbeam-utils",
  "loom",
