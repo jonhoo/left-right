@@ -71,7 +71,7 @@
 //! // For most real-world use-cases, this will be an `enum`, but we'll keep it simple:
 //! struct CounterAddOp(i32);
 //!
-//! // Then, implement the unsafe `Absorb` trait for your data structure type,
+//! // Then, implement the `Absorb` trait for your data structure type,
 //! // and provide the oplog type as the generic argument.
 //! // You can read this as "`i32` can absorb changes of type `CounterAddOp`".
 //! impl Absorb<CounterAddOp> for i32 {
