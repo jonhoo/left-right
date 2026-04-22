@@ -172,10 +172,23 @@ where
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.epochs);
         let mut epochs = epochs.lock().unwrap();
-        self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         fence(Ordering::SeqCst);
+
+        // Refresh `last_epochs` with a snapshot taken *after* the NULL swap
+        // above. Without this refresh, `wait()` would use the snapshot taken
+        // at the end of the previous `publish()` (in `update_and_swap`), and
+        // would skip any reader whose epoch was even at that point. But such
+        // a reader may have entered between that snapshot and the NULL swap:
+        // it bumped its epoch to odd and loaded the still-live pointer, and
+        // is now dereferencing the backing copies we are about to free.
+        self.last_epochs.resize(epochs.capacity(), 0);
+        for (ri, epoch) in epochs.iter() {
+            self.last_epochs[ri] = epoch.load(Ordering::Acquire);
+        }
+
+        self.wait(&mut epochs);
 
         // all readers have now observed the NULL, so we own both handles.
         // all operations have been applied to both w_handle and r_handle.
