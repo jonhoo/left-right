@@ -1,7 +1,7 @@
 #[cfg(loom)]
 pub(crate) use loom::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 #[cfg(loom)]
-pub(crate) use loom::sync::{Arc, Mutex, MutexGuard};
+pub(crate) use loom::sync::Arc;
 #[cfg(loom)]
 pub(crate) fn fence(ord: Ordering) {
     if let Ordering::Acquire = ord {
@@ -17,6 +17,6 @@ pub(crate) fn fence(ord: Ordering) {
 }
 
 #[cfg(not(loom))]
-pub(crate) use std::sync::atomic::{fence, AtomicPtr, AtomicUsize, Ordering};
+pub(crate) use alloc::sync::Arc;
 #[cfg(not(loom))]
-pub(crate) use std::sync::{Arc, Mutex, MutexGuard};
+pub(crate) use core::sync::atomic::{fence, AtomicPtr, AtomicUsize, Ordering};

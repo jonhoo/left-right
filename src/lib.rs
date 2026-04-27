@@ -32,7 +32,7 @@
 //!    time.
 //!  - **Single writer**: left-right only supports a single writer. To have multiple writers, you
 //!    need to ensure exclusive access to the [`WriteHandle`] through something like a
-//!    [`Mutex`](std::sync::Mutex).
+//!    `Mutex`.
 //!  - **Slow writes**: Writes through left-right are slower than they would be directly against
 //!    the backing datastructure. This is both because they have to go through the operational log,
 //!    and because they must each be applied twice.
@@ -103,7 +103,10 @@
 //! // Now, you can construct a new left-right over an instance of your data structure.
 //! // This will give you a `WriteHandle` that accepts writes in the form of oplog entries,
 //! // and a (cloneable) `ReadHandle` that gives you `&` access to the data structure.
+//! # /* Hack to compile docs without `std` feature enabled
 //! let (write, read) = left_right::new::<i32, CounterAddOp>();
+//! # */
+//! # let (write, read) = left_right::new_with_yield::<i32, CounterAddOp>(|| {});
 //!
 //! // You will likely want to embed these handles in your own types so that you can
 //! // provide more ergonomic methods for performing operations on your type.
@@ -165,21 +168,22 @@
 //! that `ReadGuard`. This can make it awkward to write ergonomic methods on the read handle that
 //! return references into the underlying data, and may tempt you to clone the data out or take a
 //! closure instead. Instead, consider using [`ReadGuard::map`] and [`ReadGuard::try_map`], which
-//! (like `RefCell`'s [`Ref::map`](std::cell::Ref::map)) allow you to provide a guarded reference
+//! (like `RefCell`'s [`Ref::map`](core::cell::Ref::map)) allow you to provide a guarded reference
 //! deeper into your data structure.
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(
     missing_docs,
     rust_2018_idioms,
     missing_debug_implementations,
-    broken_intra_doc_links
+    rustdoc::broken_intra_doc_links
 )]
 #![allow(clippy::type_complexity)]
 
+extern crate alloc;
+
+use alloc::boxed::Box;
+
 mod sync;
-
-use crate::sync::{Arc, AtomicUsize, Mutex};
-
-type Epochs = Arc<Mutex<slab::Slab<Arc<CachePadded<AtomicUsize>>>>>;
 
 mod write;
 pub use crate::write::Taken;
@@ -187,9 +191,10 @@ pub use crate::write::WriteHandle;
 
 mod read;
 pub use crate::read::{ReadGuard, ReadHandle, ReadHandleFactory};
-use crossbeam_utils::CachePadded;
 
 pub mod aliasing;
+
+mod epochs;
 
 /// Types that can incorporate operations of type `O`.
 ///
@@ -268,15 +273,12 @@ pub trait Absorb<O> {
 /// Construct a new write and read handle pair from an empty data structure.
 ///
 /// The type must implement `Clone` so we can construct the second copy from the first.
+#[cfg(feature = "std")]
 pub fn new_from_empty<T, O>(t: T) -> (WriteHandle<T, O>, ReadHandle<T>)
 where
     T: Absorb<O> + Clone,
 {
-    let epochs = Default::default();
-
-    let r = ReadHandle::new(t.clone(), Arc::clone(&epochs));
-    let w = WriteHandle::new(t, epochs, r.clone());
-    (w, r)
+    new_from_empty_with_yield(t, std::thread::yield_now)
 }
 
 /// Construct a new write and read handle pair from the data structure default.
@@ -289,13 +291,48 @@ where
 ///
 /// If your type's `Default` implementation does not guarantee this, you can use `new_from_empty`,
 /// which relies on `Clone` instead of `Default`.
+#[cfg(feature = "std")]
 pub fn new<T, O>() -> (WriteHandle<T, O>, ReadHandle<T>)
 where
     T: Absorb<O> + Default,
 {
-    let epochs = Default::default();
+    new_with_yield(std::thread::yield_now)
+}
 
-    let r = ReadHandle::new(T::default(), Arc::clone(&epochs));
-    let w = WriteHandle::new(T::default(), epochs, r.clone());
+/// Construct a new write and read handle pair from the data structure default.
+///
+/// The type must implement `Default` so we can construct two empty instances. You must ensure that
+/// the trait's `Default` implementation is deterministic and idempotent - that is to say, two
+/// instances created by it must behave _exactly_ the same. An example of where this is problematic
+/// is `HashMap` - due to `RandomState`, two instances returned by `Default` may have a different
+/// iteration order.
+///
+/// If your type's `Default` implementation does not guarantee this, you can use `new_from_empty`,
+/// which relies on `Clone` instead of `Default`.
+pub fn new_with_yield<T, O>(thread_yield: fn()) -> (WriteHandle<T, O>, ReadHandle<T>)
+where
+    T: Absorb<O> + Default,
+{
+    let epochs = epochs::Epochs::default();
+
+    let r = ReadHandle::new(T::default(), epochs.clone());
+    let w = WriteHandle::new(T::default(), epochs, r.clone(), thread_yield);
+    (w, r)
+}
+
+/// Construct a new write and read handle pair from an empty data structure.
+///
+/// The type must implement `Clone` so we can construct the second copy from the first.
+pub fn new_from_empty_with_yield<T, O>(
+    t: T,
+    thread_yield: fn(),
+) -> (WriteHandle<T, O>, ReadHandle<T>)
+where
+    T: Absorb<O> + Clone,
+{
+    let epochs = epochs::Epochs::default();
+
+    let r = ReadHandle::new(t.clone(), epochs.clone());
+    let w = WriteHandle::new(t, epochs, r.clone(), thread_yield);
     (w, r)
 }

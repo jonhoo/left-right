@@ -11,8 +11,12 @@ repository = "https://github.com/jonhoo/left-right.git"
 keywords = ["concurrency","lock-free"]
 categories = ["concurrency"]
 
+[features]
+default = ["std"]
+std = ["cordyceps/std"]
+
 [dependencies]
-slab = "0.4.1"
+cordyceps = { version = "0.3" }
 crossbeam-utils = { version = "0.8", default-features = false }
 
 [target.'cfg(loom)'.dependencies]

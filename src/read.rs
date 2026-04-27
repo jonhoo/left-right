@@ -1,9 +1,10 @@
 use crate::sync::{fence, Arc, AtomicPtr, AtomicUsize, Ordering};
+use alloc::boxed::Box;
+use core::cell::Cell;
+use core::fmt;
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 use crossbeam_utils::CachePadded;
-use std::cell::Cell;
-use std::fmt;
-use std::marker::PhantomData;
-use std::ptr::NonNull;
 
 // To make [`WriteHandle`] and friends work.
 #[cfg(doc)]
@@ -14,6 +15,8 @@ pub use guard::ReadGuard;
 
 mod factory;
 pub use factory::ReadHandleFactory;
+
+use crate::epochs::{Epoch, Epochs};
 
 /// A read handle to a left-right guarded data structure.
 ///
@@ -35,13 +38,11 @@ pub use factory::ReadHandleFactory;
 /// `ReadHandle` per reader, which guarantees that you do not accidentally ruin your performance.
 ///
 /// You can create a new, independent `ReadHandle` either by cloning an existing handle or by using
-/// a [`ReadHandleFactory`]. Note, however, that creating a new handle through either of these
-/// mechanisms _does_ take a lock, and may therefore become a bottleneck if you do it frequently.
+/// a [`ReadHandleFactory`].
 pub struct ReadHandle<T> {
     pub(crate) inner: Arc<AtomicPtr<T>>,
-    pub(crate) epochs: crate::Epochs,
-    epoch: Arc<CachePadded<AtomicUsize>>,
-    epoch_i: usize,
+    pub(crate) epochs: Epochs,
+    epoch: Epoch,
     enters: Cell<usize>,
 
     // `ReadHandle` is _only_ Send if T is Sync. If T is !Sync, then it's not okay for us to expose
@@ -54,10 +55,6 @@ unsafe impl<T> Send for ReadHandle<T> where T: Sync {}
 
 impl<T> Drop for ReadHandle<T> {
     fn drop(&mut self) {
-        // epoch must already be even for us to have &mut self,
-        // so okay to lock since we're not holding up the epoch anyway.
-        let e = self.epochs.lock().unwrap().remove(self.epoch_i);
-        assert!(Arc::ptr_eq(&e, &self.epoch));
         assert_eq!(self.enters.get(), 0);
     }
 }
@@ -73,27 +70,25 @@ impl<T> fmt::Debug for ReadHandle<T> {
 
 impl<T> Clone for ReadHandle<T> {
     fn clone(&self) -> Self {
-        ReadHandle::new_with_arc(Arc::clone(&self.inner), Arc::clone(&self.epochs))
+        ReadHandle::new_with_arc(Arc::clone(&self.inner), self.epochs.clone())
     }
 }
 
 impl<T> ReadHandle<T> {
-    pub(crate) fn new(inner: T, epochs: crate::Epochs) -> Self {
+    pub(crate) fn new(inner: T, epochs: Epochs) -> Self {
         let store = Box::into_raw(Box::new(inner));
         let inner = Arc::new(AtomicPtr::new(store));
         Self::new_with_arc(inner, epochs)
     }
 
-    fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: crate::Epochs) -> Self {
+    fn new_with_arc(inner: Arc<AtomicPtr<T>>, epochs: Epochs) -> Self {
         // tell writer about our epoch tracker
         let epoch = Arc::new(CachePadded::new(AtomicUsize::new(0)));
-        // okay to lock, since we're not holding up the epoch
-        let epoch_i = epochs.lock().unwrap().insert(Arc::clone(&epoch));
+        epochs.push(Arc::clone(&epoch));
 
         Self {
             epochs,
             epoch,
-            epoch_i,
             enters: Cell::new(0),
             inner,
             _unimpl_send: PhantomData,
@@ -105,7 +100,7 @@ impl<T> ReadHandle<T> {
     pub fn factory(&self) -> ReadHandleFactory<T> {
         ReadHandleFactory {
             inner: Arc::clone(&self.inner),
-            epochs: Arc::clone(&self.epochs),
+            epochs: self.epochs.clone(),
         }
     }
 }
@@ -243,7 +238,7 @@ impl<T> ReadHandle<T> {
 ///
 /// fn is_send<T: Send>() {}
 ///
-/// is_send::<ReadHandle<std::cell::Cell<u64>>>()
+/// is_send::<ReadHandle<core::cell::Cell<u64>>>()
 /// ```
 #[allow(dead_code)]
 struct CheckReadHandleSendNotSync;
