@@ -16,7 +16,7 @@ default = ["std"]
 std = ["cordyceps/std"]
 
 [dependencies]
-cordyceps = { version = "0.3" }
+cordyceps = { version = "0.3.4" }
 crossbeam-utils = { version = "0.8", default-features = false }
 
 [target.'cfg(loom)'.dependencies]
