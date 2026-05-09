@@ -15,7 +15,7 @@ categories = ["concurrency"]
 slab = "0.4.1"
 crossbeam-utils = { version = "0.8", default-features = false }
 
-[target.'cfg(loom)'.dependencies]
+[target.'cfg(loom)'.dev-dependencies]
 loom = "0.7.2"
 
 [lints.rust]
