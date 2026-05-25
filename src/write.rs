@@ -366,8 +366,10 @@ where
         // unless they have finished reading.
         let epochs = Arc::clone(&self.epochs);
         let mut epochs = epochs.lock().unwrap();
-
-        self.wait(&mut epochs);
+        // On the first publish, there are no readers that can be on the write_handle, so no need to wait.
+        if !self.first {
+            self.wait(&mut epochs);
+        }
 
         self.update_and_swap(&mut epochs)
     }
