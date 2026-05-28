@@ -134,7 +134,8 @@ impl<T> ReadHandle<T> {
                     t: r_handle,
                 })
             } else {
-                unreachable!("if pointer is null, no ReadGuard should have been issued");
+                // The writer may have dropped while an outer guard keeps this epoch active.
+                None
             };
         }
 
