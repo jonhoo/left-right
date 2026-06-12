@@ -1,6 +1,6 @@
 [package]
 name = "left-right"
-version = "0.11.7"
+version = "0.11.8"
 authors = ["Jon Gjengset <jon@thesquareplanet.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ categories = ["concurrency"]
 slab = "0.4.1"
 crossbeam-utils = { version = "0.8", default-features = false }
 
-[target.'cfg(loom)'.dependencies]
+[target.'cfg(loom)'.dev-dependencies]
 loom = "0.7.2"
 
 [lints.rust]
