@@ -366,8 +366,10 @@ where
         // unless they have finished reading.
         let epochs = Arc::clone(&self.epochs);
         let mut epochs = epochs.lock().unwrap();
-
-        self.wait(&mut epochs);
+        // on first publish, no readers are in the write_handle, so no need to wait.
+        if !self.first {
+            self.wait(&mut epochs);
+        }
 
         self.update_and_swap(&mut epochs)
     }
@@ -443,6 +445,7 @@ where
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         fence(Ordering::SeqCst);
 
+        self.last_epochs.resize(epochs.capacity(), 0);
         for (ri, epoch) in epochs.iter() {
             self.last_epochs[ri] = epoch.load(Ordering::Acquire);
         }
