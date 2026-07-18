@@ -160,9 +160,11 @@ where
         // (otherwise safely dropping the possibly duplicated w_handle data is a pain)
         if self.first || !self.oplog.is_empty() {
             self.publish();
+            // all writes are applied to at least one T
         }
         if !self.oplog.is_empty() {
             self.publish();
+            // all writes are in both Ts (i.e., there are no pending writes)
         }
         assert!(self.oplog.is_empty());
 
@@ -172,10 +174,21 @@ where
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.epochs);
         let mut epochs = epochs.lock().unwrap();
-        self.wait(&mut epochs);
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         fence(Ordering::SeqCst);
+
+        // refresh `last_epochs` with a snapshot taken *after* the NULL swap above, otherwise we
+        // would only be waiting for the readers to have observed _some_ swap since the last
+        // publish, but not necessarily _our_ NULL swap. in particular, they may simply have
+        // observed the swap at the last publish.
+        self.last_epochs.resize(epochs.capacity(), 0);
+        for (ri, epoch) in epochs.iter() {
+            self.last_epochs[ri] = epoch.load(Ordering::Acquire);
+        }
+
+        // and now do the actual blocking loop until every reader has moved on
+        self.wait(&mut epochs);
 
         // all readers have now observed the NULL, so we own both handles.
         // all operations have been applied to both w_handle and r_handle.
@@ -242,6 +255,9 @@ where
             self.is_waiting.store(true, Ordering::Relaxed);
         }
         // we're over-estimating here, but slab doesn't expose its max index
+        // note that the defaulted value here is even, so new readers since the last publish won't
+        // be waited for. however, since they were created after the swap anyway, they must have
+        // observed that swap, and so we don't need to wait for them.
         self.last_epochs.resize(epochs.capacity(), 0);
         'retry: loop {
             // read all and see if all have changed (which is likely)
