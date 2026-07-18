@@ -445,6 +445,7 @@ where
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         fence(Ordering::SeqCst);
 
+        self.last_epochs.resize(epochs.capacity(), 0);
         for (ri, epoch) in epochs.iter() {
             self.last_epochs[ri] = epoch.load(Ordering::Acquire);
         }
