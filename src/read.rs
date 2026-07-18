@@ -120,8 +120,7 @@ impl<T> ReadHandle<T> {
     pub fn enter(&self) -> Option<ReadGuard<'_, T>> {
         let enters = self.enters.get();
         if enters != 0 {
-            // We have already locked the epoch.
-            // Just give out another guard.
+            // we have already locked the epoch; just give out another guard.
             let r_handle = self.inner.load(Ordering::Acquire);
             // since we previously bumped our epoch, this pointer will remain valid until we bump
             // it again, which only happens when the last ReadGuard is dropped.
@@ -134,7 +133,11 @@ impl<T> ReadHandle<T> {
                     t: r_handle,
                 })
             } else {
-                unreachable!("if pointer is null, no ReadGuard should have been issued");
+                // WriteHandle must have been dropped, so even though the first `enter` may have
+                // returned `Some`, all we can do now is return `None` since the pointee has
+                // vanished (even if it's still active _somewhere_ since our first enter must be
+                // preventing it from being reclaimed yet).
+                None
             };
         }
 
