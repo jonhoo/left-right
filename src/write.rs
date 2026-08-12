@@ -173,7 +173,7 @@ where
 
         // now, wait for all readers to depart
         let epochs = Arc::clone(&self.epochs);
-        let mut epochs = epochs.lock().unwrap();
+        let epochs = epochs.lock().unwrap();
 
         // ensure that the subsequent epoch reads aren't re-ordered to before the swap
         fence(Ordering::SeqCst);
@@ -187,8 +187,11 @@ where
             self.last_epochs[ri] = epoch.load(Ordering::Acquire);
         }
 
+        let snapshot = Self::snapshot_epochs(&epochs);
+        drop(epochs);
+
         // and now do the actual blocking loop until every reader has moved on
-        self.wait(&mut epochs);
+        self.wait(&snapshot);
 
         // all readers have now observed the NULL, so we own both handles.
         // all operations have been applied to both w_handle and r_handle.
@@ -246,7 +249,16 @@ where
         }
     }
 
-    fn wait(&mut self, epochs: &mut MutexGuard<'_, slab::Slab<Arc<CachePadded<AtomicUsize>>>>) {
+    fn snapshot_epochs(
+        epochs: &slab::Slab<Arc<CachePadded<AtomicUsize>>>,
+    ) -> Vec<(usize, Arc<CachePadded<AtomicUsize>>)> {
+        epochs
+            .iter()
+            .map(|(ri, epoch)| (ri, Arc::clone(epoch)))
+            .collect()
+    }
+
+    fn wait(&mut self, epochs: &[(usize, Arc<CachePadded<AtomicUsize>>)]) {
         let mut iter = 0;
         let mut starti = 0;
 
@@ -254,11 +266,15 @@ where
         {
             self.is_waiting.store(true, Ordering::Relaxed);
         }
-        // we're over-estimating here, but slab doesn't expose its max index
-        // note that the defaulted value here is even, so new readers since the last publish won't
-        // be waited for. however, since they were created after the swap anyway, they must have
-        // observed that swap, and so we don't need to wait for them.
-        self.last_epochs.resize(epochs.capacity(), 0);
+        // The defaulted value here is even, so new readers since the last publish won't be waited
+        // for. Since they were created after the swap, they must have observed that swap, and so we
+        // don't need to wait for them.
+        let required_epochs = epochs
+            .iter()
+            .map(|(ri, _)| ri + 1)
+            .max()
+            .unwrap_or_default();
+        self.last_epochs.resize(required_epochs, 0);
         'retry: loop {
             // read all and see if all have changed (which is likely)
             for (ii, (ri, epoch)) in epochs.iter().enumerate().skip(starti) {
@@ -274,12 +290,12 @@ where
                 // this is okay though, as a change still implies that the new reader must have
                 // arrived _after_ we did the atomic swap, and thus must also have seen the new
                 // pointer.
-                if self.last_epochs[ri] % 2 == 0 {
+                if self.last_epochs[*ri] % 2 == 0 {
                     continue;
                 }
 
                 let now = epoch.load(Ordering::Acquire);
-                if now != self.last_epochs[ri] {
+                if now != self.last_epochs[*ri] {
                     // reader must have seen the last swap, since they have done at least one
                     // operation since we last looked at their epoch, which _must_ mean that they
                     // are no longer using the old pointer value.
@@ -361,16 +377,17 @@ where
         // flag has been observed to be on for two subsequent iterations (there still may be some
         // readers present since we did the previous refresh)
         //
-        // NOTE: it is safe for us to hold the lock for the entire duration of the swap. we will
-        // only block on pre-existing readers, and they are never waiting to push onto epochs
-        // unless they have finished reading.
         let epochs = Arc::clone(&self.epochs);
-        let mut epochs = epochs.lock().unwrap();
         // on first publish, no readers are in the write_handle, so no need to wait.
         if !self.first {
-            self.wait(&mut epochs);
+            let snapshot = {
+                let epochs = epochs.lock().unwrap();
+                Self::snapshot_epochs(&epochs)
+            };
+            self.wait(&snapshot);
         }
 
+        let mut epochs = epochs.lock().unwrap();
         self.update_and_swap(&mut epochs)
     }
 
@@ -629,6 +646,7 @@ struct CheckWriteHandleSend;
 
 #[cfg(test)]
 mod tests {
+    use super::WriteHandle;
     use crate::sync::{Arc, AtomicUsize, Mutex, Ordering};
     use crate::Absorb;
     use crossbeam_utils::CachePadded;
@@ -698,10 +716,8 @@ mod tests {
         let (mut w, _r) = crate::new::<i32, _>();
 
         // Case 1: If epoch is set to default.
-        let test_epochs: crate::Epochs = Default::default();
-        let mut test_epochs = test_epochs.lock().unwrap();
         // since there is no epoch to waiting for, wait function will return immediately.
-        w.wait(&mut test_epochs);
+        w.wait(&[]);
 
         // Case 2: If one of the reader is still reading(epoch is odd and count is same as in last_epoch)
         // and wait has been called.
@@ -725,8 +741,11 @@ mod tests {
         let test_epochs = Arc::new(Mutex::new(epochs_slab));
         let wait_handle = thread::spawn(move || {
             barrier2.wait();
-            let mut test_epochs = test_epochs.lock().unwrap();
-            w.wait(&mut test_epochs);
+            let snapshot = {
+                let test_epochs = test_epochs.lock().unwrap();
+                WriteHandle::<i32, CounterAddOp>::snapshot_epochs(&test_epochs)
+            };
+            w.wait(&snapshot);
         });
 
         barrier.wait();
@@ -741,6 +760,44 @@ mod tests {
         // join to make sure that wait must return after the progress/increment
         // of held_epoch.
         let _ = wait_handle.join();
+    }
+
+    #[test]
+    fn publish_wait_allows_new_read_handles() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let (mut w, r) = crate::new::<i32, CounterAddOp>();
+        w.publish();
+
+        let guard = r.enter().unwrap();
+        w.publish();
+
+        let is_waiting = Arc::clone(&w.is_waiting);
+        let writer = thread::spawn(move || {
+            w.publish();
+        });
+        while !is_waiting.load(Ordering::Relaxed) {
+            thread::yield_now();
+        }
+
+        let factory = r.factory();
+        let (created_tx, created_rx) = mpsc::channel();
+        let creator = thread::spawn(move || {
+            let _handle = factory.handle();
+            created_tx.send(()).unwrap();
+        });
+        let created_while_waiting = created_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+
+        drop(guard);
+        writer.join().unwrap();
+        creator.join().unwrap();
+
+        assert!(
+            created_while_waiting,
+            "epoch registration blocked behind a writer waiting for a reader"
+        );
     }
 
     #[test]
