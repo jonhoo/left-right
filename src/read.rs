@@ -130,7 +130,7 @@ impl<T> ReadHandle<T> {
                 self.enters.set(enters + 1);
                 Some(ReadGuard {
                     handle: guard::ReadHandleState::from(self),
-                    t: r_handle,
+                    t: NonNull::from(r_handle),
                 })
             } else {
                 // WriteHandle must have been dropped, so even though the first `enter` may have
@@ -186,7 +186,7 @@ impl<T> ReadHandle<T> {
             self.enters.set(enters);
             Some(ReadGuard {
                 handle: guard::ReadHandleState::from(self),
-                t: r_handle,
+                t: NonNull::from(r_handle),
             })
         } else {
             // the writehandle has been dropped, and so has both copies,

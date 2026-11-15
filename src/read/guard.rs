@@ -1,6 +1,8 @@
 use crate::sync::{AtomicUsize, Ordering};
 use std::cell::Cell;
+use std::fmt;
 use std::mem;
+use std::ptr::NonNull;
 
 #[derive(Debug, Copy, Clone)]
 pub(super) struct ReadHandleState<'rh> {
@@ -25,12 +27,20 @@ impl<'rh, T> From<&'rh super::ReadHandle<T>> for ReadHandleState<'rh> {
 ///
 /// To scope the guard to a subset of the data in `T`, use [`map`](Self::map) and
 /// [`try_map`](Self::try_map).
-#[derive(Debug)]
-pub struct ReadGuard<'rh, T: ?Sized> {
-    // NOTE: _technically_ this is more like &'self.
-    // the reference is valid until the guard is dropped.
-    pub(super) t: &'rh T,
+pub struct ReadGuard<'rh, T: ?Sized + 'rh> {
+    // Use a pointer so a guard passed as a function argument does not promise
+    // immutability past its drop. NonNull preserves the covariance of &T.
+    pub(super) t: NonNull<T>,
     pub(super) handle: ReadHandleState<'rh>,
+}
+
+impl<'rh, T: ?Sized + fmt::Debug> fmt::Debug for ReadGuard<'rh, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReadGuard")
+            .field("t", &self.as_ref())
+            .field("handle", &self.handle)
+            .finish()
+    }
 }
 
 impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
@@ -58,7 +68,7 @@ impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
         F: for<'a> FnOnce(&'a T) -> &'a U,
     {
         let rg = ReadGuard {
-            t: f(orig.t),
+            t: NonNull::from(f(&orig)),
             handle: orig.handle,
         };
         mem::forget(orig);
@@ -93,7 +103,7 @@ impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
         F: for<'a> FnOnce(&'a T) -> Option<&'a U>,
     {
         let rg = ReadGuard {
-            t: f(orig.t)?,
+            t: NonNull::from(f(&orig)?),
             handle: orig.handle,
         };
         mem::forget(orig);
@@ -103,14 +113,26 @@ impl<'rh, T: ?Sized> ReadGuard<'rh, T> {
 
 impl<'rh, T: ?Sized> AsRef<T> for ReadGuard<'rh, T> {
     fn as_ref(&self) -> &T {
-        self.t
+        self
     }
 }
 
 impl<'rh, T: ?Sized> std::ops::Deref for ReadGuard<'rh, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        self.t
+        // SAFETY:
+        // `t` comes from a valid shared reference in `enter`, `map`,
+        // or `try_map`, preserving alignment, provenance, and any DST metadata.
+        //
+        // The active guard prevents the writer from taking exclusive access to
+        // or reclaiming the backing value.
+        // Mapping preserves that guard state, and its closure's lifetime bound
+        // preserves the mapped reference's validity.
+        //
+        // The result borrows `self`, preventing the guard from being dropped
+        // while the reference is live.
+        // Interior mutation through UnsafeCell remains permitted.
+        unsafe { self.t.as_ref() }
     }
 }
 

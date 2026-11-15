@@ -1,4 +1,5 @@
-use left_right::Absorb;
+use left_right::{Absorb, ReadGuard};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
 struct CounterAddOp(i32);
@@ -26,4 +27,31 @@ fn reentrant_enter_during_drop() {
     }
 
     assert!(r.enter().is_none());
+}
+
+fn drop_guard_and_wait(guard: ReadGuard<'_, i32>, dropped: Sender<()>, resume: Receiver<()>) {
+    assert_eq!(*guard, 1);
+    drop(guard);
+    dropped.send(()).unwrap();
+    resume.recv().unwrap();
+}
+
+#[test]
+fn publish_after_guard_drop() {
+    let (mut w, r) = left_right::new::<i32, CounterAddOp>();
+    w.append(CounterAddOp(1));
+    w.publish();
+
+    let (dropped_tx, dropped_rx) = channel();
+    let (resume_tx, resume_rx) = channel();
+    let reader = thread::spawn(move || {
+        drop_guard_and_wait(r.enter().unwrap(), dropped_tx, resume_rx);
+    });
+
+    dropped_rx.recv().unwrap();
+    w.append(CounterAddOp(1));
+    w.publish();
+    w.publish();
+    resume_tx.send(()).unwrap();
+    reader.join().unwrap();
 }
