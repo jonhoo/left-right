@@ -126,6 +126,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # tag=v7.0.1
         with:
           submodules: true
+      # The MSRV is what this crate _could_ build with if its dependencies were downgraded as far as
+      # Cargo.toml allows, not whatever the newest release of each dependency happens to need. So
+      # rather than build against the latest (or committed) dependency versions, we re-resolve with
+      # the MSRV-aware resolver, which picks the newest versions whose `rust-version` is compatible
+      # with `package.rust-version`. That resolver needs cargo 1.84+, which the MSRV toolchain need
+      # not be, so we resolve with stable and only build with the MSRV toolchain. Stable is
+      # installed first so that the MSRV toolchain ends up as the default.
+      - name: Install stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # branch=master
+        with:
+          toolchain: stable
       - name: Install ${{ matrix.msrv }}
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # branch=master
         with:
@@ -134,5 +145,28 @@ jobs:
         with:
           path: ~/.cargo
           key: ${{ runner.os }}-cargo
+      # The resolver targets `package.rust-version`, not the toolchain in the matrix, so warn if the
+      # two have drifted apart. Without a `rust-version`, the resolver targets stable instead, so
+      # dependencies aren't downgraded at all.
+      - name: Check that rust-version matches ${{ matrix.msrv }}
+        run: |
+          rvs=$(cargo +stable metadata --no-deps --format-version 1 | jq -r '.packages[].rust_version // empty' | sort -u | paste -sd ' ' -)
+          if [ -z "$rvs" ]; then
+            echo "::warning::no package sets rust-version, so dependencies will not be resolved to MSRV-compatible versions"
+            exit 0
+          fi
+          for rv in $rvs; do
+            case "${{ matrix.msrv }}" in "$rv" | "$rv".*) exit 0 ;; esac
+          done
+          echo "::warning::msrv in check.yml (${{ matrix.msrv }}) does not match any package rust-version ($rvs)"
+      # We use generate-lockfile rather than update since update keeps the format version of an
+      # existing Cargo.lock, and cargo older than 1.78 cannot read the v4 format. generate-lockfile
+      # instead picks a format that `rust-version` can read.
+      - name: cargo +stable generate-lockfile (MSRV-aware)
+        run: cargo +stable generate-lockfile
+        env:
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      # --locked so that an older cargo fails loudly rather than quietly re-resolving if it cannot
+      # use the versions picked above (e.g., because it cannot parse their index entries).
       - name: cargo +${{ matrix.msrv }} check
-        run: cargo check
+        run: cargo +${{ matrix.msrv }} check --locked
