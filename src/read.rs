@@ -106,6 +106,7 @@ impl<T> ReadHandle<T> {
         ReadHandleFactory {
             inner: Arc::clone(&self.inner),
             epochs: Arc::clone(&self.epochs),
+            _unimpl_send_sync: PhantomData,
         }
     }
 }
