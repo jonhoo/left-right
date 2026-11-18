@@ -209,9 +209,11 @@ where
     /// It is always safe to change an `Aliased` from a dropping `D` to a non-dropping `D`. Going
     /// the other way around is only safe if `self` is the last alias for the `T`.
     pub unsafe fn change_drop<D2: DropBehavior>(self) -> Aliased<T, D2> {
+        let aliased = std::ptr::read(&self.aliased);
+        std::mem::forget(self);
+
         Aliased {
-            // safety:
-            aliased: std::ptr::read(&self.aliased),
+            aliased,
             drop_behavior: PhantomData,
             _no_auto_send: PhantomData,
         }
@@ -426,5 +428,42 @@ where
 {
     fn borrow(&self) -> &T {
         self.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Aliased, DropBehavior};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct DoDrop;
+    impl DropBehavior for DoDrop {
+        const DO_DROP: bool = true;
+    }
+
+    struct NoDrop;
+    impl DropBehavior for NoDrop {
+        const DO_DROP: bool = false;
+    }
+
+    struct Tracked(Arc<AtomicUsize>);
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn change_drop_transfers_drop_responsibility() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let dropping = Aliased::<_, DoDrop>::from(Tracked(Arc::clone(&drops)));
+
+        let non_dropping: Aliased<_, NoDrop> = unsafe { dropping.change_drop() };
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+
+        let dropping: Aliased<_, DoDrop> = unsafe { non_dropping.change_drop() };
+        drop(dropping);
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
 }
