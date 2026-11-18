@@ -39,6 +39,8 @@ where
     is_waiting: Arc<AtomicBool>,
     /// Write directly to the write handle map, since no publish has happened.
     first: bool,
+    /// Operations have been written directly to the write handle before the first publish.
+    first_pending: bool,
     /// A publish has happened, but the two copies have not been synchronized yet.
     second: bool,
     /// If we call `Self::take` the drop needs to be different.
@@ -241,6 +243,7 @@ where
             #[cfg(test)]
             refreshes: 0,
             first: true,
+            first_pending: false,
             second: true,
             taken: false,
         }
@@ -421,7 +424,8 @@ where
 
         // w_handle (the old r_handle) is now fully up to date!
         } else {
-            self.first = false
+            self.first = false;
+            self.first_pending = false;
         }
 
         // at this point, we have exclusive access to w_handle, and it is up-to-date with all
@@ -473,7 +477,7 @@ where
     pub fn has_pending_operations(&self) -> bool {
         // NOTE: we don't use self.oplog.is_empty() here because it's not really that important if
         // there are operations that have not yet been applied to the _write_ handle.
-        self.swap_index < self.oplog.len()
+        self.first_pending || self.swap_index < self.oplog.len()
     }
 
     /// Append the given operation to the operational log.
@@ -536,6 +540,12 @@ where
         I: IntoIterator<Item = O>,
     {
         if self.first {
+            let mut ops = ops.into_iter().peekable();
+            if ops.peek().is_none() {
+                return;
+            }
+            self.first_pending = true;
+
             // Safety: we know there are no outstanding w_handle readers, since we haven't
             // refreshed ever before, so we can modify it directly!
             let mut w_inner = self.raw_write_handle();
@@ -754,6 +764,21 @@ mod tests {
         let _count = r.enter();
         // refresh would hang here
         assert_eq!(w.oplog.iter().skip(w.swap_index).count(), 0);
+        assert!(!w.has_pending_operations());
+    }
+
+    #[test]
+    fn flush_publishes_initial_writes() {
+        let (mut w, r) = crate::new::<i32, _>();
+        w.extend(std::iter::empty());
+        assert!(!w.has_pending_operations());
+
+        w.append(CounterAddOp(42));
+
+        assert!(w.has_pending_operations());
+        w.flush();
+
+        assert_eq!(*r.enter().unwrap(), 42);
         assert!(!w.has_pending_operations());
     }
 
